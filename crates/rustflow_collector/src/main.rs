@@ -1,7 +1,6 @@
 use std::net::UdpSocket;
 
 use rustflow_parser::netflow_v5;
-use rustflow_parser::netflow_v9;
 
 fn main() {
     let socket = UdpSocket::bind("0.0.0.0:2055").expect("couldn't bind to address");
