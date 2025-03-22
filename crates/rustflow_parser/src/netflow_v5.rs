@@ -1,6 +1,6 @@
 use nom::Parser;
 use nom::bytes::complete::take;
-use nom::combinator::verify;
+use nom::combinator::{all_consuming, verify};
 use nom::multi::many;
 use nom::number::complete::{be_u8, be_u16, be_u32};
 use nom::{IResult, ToUsize};
@@ -8,13 +8,13 @@ use nom::{IResult, ToUsize};
 // NetFlow v5
 // https://www.cisco.com/c/en/us/td/docs/net_mgmt/netflow_collection_engine/3-6/user/guide/format.html
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct NetFlowV5 {
     header: Header,
     flow_records: Vec<FlowRecord>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Header {
     /// NetFlow export format version number.
     version: u16,
@@ -46,7 +46,7 @@ impl Header {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FlowRecord {
     /// Source IP address.
     src_addr: [u8; 4],
@@ -169,7 +169,7 @@ fn parse_flow_record(input: &[u8]) -> IResult<&[u8], FlowRecord> {
 pub fn parse(input: &[u8]) -> IResult<&[u8], NetFlowV5> {
     let (input, header) = parse_header(input)?;
     let (input, flow_records) =
-        many(0..=header.count.to_usize(), parse_flow_record).parse(input)?;
+        all_consuming(many(0..=header.count.to_usize(), parse_flow_record)).parse(input)?;
 
     Ok((
         input,

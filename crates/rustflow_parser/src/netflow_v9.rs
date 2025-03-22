@@ -1,9 +1,10 @@
 use nom::Parser;
 use nom::branch::alt;
 use nom::bytes::complete::take;
-use nom::combinator::verify;
-use nom::multi::{many, many1};
+use nom::combinator::{all_consuming, peek, verify};
+use nom::multi::{length_data, many, many1};
 use nom::number::complete::{be_u16, be_u32};
+use nom::sequence::preceded;
 use nom::{IResult, ToUsize};
 use std::collections::HashMap;
 use std::ops::RangeBounds;
@@ -169,7 +170,7 @@ pub enum FieldType {
     OutSrcMac = 81,
     /// Shortened interface name i.e.: "FE1/0".
     IfName = 82,
-    /// Full interface name i.e.: "'FastEthernet 1/0".
+    /// Full interface name i.e.: "FastEthernet 1/0".
     IfDesc = 83,
     /// Name of the flow sampler.
     SamplerName = 84,
@@ -184,33 +185,33 @@ pub enum FieldType {
     /// Status is either unknown (00), Forwarded (10), Dropped (10) or Consumed (11).
     /// Below is the list of forwarding status values with their means:
     /// Unknown
-    /// • 0
+    /// * 0
     /// Forwarded
-    /// • Unknown 64
-    /// • Forwarded Fragmented 65
-    /// • Forwarded not Fragmented 66
+    /// * Unknown 64
+    /// * Forwarded Fragmented 65
+    /// * Forwarded not Fragmented 66
     /// Dropped
-    /// • Unknown 128,
-    /// • Drop ACL Deny 129,
-    /// • Drop ACL drop 130,
-    /// • Drop Unroutable 131,
-    /// • Drop Adjacency 132,
-    /// • Drop Fragmentation & DF set 133,
-    /// • Drop Bad header checksum 134,
-    /// • Drop Bad total Length 135,
-    /// • Drop Bad Header Length 136,
-    /// • Drop bad TTL 137,
-    /// • Drop Policer 138,
-    /// • Drop WRED 139,
-    /// • Drop RPF 140,
-    /// • Drop For us 141,
-    /// • Drop Bad output interface 142,
-    /// • Drop Hardware 143,
+    /// * Unknown 128
+    /// * Drop ACL Deny 129
+    /// * Drop ACL drop 130
+    /// * Drop Unroutable 131
+    /// * Drop Adjacency 132
+    /// * Drop Fragmentation & DF set 133
+    /// * Drop Bad header checksum 134
+    /// * Drop Bad total Length 135
+    /// * Drop Bad Header Length 136
+    /// * Drop bad TTL 137
+    /// * Drop Policer 138
+    /// * Drop WRED 139
+    /// * Drop RPF 140
+    /// * Drop For us 141
+    /// * Drop Bad output interface 142
+    /// * Drop Hardware 143
     /// Consumed
-    /// • Unknown 192,
-    /// • Terminate Punt Adjacency 193,
-    /// • Terminate Incomplete Adjacency 194,
-    /// • Terminate For us 195
+    /// * Unknown 192
+    /// * Terminate Punt Adjacency 193
+    /// * Terminate Incomplete Adjacency 194
+    /// * Terminate For us 195
     ForwardingStatus = 89,
     /// MPLS PAL Route Distinguisher.
     MplsPalRd = 90,
@@ -247,7 +248,7 @@ pub struct NetFlowV9<'a> {
     flow_set: Vec<FlowSet<'a>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Header {
     /// The version of NetFlow records exported in this packet.
     version: u16,
@@ -282,7 +283,7 @@ pub struct TemplateRecord {
     fields: Vec<TemplateRecordField>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TemplateFlowSet {
     /// The FlowSet ID is used to distinguish template records from data records. A template record always has a FlowSet ID in the range of 0-255. Currently, the template record that describes flow fields has a FlowSet ID of zero and the template record that describes option fields (described below) has a FlowSet ID of 1. A data record always has a nonzero FlowSet ID greater than 255.
     flow_set_id: u16,
@@ -293,21 +294,21 @@ pub struct TemplateFlowSet {
     template_records: Vec<TemplateRecord>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct OptionsTemplateScopeField {
     /// This field gives the relevant portion of the NetFlow process to which the options record refers.
     /// Currently, defined values follow:
-    /// • 0x0001 System
-    /// • 0x0002 Interface
-    /// • 0x0003 Line Card
-    /// • 0x0004 NetFlow Cache
-    /// • 0x0005 Template
+    /// * 0x0001 System
+    /// * 0x0002 Interface
+    /// * 0x0003 Line Card
+    /// * 0x0004 NetFlow Cache
+    /// * 0x0005 Template
     field_type: u16,
     /// This field gives the length (in bytes) of the Scope field, as it would appear in an options record.
     length: u16,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct OptionsTemplateOptionField {
     /// This numeric value represents the type of the field that appears in the options record.
     field_type: u16,
@@ -315,7 +316,7 @@ pub struct OptionsTemplateOptionField {
     length: u16,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct OptionsTemplate {
     /// The FlowSet ID is used to distinguish template records from data records. A template record always has a FlowSet ID of 1.
     flow_set_id: u16,
@@ -336,7 +337,7 @@ pub struct OptionsTemplate {
     option_fields: Vec<OptionsTemplateOptionField>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DataFlowSet<'a> {
     /// A FlowSet ID precedes each group of records within a NetFlow Version 9 data FlowSet. The FlowSet ID maps to a (previously received) template ID. The collector and display applications should use the FlowSet ID to map the appropriate type and length to any field values that follow.
     flow_set_id: u16,
@@ -345,11 +346,11 @@ pub struct DataFlowSet<'a> {
     length: u16,
     /// The remainder of the Version 9 data FlowSet is a collection of field values. The type and length of the fields have been previously defined in the template record referenced by the FlowSet ID/template ID.
     data_records: Vec<Vec<&'a [u8]>>,
-    //// Padding should be inserted to align the end of the FlowSet on a 32 bit boundary. Pay attention that the Length field will include those padding bits.
+    // Padding should be inserted to align the end of the FlowSet on a 32 bit boundary. Pay attention that the Length field will include those padding bits.
     // padding: u16,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum FlowSet<'a> {
     Template(TemplateFlowSet),
     Data(DataFlowSet<'a>),
@@ -401,12 +402,15 @@ fn parse_template_record(input: &[u8]) -> IResult<&[u8], TemplateRecord> {
 }
 
 fn parse_template_flow_set(input: &[u8]) -> IResult<&[u8], FlowSet> {
+    let (rest, input) = length_data(peek(preceded(be_u16, be_u16))).parse(input)?;
+
     let (input, flow_set_id) = verify(be_u16, |i| (0..=255).contains(i)).parse(input)?;
     let (input, length) = be_u16(input)?;
-    let (input, template_records) = many1(parse_template_record).parse(input)?;
+
+    let (_, template_records) = all_consuming(many1(parse_template_record)).parse(input)?;
 
     Ok((
-        input,
+        rest,
         FlowSet::Template(TemplateFlowSet {
             flow_set_id,
             length,
@@ -502,8 +506,12 @@ pub fn parse(
 ) -> impl FnMut(&[u8]) -> IResult<&[u8], (Header, Vec<FlowSet>)> {
     move |input| {
         let (input, header) = parse_header(input)?;
-        let (input, flow_set) =
-            many1(alt((parse_template_flow_set, parse_options_template, parse_data_flow_set(templates)))).parse(input)?;
+        let (input, flow_set) = many1(alt((
+            parse_template_flow_set,
+            parse_options_template,
+            parse_data_flow_set(templates),
+        )))
+        .parse(input)?;
 
         for flow_set in flow_set.iter() {
             match flow_set {
