@@ -11,6 +11,7 @@ use std::collections::HashMap;
 // Netflow V9
 // https://www.cisco.com/en/US/technologies/tk648/tk362/technologies_white_paper09186a00800a3db9.html
 
+#[derive(Clone, Debug)]
 pub enum FieldType {
     /// Incoming counter with length N x 8 bits for number of bytes associated with an IP Flow.
     InBytes = 1,
@@ -243,54 +244,54 @@ pub enum FieldType {
 
 #[derive(Debug)]
 pub struct NetFlowV9<'a> {
-    header: Header,
-    flow_set: Vec<FlowSet<'a>>,
+    pub header: Header,
+    pub flow_set: Vec<FlowSet<'a>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Header {
     /// The version of NetFlow records exported in this packet.
-    version: u16,
+    pub version: u16,
     /// Number of FlowSet records (both template and data) contained within this packet.
-    count: u16,
+    pub count: u16,
     /// Time in milliseconds since this device was first booted.
-    system_uptime: u32,
+    pub system_uptime: u32,
     /// Seconds since 0000 Coordinated Universal Time (UTC) 1970.
-    unix_seconds: u32,
+    pub unix_seconds: u32,
     /// Incremental sequence counter of all export packets sent by this export device; this value is cumulative, and it can be used to identify whether any export packets have been missed.
-    package_sequence: u32,
+    pub package_sequence: u32,
     /// The Source ID field is a 32-bit value that is used to guarantee uniqueness for all flows exported from a particular device.
-    source_id: u32,
+    pub source_id: u32,
 }
 
 #[derive(Debug, Clone)]
 pub struct TemplateRecordField {
     /// This numeric value represents the type of the field. The possible values of the field type are vendor specific.
-    field_type: u16,
+    pub field_type: u16,
     /// This number gives the length of the above-defined field, in bytes.
-    length: u16,
+    pub length: u16,
 }
 
 #[derive(Debug, Clone)]
 pub struct TemplateRecord {
     /// As a router generates different template FlowSets to match the type of NetFlow data it will be exporting, each template is given a unique ID. This uniqueness is local to the router that generated the template ID.
     /// Templates that define data record formats begin numbering at 256 since 0-255 are reserved for FlowSet IDs.
-    template_id: u16,
+    pub template_id: u16,
     /// This field gives the number of fields in this template record. Because a template FlowSet may contain multiple template records, this field allows the parser to determine the end of the current template record and the start of the next.
-    field_count: u16,
+    pub field_count: u16,
     /// This field is a list of fields that are exported in the data records that follow this template record. The fields are described by the type and length of each field.
-    fields: Vec<TemplateRecordField>,
+    pub fields: Vec<TemplateRecordField>,
 }
 
 #[derive(Debug, Clone)]
 pub struct TemplateFlowSet {
     /// The FlowSet ID is used to distinguish template records from data records. A template record always has a FlowSet ID in the range of 0-255. Currently, the template record that describes flow fields has a FlowSet ID of zero and the template record that describes option fields (described below) has a FlowSet ID of 1. A data record always has a nonzero FlowSet ID greater than 255.
-    flow_set_id: u16,
+    pub flow_set_id: u16,
     /// Length refers to the total length of this FlowSet. Because an individual template FlowSet may contain multiple template IDs (as illustrated above), the length value should be used to determine the position of the next FlowSet record, which could be either a template or a data FlowSet.
     /// Length is expressed in Type/Length/Value (TLV) format, meaning that the value includes the bytes used for the FlowSet ID and the length bytes themselves, as well as the combined lengths of all template records included in this FlowSet.
-    length: u16,
+    pub length: u16,
     /// Template records.
-    template_records: Vec<TemplateRecord>,
+    pub template_records: Vec<TemplateRecord>,
 }
 
 #[derive(Debug, Clone)]
@@ -302,49 +303,55 @@ pub struct OptionsTemplateScopeField {
     /// * 0x0003 Line Card
     /// * 0x0004 NetFlow Cache
     /// * 0x0005 Template
-    field_type: u16,
+    pub field_type: u16,
     /// This field gives the length (in bytes) of the Scope field, as it would appear in an options record.
-    length: u16,
+    pub length: u16,
 }
 
 #[derive(Debug, Clone)]
 pub struct OptionsTemplateOptionField {
     /// This numeric value represents the type of the field that appears in the options record.
-    field_type: u16,
+    pub field_type: u16,
     /// This number is the length (in bytes) of the field, as it would appear in an options record.
-    length: u16,
+    pub length: u16,
 }
 
 #[derive(Debug, Clone)]
 pub struct OptionsTemplate {
     /// The FlowSet ID is used to distinguish template records from data records. A template record always has a FlowSet ID of 1.
-    flow_set_id: u16,
+    pub flow_set_id: u16,
     /// This field gives the total length of this FlowSet. Because an individual template FlowSet may contain multiple template IDs, the length value should be used to determine the position of the next FlowSet record, which could be either a template or a data FlowSet.
     /// Length is expressed in TLV format, meaning that the value includes the bytes used for the FlowSet ID and the length bytes themselves, as well as the combined lengths of all template records included in this FlowSet.
-    length: u16,
+    pub length: u16,
     /// As a router generates different template FlowSets to match the type of NetFlow data it will be exporting, each template is given a unique ID.
     /// This uniqueness is local to the router that generated the template ID.
     /// The Template ID is greater than 255. Template IDs inferior to 255 are reserved.
-    template_id: u16,
+    pub template_id: u16,
     /// This field gives the length in bytes of any scope fields contained in this options template.
-    option_scope_length: u16,
+    pub option_scope_length: u16,
     /// This field gives the length (in bytes) of any Options field definitions contained in this options template.
-    option_length: u16,
+    pub option_length: u16,
     /// List of scope fields.
-    scope_fields: Vec<OptionsTemplateScopeField>,
+    pub scope_fields: Vec<OptionsTemplateScopeField>,
     /// List of option fields.
-    option_fields: Vec<OptionsTemplateOptionField>,
+    pub option_fields: Vec<OptionsTemplateOptionField>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DataFlowSetDataRecord<'a> {
+    pub field_type: u16,
+    pub value: &'a [u8],
 }
 
 #[derive(Debug, Clone)]
 pub struct DataFlowSet<'a> {
     /// A FlowSet ID precedes each group of records within a NetFlow Version 9 data FlowSet. The FlowSet ID maps to a (previously received) template ID. The collector and display applications should use the FlowSet ID to map the appropriate type and length to any field values that follow.
-    flow_set_id: u16,
+    pub flow_set_id: u16,
     /// This field gives the length of the data FlowSet.
     /// Length is expressed in TLV format, meaning that the value includes the bytes used for the FlowSet ID and the length bytes themselves, as well as the combined lengths of any included data records.
-    length: u16,
+    pub length: u16,
     /// The remainder of the Version 9 data FlowSet is a collection of field values. The type and length of the fields have been previously defined in the template record referenced by the FlowSet ID/template ID.
-    data_records: Vec<Vec<&'a [u8]>>,
+    pub data_records: Vec<Vec<DataFlowSetDataRecord<'a>>>,
     // Padding should be inserted to align the end of the FlowSet on a 32 bit boundary. Pay attention that the Length field will include those padding bits.
     // padding: u16,
 }
@@ -418,7 +425,7 @@ fn parse_template_flow_set(input: &[u8]) -> IResult<&[u8], FlowSet> {
     ))
 }
 
-fn parse_data_record(template: &TemplateRecord) -> impl Fn(&[u8]) -> IResult<&[u8], Vec<&[u8]>> {
+fn parse_data_record(template: &TemplateRecord) -> impl Fn(&[u8]) -> IResult<&[u8], Vec<DataFlowSetDataRecord>> {
     move |input| {
         let mut input = input;
         let mut values = Vec::new();
@@ -426,7 +433,7 @@ fn parse_data_record(template: &TemplateRecord) -> impl Fn(&[u8]) -> IResult<&[u
         for field in template.fields.iter() {
             let (input_, value) = take(field.length)(input)?;
 
-            values.push(value);
+            values.push(DataFlowSetDataRecord {field_type: field.field_type, value});
 
             input = input_;
         }

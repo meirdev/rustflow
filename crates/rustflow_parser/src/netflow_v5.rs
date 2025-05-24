@@ -10,30 +10,30 @@ use nom::{IResult, ToUsize};
 
 #[derive(Debug, Clone)]
 pub struct NetFlowV5 {
-    header: Header,
-    flow_records: Vec<FlowRecord>,
+    pub header: Header,
+    pub flow_records: Vec<FlowRecord>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Header {
     /// NetFlow export format version number.
-    version: u16,
+    pub version: u16,
     /// Number of flows exported in this packet (1-30).
-    count: u16,
+    pub count: u16,
     /// Current time in milliseconds since the export device booted.
-    sys_uptime: u32,
+    pub sys_uptime: u32,
     /// Current count of seconds since 0000 UTC 1970.
-    unix_secs: u32,
+    pub unix_secs: u32,
     /// Residual nanoseconds since 0000 UTC 1970.
-    unix_nsecs: u32,
+    pub unix_nsecs: u32,
     /// Sequence counter of total flows seen.
-    flow_sequence: u32,
+    pub flow_sequence: u32,
     /// Type of flow-switching engine.
-    engine_type: u8,
+    pub engine_type: u8,
     /// Slot number of the flow-switching engine.
-    engine_id: u8,
+    pub engine_id: u8,
     /// First two bits hold the sampling mode; remaining 14 bits hold value of sampling interval.
-    sampling_interval: u16,
+    pub sampling_interval: u16,
 }
 
 impl Header {
@@ -49,45 +49,45 @@ impl Header {
 #[derive(Debug, Clone)]
 pub struct FlowRecord {
     /// Source IP address.
-    src_addr: [u8; 4],
+    pub src_addr: [u8; 4],
     /// Destination IP address.
-    dst_addr: [u8; 4],
+    pub dst_addr: [u8; 4],
     /// IP address of next hop route.
-    next_hop: [u8; 4],
+    pub next_hop: [u8; 4],
     /// SNMP index of input interface.
-    input: u16,
+    pub input: u16,
     /// SNMP index of output interface.
-    output: u16,
+    pub output: u16,
     /// Packets in the flow.
-    d_pkts: u32,
+    pub d_pkts: u32,
     /// Total number of Layer 3 bytes in the packets of the flow.
-    d_ockts: u32,
+    pub d_ockts: u32,
     /// SysUptime at start of flow.
-    first: u32,
+    pub first: u32,
     /// SysUptime at the time the last packet of the flow was received.
-    last: u32,
+    pub last: u32,
     /// TCP/UDP source port number or equivalent.
-    src_port: u16,
+    pub src_port: u16,
     /// TCP/UDP destination port number or equivalent.
-    dst_port: u16,
+    pub dst_port: u16,
     /// Unused (zero) bytes.
-    pad1: u8,
+    pub pad1: u8,
     /// Cumulative OR of TCP flags.
-    tcp_flags: u8,
+    pub tcp_flags: u8,
     /// IP protocol type (for example, TCP = 6; UDP = 17).
-    prot: u8,
+    pub prot: u8,
     /// IP type of service (ToS).
-    tos: u8,
+    pub tos: u8,
     /// Autonomous system number of the source, either origin or peer.
-    src_as: u16,
+    pub src_as: u16,
     /// Autonomous system number of the destination, either origin or peer.
-    dst_as: u16,
+    pub dst_as: u16,
     /// Source address prefix mask bits.
-    src_mask: u8,
+    pub src_mask: u8,
     /// Destination address prefix mask bits.
-    dst_mask: u8,
+    pub dst_mask: u8,
     /// Unused (zero) bytes.
-    pad2: u16,
+    pub pad2: u16,
 }
 
 fn parse_header(input: &[u8]) -> IResult<&[u8], Header> {
