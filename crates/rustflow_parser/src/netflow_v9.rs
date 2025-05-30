@@ -1,3 +1,6 @@
+// RPC-3954
+// https://datatracker.ietf.org/doc/html/rfc3954
+
 use nom::branch::alt;
 use nom::bytes::complete::take;
 use nom::combinator::{peek, verify};
@@ -7,10 +10,10 @@ use nom::sequence::preceded;
 use nom::Parser;
 use nom::{IResult, ToUsize};
 use rustflow_types::netflow_v9::{
-    DataFlowSet, DataFlowSetRecord, FieldDefinition, FieldType, FieldValue, FlowSet, Header,
-    NetFlowV9, OptionsTemplateFlowSet, OptionsTemplateRecord, ScopeFieldType, TemplateFlowSet,
-    TemplateRecord, TemplateRecordType, NETFLOW_V9_VERSION, OPTIONS_TEMPLATE_FLOW_SET_ID,
-    TEMPLATE_FLOW_SET_ID,
+    DataFlowSet, DataFlowSetRecord, DataFlowSetRecordValue, FieldDefinition, FieldType, FlowSet,
+    Header, NetFlowV9, OptionsTemplateFlowSet, OptionsTemplateRecord, ScopeFieldType,
+    TemplateFlowSet, TemplateRecord, TemplateRecordType, NETFLOW_V9_VERSION,
+    OPTIONS_TEMPLATE_FLOW_SET_ID, TEMPLATE_FLOW_SET_ID,
 };
 use std::collections::HashMap;
 
@@ -118,10 +121,10 @@ fn parse_data_record(
                 for field in template_record.fields.iter() {
                     let (input_, value) = take(field.field_length)(input)?;
 
-                    values.push(FieldValue {
-                        field_type: field.field_type.clone(),
-                        value: value.into(),
-                    });
+                    values.push(DataFlowSetRecordValue::Field((
+                        field.field_type.clone(),
+                        value,
+                    )));
 
                     input = input_;
                 }
@@ -134,10 +137,10 @@ fn parse_data_record(
                 for field in options_template_record.scope_fields.iter() {
                     let (input_, value) = take(field.field_length)(input)?;
 
-                    values.push(FieldValue {
-                        field_type: FieldType::Unknown(1),
-                        value: value.into(),
-                    });
+                    values.push(DataFlowSetRecordValue::ScopeField((
+                        field.field_type.clone(),
+                        value,
+                    )));
 
                     input = input_;
                 }
@@ -145,10 +148,10 @@ fn parse_data_record(
                 for field in options_template_record.option_fields.iter() {
                     let (input_, value) = take(field.field_length)(input)?;
 
-                    values.push(FieldValue {
-                        field_type: field.field_type.clone(),
-                        value: value.into(),
-                    });
+                    values.push(DataFlowSetRecordValue::Field((
+                        field.field_type.clone(),
+                        value,
+                    )));
 
                     input = input_;
                 }
@@ -179,7 +182,6 @@ fn parse_data_flow_set(
                 flow_set_id,
                 length,
                 records,
-                padding: &[],
             }),
         ))
     }
@@ -216,7 +218,7 @@ fn parse_options_template_record_option_field(
 }
 
 fn parse_options_template_record(input: &[u8]) -> IResult<&[u8], OptionsTemplateRecord> {
-    let (input, template_id) = verify(be_u16, |i| *i > 255).parse(input)?;
+    let (input, template_id) = be_u16(input)?;
     let (input, option_scope_length) = be_u16(input)?;
     let (input, option_length) = be_u16(input)?;
 
@@ -254,7 +256,6 @@ fn parse_options_template_flow_set(input: &[u8]) -> IResult<&[u8], FlowSet> {
             flow_set_id,
             length,
             records,
-            padding: &[],
         }),
     ))
 }

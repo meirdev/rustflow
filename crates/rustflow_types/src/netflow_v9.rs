@@ -195,7 +195,7 @@ pub struct Header {
 pub enum FlowSet<'a> {
     Template(TemplateFlowSet),
     Data(DataFlowSet<'a>),
-    OptionsTemplate(OptionsTemplateFlowSet<'a>),
+    OptionsTemplate(OptionsTemplateFlowSet),
 }
 
 #[derive(Debug, Clone)]
@@ -228,28 +228,26 @@ pub struct OptionsTemplateRecord {
 }
 
 #[derive(Debug, Clone)]
-pub struct OptionsTemplateFlowSet<'a> {
+pub struct OptionsTemplateFlowSet {
     pub flow_set_id: u16,
     pub length: u16,
     pub records: Vec<OptionsTemplateRecord>,
-    pub padding: &'a [u8],
 }
 
 #[derive(Debug, Clone)]
-pub struct FieldValue<'a> {
-    pub field_type: FieldType,
-    pub value: &'a [u8],
+pub enum DataFlowSetRecordValue<'a> {
+    Field((FieldType, &'a [u8])),
+    ScopeField((ScopeFieldType, &'a [u8])),
 }
 
 #[derive(Debug, Clone)]
-pub struct DataFlowSetRecord<'a>(pub Vec<FieldValue<'a>>);
+pub struct DataFlowSetRecord<'a>(pub Vec<DataFlowSetRecordValue<'a>>);
 
 #[derive(Debug, Clone)]
 pub struct DataFlowSet<'a> {
     pub flow_set_id: u16,
     pub length: u16,
     pub records: Vec<DataFlowSetRecord<'a>>,
-    pub padding: &'a [u8],
 }
 
 #[derive(Debug, Clone)]
