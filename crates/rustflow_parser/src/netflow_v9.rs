@@ -173,7 +173,7 @@ fn parse_data_flow_set(
 
         let template_record = templates.get(&flow_set_id).unwrap();
 
-        let (input, records) = many0(parse_data_record(template_record)).parse(input)?;
+        let (_, records) = many0(parse_data_record(template_record)).parse(input)?;
         // let (_, padding) = all_consuming(take_while(|i: u8| i == 0)).parse(input)?;
 
         Ok((
@@ -247,7 +247,7 @@ fn parse_options_template_flow_set(input: &[u8]) -> IResult<&[u8], FlowSet> {
     let (input, flow_set_id) =
         verify(be_u16, |i| *i == OPTIONS_TEMPLATE_FLOW_SET_ID).parse(input)?;
     let (input, length) = be_u16(input)?;
-    let (input, records) = many0(parse_options_template_record).parse(input)?;
+    let (_, records) = many0(parse_options_template_record).parse(input)?;
     // let (_, padding) = all_consuming(take_while(|i: u8| i == 0)).parse(input)?;
 
     Ok((
