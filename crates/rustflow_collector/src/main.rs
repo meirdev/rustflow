@@ -1,9 +1,11 @@
 use std::net::UdpSocket;
 
-use rustflow_parser::netflow_v5;
+use rustflow_parser::netflow_v9;
 
 fn main() {
-    let socket = UdpSocket::bind("0.0.0.0:2055").expect("couldn't bind to address");
+    let socket = UdpSocket::bind("0.0.0.0:8020").expect("couldn't bind to address");
+
+    let mut parser = netflow_v9::NetFlowV9Parser::default();
 
     loop {
         let mut buf = [0; 9000];
@@ -11,8 +13,10 @@ fn main() {
 
         println!("Received {} bytes from {}", amt, src);
 
-        let (_, data) = netflow_v5::parse(&buf[..amt]).expect("TODO: panic message");
-
-        println!("{:#?}", data);
+        if let Ok(data) = parser.parse(&buf[..amt]) {
+            println!("{:#?}", data);
+        } else {
+            println!("No data parsed");
+        }
     }
 }

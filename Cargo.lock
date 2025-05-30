@@ -180,7 +180,12 @@ name = "rustflow_parser"
 version = "0.1.0"
 dependencies = [
  "nom",
+ "rustflow_types",
 ]
+
+[[package]]
+name = "rustflow_types"
+version = "0.1.0"
 
 [[package]]
 name = "strsim"
