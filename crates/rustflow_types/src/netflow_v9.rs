@@ -1,6 +1,8 @@
 // RPC-3954
 // https://datatracker.ietf.org/doc/html/rfc3954
 
+use serde::Serialize;
+
 pub const NETFLOW_V9_VERSION: u16 = 9;
 
 pub const TEMPLATE_FLOW_SET_ID: u16 = 0;
@@ -8,7 +10,7 @@ pub const TEMPLATE_FLOW_SET_ID: u16 = 0;
 pub const OPTIONS_TEMPLATE_FLOW_SET_ID: u16 = 1;
 
 #[repr(u16)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum FieldType {
     InBytes = 1,
     InPkts = 2,
@@ -152,7 +154,7 @@ impl From<u16> for FieldType {
 }
 
 #[repr(u16)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum ScopeFieldType {
     System = 1,
     Interface = 2,
@@ -175,13 +177,13 @@ impl From<u16> for ScopeFieldType {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct NetFlowV9<'a> {
     pub header: Header,
     pub flow_sets: Vec<FlowSet<'a>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Header {
     pub version: u16,
     pub count: u16,
@@ -191,34 +193,34 @@ pub struct Header {
     pub source_id: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum FlowSet<'a> {
     Template(TemplateFlowSet),
     Data(DataFlowSet<'a>),
     OptionsTemplate(OptionsTemplateFlowSet),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct FieldDefinition<T> {
     pub field_type: T,
     pub field_length: u16,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct TemplateRecord {
     pub template_id: u16,
     pub field_count: u16,
     pub fields: Vec<FieldDefinition<FieldType>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct TemplateFlowSet {
     pub flow_set_id: u16,
     pub length: u16,
     pub records: Vec<TemplateRecord>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct OptionsTemplateRecord {
     pub template_id: u16,
     pub option_scope_length: u16,
@@ -227,30 +229,30 @@ pub struct OptionsTemplateRecord {
     pub option_fields: Vec<FieldDefinition<FieldType>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct OptionsTemplateFlowSet {
     pub flow_set_id: u16,
     pub length: u16,
     pub records: Vec<OptionsTemplateRecord>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum DataFlowSetRecordValue<'a> {
     Field((FieldType, &'a [u8])),
     ScopeField((ScopeFieldType, &'a [u8])),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DataFlowSetRecord<'a>(pub Vec<DataFlowSetRecordValue<'a>>);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DataFlowSet<'a> {
     pub flow_set_id: u16,
     pub length: u16,
     pub records: Vec<DataFlowSetRecord<'a>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum TemplateRecordType {
     Template(TemplateRecord),
     OptionsTemplate(OptionsTemplateRecord),

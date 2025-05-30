@@ -14,7 +14,8 @@ fn main() {
         println!("Received {} bytes from {}", amt, src);
 
         if let Ok(data) = parser.parse(&buf[..amt]) {
-            println!("{:#?}", data);
+            // println!("{:#?}", data);
+            println!("{:?}", serde_json::to_string(&data.1).unwrap());
         } else {
             println!("No data parsed");
         }
