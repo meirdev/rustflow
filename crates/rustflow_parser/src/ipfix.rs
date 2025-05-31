@@ -2,7 +2,7 @@
 // https://datatracker.ietf.org/doc/html/rfc7011
 
 use nom::bytes::complete::take;
-use nom::combinator::{cond, peek, verify};
+use nom::combinator::{cond, fail, peek, verify};
 use nom::multi::{length_data, many, many0};
 use nom::number::complete::{be_u16, be_u32};
 use nom::sequence::preceded;
@@ -72,21 +72,17 @@ fn parse_set(
 
         let (input, header) = parse_set_header(input)?;
 
-        return if header.set_id == TEMPLATE_SET_ID {
-            let (_, records) = many0(parse_template_record).parse(input)?;
-            Ok((rest, Set { header, records }))
-        } else if header.set_id == OPTIONS_TEMPLATE_SET_ID {
-            let (_, records) = many0(parse_options_template_record).parse(input)?;
-            Ok((rest, Set { header, records }))
-        } else {
-            let template = templates.get(&header.set_id).ok_or_else(|| {
-                nom::Err::Error(nom::error::make_error(input, nom::error::ErrorKind::Tag))
-            })?;
-
-            let (_, records) = many0(parse_data_record(template)).parse(input)?;
-
-            Ok((rest, Set { header, records }))
+        let (_, records) = match header.set_id {
+            TEMPLATE_SET_ID => many0(parse_template_record).parse(input)?,
+            OPTIONS_TEMPLATE_SET_ID => many0(parse_options_template_record).parse(input)?,
+            _ if templates.contains_key(&header.set_id) => {
+                let template = templates.get(&header.set_id).unwrap();
+                many0(parse_data_record(template)).parse(input)?
+            }
+            _ => fail().parse(input)?,
         };
+
+        Ok((rest, Set { header, records }))
     }
 }
 
