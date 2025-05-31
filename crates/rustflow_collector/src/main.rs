@@ -1,11 +1,12 @@
 use std::net::UdpSocket;
 
-use rustflow_parser::netflow_v9;
+// use rustflow_parser::netflow_v9;
+use rustflow_parser::ipfix;
 
 fn main() {
     let socket = UdpSocket::bind("0.0.0.0:8020").expect("couldn't bind to address");
 
-    let mut parser = netflow_v9::NetFlowV9Parser::default();
+    let mut parser = ipfix::IPFIXParser::default();
 
     loop {
         let mut buf = [0; 9000];

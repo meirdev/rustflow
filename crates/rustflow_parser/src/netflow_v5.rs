@@ -27,7 +27,7 @@ impl NetFlowV5Parser {
 fn parse_header(input: &[u8]) -> IResult<&[u8], Header> {
     let (input, version) = verify(be_u16, |i| *i == NETFLOW_V5_VERSION).parse(input)?;
     let (input, count) = be_u16(input)?;
-    let (input, sysuptime) = be_u32(input)?;
+    let (input, sys_uptime) = be_u32(input)?;
     let (input, unix_secs) = be_u32(input)?;
     let (input, unix_nsecs) = be_u32(input)?;
     let (input, flow_sequence) = be_u32(input)?;
@@ -40,7 +40,7 @@ fn parse_header(input: &[u8]) -> IResult<&[u8], Header> {
         Header {
             version,
             count,
-            sysuptime,
+            sys_uptime,
             unix_secs,
             unix_nsecs,
             flow_sequence,
@@ -57,8 +57,8 @@ fn parse_flow_record(input: &[u8]) -> IResult<&[u8], FlowRecord> {
     let (input, nexthop) = take(4u8)(input)?;
     let (input, input_) = be_u16(input)?;
     let (input, output) = be_u16(input)?;
-    let (input, dpkts) = be_u32(input)?;
-    let (input, dockts) = be_u32(input)?;
+    let (input, d_pkts) = be_u32(input)?;
+    let (input, d_ockts) = be_u32(input)?;
     let (input, first) = be_u32(input)?;
     let (input, last) = be_u32(input)?;
     let (input, srcport) = be_u16(input)?;
@@ -81,8 +81,8 @@ fn parse_flow_record(input: &[u8]) -> IResult<&[u8], FlowRecord> {
             nexthop: [nexthop[0], nexthop[1], nexthop[2], nexthop[3]],
             input: input_,
             output,
-            dpkts,
-            dockts,
+            d_pkts,
+            d_ockts,
             first,
             last,
             srcport,
