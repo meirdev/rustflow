@@ -3,7 +3,7 @@
 
 use nom::bytes::complete::take;
 use nom::combinator::{cond, peek, verify};
-use nom::multi::{length_data, many, many0, many1};
+use nom::multi::{length_data, many, many0};
 use nom::number::complete::{be_u16, be_u32};
 use nom::sequence::preceded;
 use nom::Parser;
