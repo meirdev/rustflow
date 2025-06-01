@@ -1,7 +1,6 @@
 use clap::{Args, Parser, ValueEnum, value_parser};
 use ipnet::Ipv4Net;
 use net::Ipv4Addr;
-use rustflow_parser::netflow_v5;
 use std::net;
 use std::ops::RangeInclusive;
 use std::str::FromStr;

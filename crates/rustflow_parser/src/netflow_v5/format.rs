@@ -1,15 +1,16 @@
-// NetFlow v5
-// https://www.cisco.com/c/en/us/td/docs/net_mgmt/netflow_collection_engine/3-6/user/guide/format.html#wp1006108
+use std::net::Ipv4Addr;
+
+use serde::Serialize;
 
 pub const NETFLOW_V5_VERSION: u16 = 5;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct NetFlowV5 {
     pub header: Header,
     pub flow_records: Vec<FlowRecord>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Header {
     pub version: u16,
     pub count: u16,
@@ -19,24 +20,15 @@ pub struct Header {
     pub flow_sequence: u32,
     pub engine_type: u8,
     pub engine_id: u8,
+    pub sampling_mode: u16,
     pub sampling_interval: u16,
 }
 
-impl Header {
-    pub fn get_sampling_mode(&self) -> u16 {
-        self.sampling_interval >> 14
-    }
-
-    pub fn get_sampling_interval(&self) -> u16 {
-        self.sampling_interval & 0x3fff
-    }
-}
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct FlowRecord {
-    pub srcaddr: [u8; 4],
-    pub dstaddr: [u8; 4],
-    pub nexthop: [u8; 4],
+    pub srcaddr: Ipv4Addr,
+    pub dstaddr: Ipv4Addr,
+    pub nexthop: Ipv4Addr,
     pub input: u16,
     pub output: u16,
     pub d_pkts: u32,

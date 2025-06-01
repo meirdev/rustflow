@@ -1,34 +1,35 @@
-// NetFlow v7
-// https://www.cisco.com/c/en/us/td/docs/net_mgmt/netflow_collection_engine/3-6/user/guide/format.html#wp1007543
+use std::net::Ipv4Addr;
+
+use serde::Serialize;
 
 pub const NETFLOW_V7_VERSION: u16 = 7;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct NetFlowV7 {
     pub header: Header,
     pub flow_records: Vec<FlowRecord>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Header {
     pub version: u16,
     pub count: u16,
-    pub sysuptime: u32,
+    pub sys_uptime: u32,
     pub unix_secs: u32,
     pub unix_nsecs: u32,
     pub flow_sequence: u32,
     pub reserved: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct FlowRecord {
-    pub srcaddr: [u8; 4],
-    pub dstaddr: [u8; 4],
-    pub nexthop: [u8; 4],
+    pub srcaddr: Ipv4Addr,
+    pub dstaddr: Ipv4Addr,
+    pub nexthop: Ipv4Addr,
     pub input: u16,
     pub output: u16,
-    pub dpkts: u32,
-    pub dockts: u32,
+    pub d_pkts: u32,
+    pub d_ockts: u32,
     pub first: u32,
     pub last: u32,
     pub srcport: u16,

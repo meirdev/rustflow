@@ -1,5 +1,4 @@
-// RPC-3954
-// https://datatracker.ietf.org/doc/html/rfc3954
+use std::collections::BTreeMap;
 
 use serde::Serialize;
 
@@ -10,7 +9,8 @@ pub const TEMPLATE_FLOW_SET_ID: u16 = 0;
 pub const OPTIONS_TEMPLATE_FLOW_SET_ID: u16 = 1;
 
 #[repr(u16)]
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Ord, PartialOrd, Eq, PartialEq)]
+#[serde(untagged)]
 pub enum FieldType {
     InBytes = 1,
     InPkts = 2,
@@ -153,8 +153,82 @@ impl From<u16> for FieldType {
     }
 }
 
+impl From<FieldType> for u16 {
+    fn from(field_type: FieldType) -> Self {
+        match field_type {
+            FieldType::InBytes => 1,
+            FieldType::InPkts => 2,
+            FieldType::Flows => 3,
+            FieldType::Protocol => 4,
+            FieldType::Tos => 5,
+            FieldType::TcpFlags => 6,
+            FieldType::L4SrcPort => 7,
+            FieldType::Ipv4SrcAddr => 8,
+            FieldType::SrcMask => 9,
+            FieldType::InputSnmp => 10,
+            FieldType::L4DstPort => 11,
+            FieldType::Ipv4DstAddr => 12,
+            FieldType::DstMask => 13,
+            FieldType::OutputSnmp => 14,
+            FieldType::Ipv4NextHop => 15,
+            FieldType::SrcAs => 16,
+            FieldType::DstAs => 17,
+            FieldType::BgpIpv4NextHop => 18,
+            FieldType::MulDstPkts => 19,
+            FieldType::MulDstBytes => 20,
+            FieldType::LastSwitched => 21,
+            FieldType::FirstSwitched => 22,
+            FieldType::OutBytes => 23,
+            FieldType::OutPkts => 24,
+            FieldType::Ipv6SrcAddr => 27,
+            FieldType::Ipv6DstAddr => 28,
+            FieldType::Ipv6SrcMask => 29,
+            FieldType::Ipv6DstMask => 30,
+            FieldType::Ipv6FlowLabel => 31,
+            FieldType::IcmpType => 32,
+            FieldType::MulIgmpType => 33,
+            FieldType::SamplingInterval => 34,
+            FieldType::SamplingAlgorithm => 35,
+            FieldType::FlowActiveTimeout => 36,
+            FieldType::FlowInactiveTimeout => 37,
+            FieldType::EngineType => 38,
+            FieldType::EngineId => 39,
+            FieldType::TotalBytesExp => 40,
+            FieldType::TotalPktsExp => 41,
+            FieldType::TotalFlowsExp => 42,
+            FieldType::MplsTopLabelType => 46,
+            FieldType::MplsTopLabelIpAddr => 47,
+            FieldType::FlowSamplerId => 48,
+            FieldType::FlowSamplerMode => 49,
+            FieldType::FlowSamplerRandomInterval => 50,
+            FieldType::DstTos => 55,
+            FieldType::SrcMac => 56,
+            FieldType::DstMac => 57,
+            FieldType::SrcVlan => 58,
+            FieldType::DstVlan => 59,
+            FieldType::IpProtocolVersion => 60,
+            FieldType::Direction => 61,
+            FieldType::Ipv6NextHop => 62,
+            FieldType::BgpIpv6NextHop => 63,
+            FieldType::Ipv6OptionHeaders => 64,
+            FieldType::MplsLabel1 => 70,
+            FieldType::MplsLabel2 => 71,
+            FieldType::MplsLabel3 => 72,
+            FieldType::MplsLabel4 => 73,
+            FieldType::MplsLabel5 => 74,
+            FieldType::MplsLabel6 => 75,
+            FieldType::MplsLabel7 => 76,
+            FieldType::MplsLabel8 => 77,
+            FieldType::MplsLabel9 => 78,
+            FieldType::MplsLabel10 => 79,
+            FieldType::Unknown(value) => value,
+        }
+    }
+}
+
 #[repr(u16)]
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Ord, PartialOrd, Eq, PartialEq)]
+#[serde(untagged)]
 pub enum ScopeFieldType {
     System = 1,
     Interface = 2,
@@ -177,26 +251,39 @@ impl From<u16> for ScopeFieldType {
     }
 }
 
+impl From<ScopeFieldType> for u16 {
+    fn from(scope_field_type: ScopeFieldType) -> Self {
+        match scope_field_type {
+            ScopeFieldType::System => 1,
+            ScopeFieldType::Interface => 2,
+            ScopeFieldType::LineCard => 3,
+            ScopeFieldType::Cache => 4,
+            ScopeFieldType::Template => 5,
+            ScopeFieldType::Unknown(value) => value,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
-pub struct NetFlowV9<'a> {
+pub struct NetFlowV9 {
     pub header: Header,
-    pub flow_sets: Vec<FlowSet<'a>>,
+    pub flow_sets: Vec<FlowSet>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Header {
     pub version: u16,
     pub count: u16,
-    pub sysuptime: u32,
+    pub sys_up_time: u32,
     pub unix_secs: u32,
     pub sequence_number: u32,
     pub source_id: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub enum FlowSet<'a> {
+pub enum FlowSet {
     Template(TemplateFlowSet),
-    Data(DataFlowSet<'a>),
+    Data(DataFlowSet),
     OptionsTemplate(OptionsTemplateFlowSet),
 }
 
@@ -237,23 +324,32 @@ pub struct OptionsTemplateFlowSet {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub enum DataFlowSetRecordValue<'a> {
-    Field((FieldType, &'a [u8])),
-    ScopeField((ScopeFieldType, &'a [u8])),
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct DataFlowSetRecord<'a>(pub Vec<DataFlowSetRecordValue<'a>>);
-
-#[derive(Debug, Clone, Serialize)]
-pub struct DataFlowSet<'a> {
+pub struct DataFlowSet {
     pub flow_set_id: u16,
     pub length: u16,
-    pub records: Vec<DataFlowSetRecord<'a>>,
+    pub records: Vec<BTreeMap<DataFlowSetRecordKey, DataFlowSetRecordValue>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub enum TemplateRecordType {
     Template(TemplateRecord),
     OptionsTemplate(OptionsTemplateRecord),
+}
+
+#[derive(Debug, Clone, Serialize, Ord, Eq, PartialEq, PartialOrd)]
+#[serde(untagged)]
+pub enum DataFlowSetRecordKey {
+    Field(FieldType),
+    ScopeField(ScopeFieldType),
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub enum DataFlowSetRecordValue {
+    Bytes(Vec<u8>),
+    U32(u32),
+    U16(u16),
+    U8(u8),
+    Ipv4Addr(std::net::Ipv4Addr),
+    Ipv6Addr(std::net::Ipv6Addr),
 }

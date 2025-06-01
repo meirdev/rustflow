@@ -1,6 +1,3 @@
-// RPC-7011
-// https://datatracker.ietf.org/doc/html/rfc7011
-
 use nom::bytes::complete::take;
 use nom::combinator::{cond, fail, peek, verify};
 use nom::multi::{length_data, many, many0};
@@ -8,7 +5,7 @@ use nom::number::complete::{be_u16, be_u32};
 use nom::sequence::preceded;
 use nom::Parser;
 use nom::{IResult, ToUsize};
-use rustflow_types::ipfix::{
+use crate::ipfix::format::{
     DataRecord, FieldSpecifier, Header, OptionsTemplateRecord, OptionsTemplateRecordHeader, Record,
     Set, SetHeader, TemplateRecord, TemplateRecordHeader, TemplateRecordType, IPFIX, IPFIX_VERSION,
     OPTIONS_TEMPLATE_SET_ID, TEMPLATE_SET_ID,
@@ -28,8 +25,8 @@ impl Default for IPFIXParser {
     }
 }
 
-impl<'a> IPFIXParser {
-    pub fn parse(&'a mut self, input: &'a [u8]) -> IResult<&'a [u8], IPFIX<'a>> {
+impl IPFIXParser {
+    pub fn parse<'a>(&'a mut self, input: &'a [u8]) -> IResult<&'a [u8], IPFIX> {
         parse_ipfix(&mut self.templates)(input)
     }
 }
@@ -53,10 +50,6 @@ fn parse_header(input: &[u8]) -> IResult<&[u8], Header> {
     ))
 }
 
-fn parse_length(input: &[u8]) -> IResult<&[u8], &[u8]> {
-    length_data(peek(preceded(be_u16, be_u16))).parse(input)
-}
-
 fn parse_set_header(input: &[u8]) -> IResult<&[u8], SetHeader> {
     let (input, set_id) = be_u16(input)?;
     let (input, length) = be_u16(input)?;
@@ -68,7 +61,7 @@ fn parse_set(
     templates: &HashMap<u16, TemplateRecordType>,
 ) -> impl Fn(&[u8]) -> IResult<&[u8], Set> {
     move |input| {
-        let (rest, input) = parse_length(input)?;
+        let (rest, input) = length_data(peek(preceded(be_u16, be_u16))).parse(input)?;
 
         let (input, header) = parse_set_header(input)?;
 
@@ -88,19 +81,17 @@ fn parse_set(
 
 fn parse_field_specifier(input: &[u8]) -> IResult<&[u8], FieldSpecifier> {
     let (input, enterprise_bit_and_information_element_identifier) = be_u16(input)?;
-    
+
     let enterprise_bit: u8 = if enterprise_bit_and_information_element_identifier & 0x8000 != 0 {
         1
     } else {
         0
     };
-    
-    let information_element_identifier =
-        enterprise_bit_and_information_element_identifier & 0x7FFF;
-    
+
+    let information_element_identifier = enterprise_bit_and_information_element_identifier & 0x7FFF;
+
     let (input, field_length) = be_u16(input)?;
-    let (input, enterprise_number) =
-        cond(enterprise_bit == 1, be_u32).parse(input)?;
+    let (input, enterprise_number) = cond(enterprise_bit == 1, be_u32).parse(input)?;
 
     Ok((
         input,
@@ -220,26 +211,6 @@ fn parse_ipfix(
     move |input| {
         let (input, header) = parse_header(input)?;
         let (input, sets) = many0(parse_set(templates)).parse(input)?;
-
-        for set in sets.iter() {
-            for record in set.records.iter() {
-                match record {
-                    Record::Template(template_record) => {
-                        templates.insert(
-                            template_record.header.template_id,
-                            TemplateRecordType::Template(template_record.clone()),
-                        );
-                    }
-                    Record::OptionsTemplate(options_template_record) => {
-                        templates.insert(
-                            options_template_record.header.template_id,
-                            TemplateRecordType::OptionsTemplate(options_template_record.clone()),
-                        );
-                    }
-                    _ => {}
-                }
-            }
-        }
 
         Ok((input, IPFIX { header, sets }))
     }

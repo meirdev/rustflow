@@ -7,9 +7,9 @@ pub const TEMPLATE_SET_ID: u16 = 2;
 pub const OPTIONS_TEMPLATE_SET_ID: u16 = 3;
 
 #[derive(Debug, Clone, Serialize)]
-pub struct IPFIX<'a> {
+pub struct IPFIX {
     pub header: Header,
-    pub sets: Vec<Set<'a>>,
+    pub sets: Vec<Set>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -36,17 +36,17 @@ pub struct SetHeader {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct Set<'a> {
+pub struct Set {
     pub header: SetHeader,
-    pub records: Vec<Record<'a>>,
+    pub records: Vec<Record>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
-pub enum Record<'a> {
+pub enum Record {
     Template(TemplateRecord),
     OptionsTemplate(OptionsTemplateRecord),
-    Data(DataRecord<'a>),
+    Data(DataRecord),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -76,8 +76,8 @@ pub struct OptionsTemplateRecord {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct DataRecord<'a> {
-    pub fields: Vec<&'a [u8]>,
+pub struct DataRecord {
+    pub fields: Vec<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
