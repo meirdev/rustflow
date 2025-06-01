@@ -7,7 +7,7 @@ use nom::number::complete::{be_u16, be_u32, be_u8};
 use nom::Parser;
 use nom::{IResult, ToUsize};
 
-use crate::netflow_v7::format::{FlowRecord, Header, NetFlowV7, NETFLOW_V7_VERSION};
+use crate::netflow_v7::packet::{FlowRecord, Header, NetFlowV7, NETFLOW_V7_VERSION};
 
 pub struct NetFlowV7Parser;
 

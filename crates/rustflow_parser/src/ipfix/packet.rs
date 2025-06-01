@@ -23,8 +23,8 @@ pub struct Header {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FieldSpecifier {
-    pub enterprise_bit: u8,
-    pub information_element_identifier: u16,
+    pub enterprise_bit: u16, // 1 bit
+    pub information_element_identifier: u16, // 15 bits
     pub field_length: u16,
     pub enterprise_number: Option<u32>,
 }

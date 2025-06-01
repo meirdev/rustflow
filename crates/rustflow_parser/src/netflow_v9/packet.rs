@@ -347,6 +347,8 @@ pub enum DataFlowSetRecordKey {
 #[serde(untagged)]
 pub enum DataFlowSetRecordValue {
     Bytes(Vec<u8>),
+    String(String),
+    U64(u64),
     U32(u32),
     U16(u16),
     U8(u8),

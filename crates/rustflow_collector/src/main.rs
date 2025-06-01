@@ -21,18 +21,18 @@ fn main() {
             for record in data.flow_sets.iter() {
                 println!("{:?}", record);
                 match record {
-                    netflow_v9::format::FlowSet::Data(data_flow_set) => {
+                    netflow_v9::packet::FlowSet::Data(data_flow_set) => {
                         for data_record in &data_flow_set.records {
                             println!("Data Record: {:?}", serde_json::to_string(&data_record).unwrap());
                         }
                     }
-                    netflow_v9::format::FlowSet::Template(template_flow_set) => {
+                    netflow_v9::packet::FlowSet::Template(template_flow_set) => {
                         for template in &template_flow_set.records {
                             println!("Template ID: {}, Fields: {:?}", template.template_id, template.fields);
                             parser.register_template(data.header.source_id, template.template_id, template.clone());
                         }
                     }
-                    netflow_v9::format::FlowSet::OptionsTemplate(options_template_flow_set) => {
+                    netflow_v9::packet::FlowSet::OptionsTemplate(options_template_flow_set) => {
                         for template in &options_template_flow_set.records {
                             println!("Template ID: {}, Fields: {:?}", template.template_id, template.scope_fields);
                             parser.register_options_template(data.header.source_id, template.template_id, template.clone());

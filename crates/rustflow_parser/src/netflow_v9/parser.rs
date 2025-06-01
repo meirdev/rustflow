@@ -9,7 +9,7 @@ use nom::sequence::preceded;
 use nom::Parser;
 use nom::{IResult, ToUsize};
 
-use crate::netflow_v9::format::{
+use crate::netflow_v9::packet::{
     DataFlowSet, DataFlowSetRecordKey, DataFlowSetRecordValue, FieldDefinition, FieldType, FlowSet,
     Header, NetFlowV9, OptionsTemplateFlowSet, OptionsTemplateRecord, ScopeFieldType,
     TemplateFlowSet, TemplateRecord, TemplateRecordType, NETFLOW_V9_VERSION,

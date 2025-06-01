@@ -1,11 +1,11 @@
 use nom::bytes::complete::take;
 use nom::combinator::{cond, fail, peek, verify};
-use nom::multi::{length_data, many, many0};
+use nom::multi::{length_data, many, many0, many1};
 use nom::number::complete::{be_u16, be_u32};
 use nom::sequence::preceded;
 use nom::Parser;
 use nom::{IResult, ToUsize};
-use crate::ipfix::format::{
+use crate::ipfix::packet::{
     DataRecord, FieldSpecifier, Header, OptionsTemplateRecord, OptionsTemplateRecordHeader, Record,
     Set, SetHeader, TemplateRecord, TemplateRecordHeader, TemplateRecordType, IPFIX, IPFIX_VERSION,
     OPTIONS_TEMPLATE_SET_ID, TEMPLATE_SET_ID,
@@ -82,7 +82,7 @@ fn parse_set(
 fn parse_field_specifier(input: &[u8]) -> IResult<&[u8], FieldSpecifier> {
     let (input, enterprise_bit_and_information_element_identifier) = be_u16(input)?;
 
-    let enterprise_bit: u8 = if enterprise_bit_and_information_element_identifier & 0x8000 != 0 {
+    let enterprise_bit: u16 = if enterprise_bit_and_information_element_identifier & 0x8000 != 0 {
         1
     } else {
         0
@@ -210,7 +210,7 @@ fn parse_ipfix(
 ) -> impl FnMut(&[u8]) -> IResult<&[u8], IPFIX> {
     move |input| {
         let (input, header) = parse_header(input)?;
-        let (input, sets) = many0(parse_set(templates)).parse(input)?;
+        let (input, sets) = many1(parse_set(templates)).parse(input)?;
 
         Ok((input, IPFIX { header, sets }))
     }

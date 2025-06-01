@@ -1,2 +1,2 @@
-pub mod format;
+pub mod packet;
 pub mod parser;

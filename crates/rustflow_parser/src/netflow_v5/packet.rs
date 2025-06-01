@@ -20,8 +20,8 @@ pub struct Header {
     pub flow_sequence: u32,
     pub engine_type: u8,
     pub engine_id: u8,
-    pub sampling_mode: u16,
-    pub sampling_interval: u16,
+    pub sampling_mode: u16, // 2 bits
+    pub sampling_interval: u16, // 14 bits
 }
 
 #[derive(Debug, Clone, Serialize)]
