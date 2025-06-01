@@ -23,15 +23,10 @@ pub struct Header {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FieldSpecifier {
+    pub enterprise_bit: u8,
     pub information_element_identifier: u16,
     pub field_length: u16,
     pub enterprise_number: Option<u32>,
-}
-
-impl FieldSpecifier {
-    pub fn has_enterprise_bit(&self) -> bool {
-        self.information_element_identifier & 0x8000 != 0
-    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -47,6 +42,7 @@ pub struct Set<'a> {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
 pub enum Record<'a> {
     Template(TemplateRecord),
     OptionsTemplate(OptionsTemplateRecord),

@@ -87,14 +87,25 @@ fn parse_set(
 }
 
 fn parse_field_specifier(input: &[u8]) -> IResult<&[u8], FieldSpecifier> {
-    let (input, information_element_identifier) = be_u16(input)?;
+    let (input, enterprise_bit_and_information_element_identifier) = be_u16(input)?;
+    
+    let enterprise_bit: u8 = if enterprise_bit_and_information_element_identifier & 0x8000 != 0 {
+        1
+    } else {
+        0
+    };
+    
+    let information_element_identifier =
+        enterprise_bit_and_information_element_identifier & 0x7FFF;
+    
     let (input, field_length) = be_u16(input)?;
     let (input, enterprise_number) =
-        cond(information_element_identifier & 0x8000 == 1, be_u32).parse(input)?;
+        cond(enterprise_bit == 1, be_u32).parse(input)?;
 
     Ok((
         input,
         FieldSpecifier {
+            enterprise_bit,
             information_element_identifier,
             field_length,
             enterprise_number,
