@@ -25,14 +25,12 @@ type Templates = HashMap<TemplateKey, TemplateRecordType>;
 #[derive(Debug, Clone)]
 pub struct NetFlowV9Parser {
     templates: Templates,
-    options_templates: Templates,
 }
 
 impl Default for NetFlowV9Parser {
     fn default() -> Self {
         NetFlowV9Parser {
             templates: HashMap::new(),
-            options_templates: HashMap::new(),
         }
     }
 }
@@ -46,36 +44,14 @@ impl NetFlowV9Parser {
         &mut self,
         source_id: ObservationDomain,
         template_id: TemplateId,
-        template_record: TemplateRecord,
+        template_record: TemplateRecordType,
     ) {
-        self.templates.insert(
-            (source_id, template_id),
-            TemplateRecordType::Template(template_record),
-        );
+        self.templates
+            .insert((source_id, template_id), template_record);
     }
 
     pub fn remove_template(&mut self, source_id: ObservationDomain, template_id: TemplateId) {
         self.templates.remove(&(source_id, template_id));
-    }
-
-    pub fn register_options_template(
-        &mut self,
-        source_id: ObservationDomain,
-        template_id: TemplateId,
-        template_record: OptionsTemplateRecord,
-    ) {
-        self.options_templates.insert(
-            (source_id, template_id),
-            TemplateRecordType::OptionsTemplate(template_record),
-        );
-    }
-
-    pub fn remove_options_template(
-        &mut self,
-        source_id: ObservationDomain,
-        template_id: TemplateId,
-    ) {
-        self.options_templates.remove(&(source_id, template_id));
     }
 }
 

@@ -119,7 +119,7 @@ fn parse_netflow_v5(input: &[u8]) -> IResult<&[u8], NetFlowV5> {
 
 mod test {
     use super::*;
-    
+
     #[test]
     fn test_parse_netflow_v5() {
         let input: &[u8] = &[

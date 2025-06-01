@@ -1,4 +1,5 @@
 use std::net;
+
 use macaddr::MacAddr6;
 use serde::Serialize;
 
@@ -25,7 +26,7 @@ pub struct Header {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FieldSpecifier {
-    pub enterprise_bit: u16, // 1 bit
+    pub enterprise_bit: u16,                 // 1 bit
     pub information_element_identifier: u16, // 15 bits
     pub field_length: u16,
     pub enterprise_number: Option<u32>,
@@ -79,7 +80,7 @@ pub struct OptionsTemplateRecord {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DataRecord {
-    pub fields: Vec<Vec<u8>>,
+    pub fields: Vec<DataRecordField>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -87,6 +88,9 @@ pub enum TemplateRecordType {
     Template(TemplateRecord),
     OptionsTemplate(OptionsTemplateRecord),
 }
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DataRecordField(pub u16, pub Vec<u8>);
 
 pub enum DataType {
     Octet(u8),

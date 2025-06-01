@@ -1,20 +1,29 @@
+use std::collections::HashMap;
+
+use nom::branch::alt;
 use nom::bytes::complete::take;
-use nom::combinator::{cond, fail, peek, verify};
+use nom::combinator::{cond, peek, verify};
 use nom::multi::{length_data, many, many0, many1};
 use nom::number::complete::{be_u16, be_u32};
 use nom::sequence::preceded;
 use nom::Parser;
 use nom::{IResult, ToUsize};
+
 use crate::ipfix::packet::{
-    DataRecord, FieldSpecifier, Header, OptionsTemplateRecord, OptionsTemplateRecordHeader, Record,
-    Set, SetHeader, TemplateRecord, TemplateRecordHeader, TemplateRecordType, IPFIX, IPFIX_VERSION,
-    OPTIONS_TEMPLATE_SET_ID, TEMPLATE_SET_ID,
+    DataRecord, DataRecordField, FieldSpecifier, Header, OptionsTemplateRecord,
+    OptionsTemplateRecordHeader, Record, Set, SetHeader, TemplateRecord, TemplateRecordHeader,
+    TemplateRecordType, IPFIX, IPFIX_VERSION, OPTIONS_TEMPLATE_SET_ID, TEMPLATE_SET_ID,
 };
-use std::collections::HashMap;
+
+type ObservationDomain = u32;
+type TemplateId = u16;
+type TemplateKey = (ObservationDomain, TemplateId);
+
+type Templates = HashMap<TemplateKey, TemplateRecordType>;
 
 #[derive(Debug, Clone)]
 pub struct IPFIXParser {
-    templates: HashMap<u16, TemplateRecordType>,
+    templates: Templates,
 }
 
 impl Default for IPFIXParser {
@@ -26,8 +35,22 @@ impl Default for IPFIXParser {
 }
 
 impl IPFIXParser {
-    pub fn parse<'a>(&'a mut self, input: &'a [u8]) -> IResult<&'a [u8], IPFIX> {
-        parse_ipfix(&mut self.templates)(input)
+    pub fn parse<'a>(&'a self, input: &'a [u8]) -> IResult<&'a [u8], IPFIX> {
+        parse_ipfix(&self.templates)(input)
+    }
+
+    pub fn register_template(
+        &mut self,
+        source_id: ObservationDomain,
+        template_id: TemplateId,
+        template_record: TemplateRecordType,
+    ) {
+        self.templates
+            .insert((source_id, template_id), template_record);
+    }
+
+    pub fn remove_template(&mut self, source_id: ObservationDomain, template_id: TemplateId) {
+        self.templates.remove(&(source_id, template_id));
     }
 }
 
@@ -57,23 +80,30 @@ fn parse_set_header(input: &[u8]) -> IResult<&[u8], SetHeader> {
     Ok((input, SetHeader { set_id, length }))
 }
 
-fn parse_set(
-    templates: &HashMap<u16, TemplateRecordType>,
-) -> impl Fn(&[u8]) -> IResult<&[u8], Set> {
+fn parse_set(templates: &Templates) -> impl Fn(&[u8]) -> IResult<&[u8], Set> {
     move |input| {
         let (rest, input) = length_data(peek(preceded(be_u16, be_u16))).parse(input)?;
 
         let (input, header) = parse_set_header(input)?;
 
-        let (_, records) = match header.set_id {
-            TEMPLATE_SET_ID => many0(parse_template_record).parse(input)?,
-            OPTIONS_TEMPLATE_SET_ID => many0(parse_options_template_record).parse(input)?,
-            _ if templates.contains_key(&header.set_id) => {
-                let template = templates.get(&header.set_id).unwrap();
-                many0(parse_data_record(template)).parse(input)?
-            }
-            _ => fail().parse(input)?,
-        };
+        let (_, records) = alt((
+            cond(
+                header.set_id == TEMPLATE_SET_ID,
+                many0(parse_template_record),
+            ),
+            cond(
+                header.set_id == OPTIONS_TEMPLATE_SET_ID,
+                many0(parse_options_template_record),
+            ),
+            cond(
+                templates.contains_key(&(0, header.set_id as TemplateId)),
+                many0(parse_data_record(
+                    templates.get(&(0, header.set_id as TemplateId)).unwrap(),
+                )),
+            ),
+        ))
+        .map_opt(|v| v)
+        .parse(input)?;
 
         Ok((rest, Set { header, records }))
     }
@@ -162,52 +192,49 @@ fn parse_options_template_record(input: &[u8]) -> IResult<&[u8], Record> {
     ))
 }
 
+fn parse_defined_fields<'a>(
+    mut input: &'a [u8],
+    field_specifiers: &[FieldSpecifier],
+) -> IResult<&'a [u8], Vec<DataRecordField>> {
+    let mut values = Vec::with_capacity(field_specifiers.len());
+
+    for field_spec in field_specifiers {
+        let (input_, value_bytes) = take(field_spec.field_length)(input)?;
+
+        values.push(DataRecordField(
+            field_spec.information_element_identifier,
+            value_bytes.into(),
+        ));
+
+        input = input_;
+    }
+
+    Ok((input, values))
+}
+
 fn parse_data_record(template: &TemplateRecordType) -> impl Fn(&[u8]) -> IResult<&[u8], Record> {
-    move |input| {
-        let mut input = input;
+    move |input| match template {
+        TemplateRecordType::Template(template_record) => {
+            let (input, fields) = parse_defined_fields(input, &template_record.fields)?;
 
-        match template {
-            TemplateRecordType::Template(template_record) => {
-                let mut values = Vec::new();
+            Ok((input, Record::Data(DataRecord { fields })))
+        }
+        TemplateRecordType::OptionsTemplate(options_template_record) => {
+            let (input, fields) = parse_defined_fields(input, &options_template_record.fields)?;
+            let (input, scope_fields) =
+                parse_defined_fields(input, &options_template_record.scope_fields)?;
 
-                for field in template_record.fields.iter() {
-                    let (input_, value) = take(field.field_length)(input)?;
-
-                    values.push(value);
-
-                    input = input_;
-                }
-
-                Ok((input, Record::Data(DataRecord { fields: values })))
-            }
-            TemplateRecordType::OptionsTemplate(options_template_record) => {
-                let mut values = Vec::new();
-
-                for field in options_template_record.fields.iter() {
-                    let (input_, value) = take(field.field_length)(input)?;
-
-                    values.push(value);
-
-                    input = input_;
-                }
-
-                for field in options_template_record.scope_fields.iter() {
-                    let (input_, value) = take(field.field_length)(input)?;
-
-                    values.push(value);
-
-                    input = input_;
-                }
-
-                Ok((input, Record::Data(DataRecord { fields: values })))
-            }
+            Ok((
+                input,
+                Record::Data(DataRecord {
+                    fields: [fields, scope_fields].concat(),
+                }),
+            ))
         }
     }
 }
 
-fn parse_ipfix(
-    templates: &mut HashMap<u16, TemplateRecordType>,
-) -> impl FnMut(&[u8]) -> IResult<&[u8], IPFIX> {
+fn parse_ipfix(templates: &Templates) -> impl FnMut(&[u8]) -> IResult<&[u8], IPFIX> {
     move |input| {
         let (input, header) = parse_header(input)?;
         let (input, sets) = many1(parse_set(templates)).parse(input)?;

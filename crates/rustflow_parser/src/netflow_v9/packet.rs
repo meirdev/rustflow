@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use serde::Serialize;
 
 pub const NETFLOW_V9_VERSION: u16 = 9;
@@ -9,8 +7,7 @@ pub const TEMPLATE_FLOW_SET_ID: u16 = 0;
 pub const OPTIONS_TEMPLATE_FLOW_SET_ID: u16 = 1;
 
 #[repr(u16)]
-#[derive(Debug, Clone, Serialize, Ord, PartialOrd, Eq, PartialEq)]
-#[serde(untagged)]
+#[derive(Debug, Clone, Serialize)]
 pub enum FieldType {
     InBytes = 1,
     InPkts = 2,
@@ -227,8 +224,7 @@ impl From<FieldType> for u16 {
 }
 
 #[repr(u16)]
-#[derive(Debug, Clone, Serialize, Ord, PartialOrd, Eq, PartialEq)]
-#[serde(untagged)]
+#[derive(Debug, Clone, Serialize)]
 pub enum ScopeFieldType {
     System = 1,
     Interface = 2,
