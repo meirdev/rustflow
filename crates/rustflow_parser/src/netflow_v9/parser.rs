@@ -145,56 +145,51 @@ fn parse_template_record_field(input: &[u8]) -> IResult<&[u8], FieldDefinition<F
     ))
 }
 
+fn parse_defined_fields<'a, T, F>(
+    mut input: &'a [u8],
+    field_definitions: &[FieldDefinition<T>],
+    make_drf_type: F,
+) -> IResult<&'a [u8], Vec<DataRecordField>>
+where
+    T: Clone,
+    F: Fn(T) -> DataRecordFieldType,
+{
+    let mut values = Vec::with_capacity(field_definitions.len());
+
+    for field_def in field_definitions {
+        let (input_, value_bytes) = take(field_def.field_length)(input)?;
+
+        values.push(DataRecordField(
+            make_drf_type(field_def.field_type.clone()),
+            value_bytes.into(),
+        ));
+
+        input = input_;
+    }
+
+    Ok((input, values))
+}
+
 fn parse_data_record(
     template: &TemplateRecordType,
 ) -> impl Fn(&[u8]) -> IResult<&[u8], DataRecord> {
-    move |input| {
-        let mut input = input;
+    move |input| match template {
+        TemplateRecordType::Template(template_record) => {
+            parse_defined_fields(input, &template_record.fields, DataRecordFieldType::Field)
+        }
+        TemplateRecordType::OptionsTemplate(options_template_record) => {
+            let (input, scope_values) = parse_defined_fields(
+                input,
+                &options_template_record.scope_fields,
+                DataRecordFieldType::ScopeField,
+            )?;
+            let (input, option_values) = parse_defined_fields(
+                input,
+                &options_template_record.option_fields,
+                DataRecordFieldType::Field,
+            )?;
 
-        match template {
-            TemplateRecordType::Template(template_record) => {
-                let mut values = Vec::new();
-
-                for field in template_record.fields.iter() {
-                    let (input_, value) = take(field.field_length)(input)?;
-
-                    values.push(DataRecordField(
-                        DataRecordFieldType::Field(field.field_type.clone()),
-                        value.into(),
-                    ));
-
-                    input = input_;
-                }
-
-                Ok((input, values))
-            }
-            TemplateRecordType::OptionsTemplate(options_template_record) => {
-                let mut values = Vec::new();
-
-                for field in options_template_record.scope_fields.iter() {
-                    let (input_, value) = take(field.field_length)(input)?;
-
-                    values.push(DataRecordField(
-                        DataRecordFieldType::ScopeField(field.field_type.clone()),
-                        value.into(),
-                    ));
-
-                    input = input_;
-                }
-
-                for field in options_template_record.option_fields.iter() {
-                    let (input_, value) = take(field.field_length)(input)?;
-
-                    values.push(DataRecordField(
-                        DataRecordFieldType::Field(field.field_type.clone()),
-                        value.into(),
-                    ));
-
-                    input = input_;
-                }
-
-                Ok((input, values))
-            }
+            Ok((input, [scope_values, option_values].concat()))
         }
     }
 }
