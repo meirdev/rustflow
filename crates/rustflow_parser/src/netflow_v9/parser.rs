@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use nom::branch::alt;
 use nom::bytes::complete::take;
@@ -10,8 +10,8 @@ use nom::Parser;
 use nom::{IResult, ToUsize};
 
 use crate::netflow_v9::packet::{
-    DataFlowSet, DataFlowSetRecordKey, DataFlowSetRecordValue, FieldDefinition, FieldType, FlowSet,
-    Header, NetFlowV9, OptionsTemplateFlowSet, OptionsTemplateRecord, ScopeFieldType,
+    DataFlowSet, DataRecord, DataRecordField, DataRecordFieldType, FieldDefinition, FieldType,
+    FlowSet, Header, NetFlowV9, OptionsTemplateFlowSet, OptionsTemplateRecord, ScopeFieldType,
     TemplateFlowSet, TemplateRecord, TemplateRecordType, NETFLOW_V9_VERSION,
     OPTIONS_TEMPLATE_FLOW_SET_ID, TEMPLATE_FLOW_SET_ID,
 };
@@ -147,21 +147,21 @@ fn parse_template_record_field(input: &[u8]) -> IResult<&[u8], FieldDefinition<F
 
 fn parse_data_record(
     template: &TemplateRecordType,
-) -> impl Fn(&[u8]) -> IResult<&[u8], BTreeMap<DataFlowSetRecordKey, DataFlowSetRecordValue>> {
+) -> impl Fn(&[u8]) -> IResult<&[u8], DataRecord> {
     move |input| {
         let mut input = input;
 
         match template {
             TemplateRecordType::Template(template_record) => {
-                let mut values: BTreeMap<DataFlowSetRecordKey, DataFlowSetRecordValue> = BTreeMap::new();
+                let mut values = Vec::new();
 
                 for field in template_record.fields.iter() {
                     let (input_, value) = take(field.field_length)(input)?;
 
-                    values.insert(
-                        DataFlowSetRecordKey::Field(field.field_type.clone()),
-                        DataFlowSetRecordValue::Bytes(value.into()),
-                    );
+                    values.push(DataRecordField(
+                        DataRecordFieldType::Field(field.field_type.clone()),
+                        value.into(),
+                    ));
 
                     input = input_;
                 }
@@ -169,15 +169,15 @@ fn parse_data_record(
                 Ok((input, values))
             }
             TemplateRecordType::OptionsTemplate(options_template_record) => {
-                let mut values: BTreeMap<DataFlowSetRecordKey, DataFlowSetRecordValue> = BTreeMap::new();
+                let mut values = Vec::new();
 
                 for field in options_template_record.scope_fields.iter() {
                     let (input_, value) = take(field.field_length)(input)?;
 
-                    values.insert(
-                        DataFlowSetRecordKey::ScopeField(field.field_type.clone()),
-                        DataFlowSetRecordValue::Bytes(value.into()),
-                    );
+                    values.push(DataRecordField(
+                        DataRecordFieldType::ScopeField(field.field_type.clone()),
+                        value.into(),
+                    ));
 
                     input = input_;
                 }
@@ -185,10 +185,10 @@ fn parse_data_record(
                 for field in options_template_record.option_fields.iter() {
                     let (input_, value) = take(field.field_length)(input)?;
 
-                    values.insert(
-                        DataFlowSetRecordKey::Field(field.field_type.clone()),
-                        DataFlowSetRecordValue::Bytes(value.into()),
-                    );
+                    values.push(DataRecordField(
+                        DataRecordFieldType::Field(field.field_type.clone()),
+                        value.into(),
+                    ));
 
                     input = input_;
                 }

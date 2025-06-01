@@ -1,3 +1,5 @@
+use std::net;
+use macaddr::MacAddr6;
 use serde::Serialize;
 
 pub const IPFIX_VERSION: u16 = 10;
@@ -84,4 +86,27 @@ pub struct DataRecord {
 pub enum TemplateRecordType {
     Template(TemplateRecord),
     OptionsTemplate(OptionsTemplateRecord),
+}
+
+pub enum DataType {
+    Octet(u8),
+    Signed8(i8),
+    Unsigned16(u16),
+    Signed16(i16),
+    Unsigned32(u32),
+    Signed32(i32),
+    Unsigned64(u64),
+    Signed64(i64),
+    MacAddress(MacAddr6),
+    Ipv4Address(net::Ipv4Addr),
+    Ipv6Address(net::Ipv6Addr),
+    Float32(f32),
+    Float64(f64),
+    Boolean(bool),
+    String(String),
+    OctetArray(Vec<u8>),
+    DateTimeSeconds(chrono::DateTime<chrono::Utc>),
+    DateTimeMilliseconds(chrono::DateTime<chrono::Utc>),
+    DateTimeMicroseconds(chrono::DateTime<chrono::Utc>),
+    DateTimeNanoseconds(chrono::DateTime<chrono::Utc>),
 }

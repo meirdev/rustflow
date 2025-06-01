@@ -23,7 +23,7 @@ fn main() {
                 match record {
                     netflow_v9::packet::FlowSet::Data(data_flow_set) => {
                         for data_record in &data_flow_set.records {
-                            println!("Data Record: {:?}", serde_json::to_string(&data_record).unwrap());
+                            // println!("Data Record: {:?}", serde_json::to_string(&data_record).unwrap());
                         }
                     }
                     netflow_v9::packet::FlowSet::Template(template_flow_set) => {

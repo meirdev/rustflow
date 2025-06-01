@@ -327,8 +327,10 @@ pub struct OptionsTemplateFlowSet {
 pub struct DataFlowSet {
     pub flow_set_id: u16,
     pub length: u16,
-    pub records: Vec<BTreeMap<DataFlowSetRecordKey, DataFlowSetRecordValue>>,
+    pub records: Vec<DataRecord>,
 }
+
+pub type DataRecord = Vec<DataRecordField>;
 
 #[derive(Debug, Clone, Serialize)]
 pub enum TemplateRecordType {
@@ -336,22 +338,11 @@ pub enum TemplateRecordType {
     OptionsTemplate(OptionsTemplateRecord),
 }
 
-#[derive(Debug, Clone, Serialize, Ord, Eq, PartialEq, PartialOrd)]
-#[serde(untagged)]
-pub enum DataFlowSetRecordKey {
+#[derive(Debug, Clone, Serialize)]
+pub enum DataRecordFieldType {
     Field(FieldType),
     ScopeField(ScopeFieldType),
 }
 
 #[derive(Debug, Clone, Serialize)]
-#[serde(untagged)]
-pub enum DataFlowSetRecordValue {
-    Bytes(Vec<u8>),
-    String(String),
-    U64(u64),
-    U32(u32),
-    U16(u16),
-    U8(u8),
-    Ipv4Addr(std::net::Ipv4Addr),
-    Ipv6Addr(std::net::Ipv6Addr),
-}
+pub struct DataRecordField(pub DataRecordFieldType, pub Vec<u8>);
