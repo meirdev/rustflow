@@ -188,7 +188,7 @@ fn parse_defined_fields<'a>(
     mut input: &'a [u8],
     field_specifiers: &[FieldSpecifier],
 ) -> IResult<&'a [u8], Vec<DataRecordField>> {
-    let mut values = Vec::with_capacity(field_specifiers.len());
+    let mut values = Vec::new();
 
     for field_spec in field_specifiers {
         let (input_, value_bytes) = take(field_spec.field_length)(input)?;

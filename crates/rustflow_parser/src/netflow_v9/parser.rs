@@ -80,7 +80,7 @@ fn parse_template_flow_set(input: &[u8]) -> IResult<&[u8], FlowSet> {
     let (input, flow_set_id) = verify(be_u16, |i| *i == TEMPLATE_FLOW_SET_ID).parse(input)?;
     let (input, length) = be_u16(input)?;
 
-    let (input, records) = all_consuming(many0(parse_template_record)).parse(input)?;
+    let (input, records) = all_consuming(many1(parse_template_record)).parse(input)?;
 
     Ok((
         input,
@@ -130,7 +130,7 @@ where
     T: Clone,
     F: Fn(T) -> DataRecordFieldType,
 {
-    let mut values = Vec::with_capacity(field_definitions.len());
+    let mut values = Vec::new();
 
     for field_def in field_definitions {
         let (input_, value_bytes) = take(field_def.field_length)(input)?;
@@ -183,7 +183,7 @@ fn parse_data_flow_set(
             nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Fail))
         })?;
 
-        let (input, records) = many0(parse_data_record(template_record)).parse(input)?;
+        let (input, records) = many1(parse_data_record(template_record)).parse(input)?;
 
         Ok((
             input,
@@ -254,7 +254,7 @@ fn parse_options_template_flow_set(input: &[u8]) -> IResult<&[u8], FlowSet> {
     let (input, flow_set_id) =
         verify(be_u16, |i| *i == OPTIONS_TEMPLATE_FLOW_SET_ID).parse(input)?;
     let (input, length) = be_u16(input)?;
-    let (input, records) = many0(parse_options_template_record).parse(input)?;
+    let (input, records) = many1(parse_options_template_record).parse(input)?;
 
     Ok((
         input,
