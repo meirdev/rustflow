@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 
-use nom::branch::alt;
 use nom::bytes::complete::take;
-use nom::combinator::{cond, peek, verify};
-use nom::multi::{length_data, many, many0, many1};
+use nom::combinator::{cond, fail, peek, verify};
+use nom::multi::{length_data, many, many1};
 use nom::number::complete::{be_u16, be_u32};
 use nom::sequence::preceded;
 use nom::Parser;
@@ -86,24 +85,17 @@ fn parse_set(templates: &Templates) -> impl Fn(&[u8]) -> IResult<&[u8], Set> {
 
         let (input, header) = parse_set_header(input)?;
 
-        let (_, records) = alt((
-            cond(
-                header.set_id == TEMPLATE_SET_ID,
-                many0(parse_template_record),
-            ),
-            cond(
-                header.set_id == OPTIONS_TEMPLATE_SET_ID,
-                many0(parse_options_template_record),
-            ),
-            cond(
-                templates.contains_key(&(0, header.set_id as TemplateId)),
-                many0(parse_data_record(
-                    templates.get(&(0, header.set_id as TemplateId)).unwrap(),
-                )),
-            ),
-        ))
-        .map_opt(|v| v)
-        .parse(input)?;
+        let (_, records) = match header.set_id {
+            TEMPLATE_SET_ID => many1(parse_template_record).parse(input)?,
+            OPTIONS_TEMPLATE_SET_ID => many1(parse_options_template_record).parse(input)?,
+            _ => {
+                if let Some(template) = templates.get(&(0, header.set_id)) {
+                    many1(parse_data_record(template)).parse(input)?
+                } else {
+                    fail().parse(input)?
+                }
+            }
+        };
 
         Ok((rest, Set { header, records }))
     }
