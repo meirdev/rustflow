@@ -10,13 +10,13 @@ pub const TEMPLATE_SET_ID: u16 = 2;
 pub const OPTIONS_TEMPLATE_SET_ID: u16 = 3;
 
 #[derive(Debug, Clone, Serialize)]
-pub struct IPFIX {
-    pub header: Header,
+pub struct Ipfix {
+    pub message_header: MessageHeader,
     pub sets: Vec<Set>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct Header {
+pub struct MessageHeader {
     pub version: u16,
     pub length: u16,
     pub export_time: u32,
@@ -40,7 +40,7 @@ pub struct SetHeader {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Set {
-    pub header: SetHeader,
+    pub set_header: SetHeader,
     pub records: Vec<Record>,
 }
 
@@ -60,7 +60,7 @@ pub struct TemplateRecordHeader {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TemplateRecord {
-    pub header: TemplateRecordHeader,
+    pub template_record_header: TemplateRecordHeader,
     pub fields: Vec<FieldSpecifier>,
 }
 
@@ -73,7 +73,7 @@ pub struct OptionsTemplateRecordHeader {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct OptionsTemplateRecord {
-    pub header: OptionsTemplateRecordHeader,
+    pub options_template_record_header: OptionsTemplateRecordHeader,
     pub fields: Vec<FieldSpecifier>,
     pub scope_fields: Vec<FieldSpecifier>,
 }
