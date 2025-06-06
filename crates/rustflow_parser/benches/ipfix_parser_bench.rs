@@ -1,7 +1,7 @@
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use rustflow_parser::ipfix::parser::IPFIXParser;
+use rustflow_parser::ipfix::parser::IpfixParser;
 
 fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("parse_ipfix", |b| {
@@ -18,7 +18,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             0x00, 0x08, 0x00, 0x02, 0x00, 0x08, 0x00, 0x98, 0x00, 0x08, 0x00, 0x99, 0x00, 0x08,
         ];
 
-        let parser = IPFIXParser::default();
+        let parser = IpfixParser::default();
 
         b.iter(|| {
             let _ = parser.parse(black_box(&input));

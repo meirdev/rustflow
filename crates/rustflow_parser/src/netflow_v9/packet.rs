@@ -277,10 +277,18 @@ pub struct Header {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub enum FlowSet {
-    Template(TemplateFlowSet),
-    Data(DataFlowSet),
-    OptionsTemplate(OptionsTemplateFlowSet),
+pub struct FlowSet {
+    pub flow_set_id: u16,
+    pub length: u16,
+    pub records: Vec<FlowSetRecord>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub enum FlowSetRecord {
+    Template(TemplateRecord),
+    OptionsTemplate(OptionsTemplateRecord),
+    Data(DataRecord),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -297,33 +305,12 @@ pub struct TemplateRecord {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct TemplateFlowSet {
-    pub flow_set_id: u16,
-    pub length: u16,
-    pub records: Vec<TemplateRecord>,
-}
-
-#[derive(Debug, Clone, Serialize)]
 pub struct OptionsTemplateRecord {
     pub template_id: u16,
     pub option_scope_length: u16,
     pub option_length: u16,
     pub scope_fields: Vec<FieldDefinition<ScopeFieldType>>,
     pub option_fields: Vec<FieldDefinition<FieldType>>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct OptionsTemplateFlowSet {
-    pub flow_set_id: u16,
-    pub length: u16,
-    pub records: Vec<OptionsTemplateRecord>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct DataFlowSet {
-    pub flow_set_id: u16,
-    pub length: u16,
-    pub records: Vec<DataRecord>,
 }
 
 pub type DataRecord = Vec<DataRecordField>;

@@ -1,19 +1,16 @@
 use std::collections::HashMap;
 
-use nom::branch::alt;
-use nom::bytes::complete::take;
-use nom::combinator::{all_consuming, map_parser, peek, verify};
-use nom::multi::{length_data, many, many0, many1};
-use nom::number::complete::{be_u16, be_u32};
-use nom::sequence::preceded;
 use nom::Parser;
+use nom::bytes::complete::take;
+use nom::combinator::{fail, verify};
+use nom::multi::{many, many0, many1};
+use nom::number::complete::{be_u16, be_u32};
 use nom::{IResult, ToUsize};
 
 use crate::netflow_v9::packet::{
-    DataFlowSet, DataRecord, DataRecordField, DataRecordFieldType, FieldDefinition, FieldType,
-    FlowSet, Header, NetFlowV9, OptionsTemplateFlowSet, OptionsTemplateRecord, ScopeFieldType,
-    TemplateFlowSet, TemplateRecord, TemplateRecordType, NETFLOW_V9_VERSION,
-    OPTIONS_TEMPLATE_FLOW_SET_ID, TEMPLATE_FLOW_SET_ID,
+    DataRecordField, DataRecordFieldType, FieldDefinition, FieldType, FlowSet, FlowSetRecord,
+    Header, NETFLOW_V9_VERSION, NetFlowV9, OPTIONS_TEMPLATE_FLOW_SET_ID, OptionsTemplateRecord,
+    ScopeFieldType, TEMPLATE_FLOW_SET_ID, TemplateRecord, TemplateRecordType,
 };
 
 type ObservationDomain = u32;
@@ -76,23 +73,7 @@ fn parse_header(input: &[u8]) -> IResult<&[u8], Header> {
     ))
 }
 
-fn parse_template_flow_set(input: &[u8]) -> IResult<&[u8], FlowSet> {
-    let (input, flow_set_id) = verify(be_u16, |i| *i == TEMPLATE_FLOW_SET_ID).parse(input)?;
-    let (input, length) = be_u16(input)?;
-
-    let (input, records) = all_consuming(many1(parse_template_record)).parse(input)?;
-
-    Ok((
-        input,
-        FlowSet::Template(TemplateFlowSet {
-            flow_set_id,
-            length,
-            records,
-        }),
-    ))
-}
-
-fn parse_template_record(input: &[u8]) -> IResult<&[u8], TemplateRecord> {
+fn parse_template_record(input: &[u8]) -> IResult<&[u8], FlowSetRecord> {
     let (input, template_id) = be_u16(input)?;
     let (input, field_count) = be_u16(input)?;
     let (input, fields) =
@@ -100,11 +81,11 @@ fn parse_template_record(input: &[u8]) -> IResult<&[u8], TemplateRecord> {
 
     Ok((
         input,
-        TemplateRecord {
+        FlowSetRecord::Template(TemplateRecord {
             template_id,
             field_count,
             fields,
-        },
+        }),
     ))
 }
 
@@ -148,10 +129,13 @@ where
 
 fn parse_data_record(
     template: &TemplateRecordType,
-) -> impl Fn(&[u8]) -> IResult<&[u8], DataRecord> {
+) -> impl Fn(&[u8]) -> IResult<&[u8], FlowSetRecord> {
     move |input| match template {
         TemplateRecordType::Template(template_record) => {
-            parse_defined_fields(input, &template_record.fields, DataRecordFieldType::Field)
+            let (input, values) =
+                parse_defined_fields(input, &template_record.fields, DataRecordFieldType::Field)?;
+
+            Ok((input, FlowSetRecord::Data(values)))
         }
         TemplateRecordType::OptionsTemplate(options_template_record) => {
             let (input, scope_values) = parse_defined_fields(
@@ -165,34 +149,11 @@ fn parse_data_record(
                 DataRecordFieldType::Field,
             )?;
 
-            Ok((input, [scope_values, option_values].concat()))
+            Ok((
+                input,
+                FlowSetRecord::Data([scope_values, option_values].concat()),
+            ))
         }
-    }
-}
-
-fn parse_data_flow_set(
-    templates: &Templates,
-    source_id: ObservationDomain,
-) -> impl Fn(&[u8]) -> IResult<&[u8], FlowSet> {
-    move |input| {
-        let (input, flow_set_id) = be_u16(input)?;
-        let (input, length) = be_u16(input)?;
-
-        let template_key = (source_id, flow_set_id);
-        let template_record = templates.get(&template_key).ok_or_else(|| {
-            nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Fail))
-        })?;
-
-        let (input, records) = many1(parse_data_record(template_record)).parse(input)?;
-
-        Ok((
-            input,
-            FlowSet::Data(DataFlowSet {
-                flow_set_id,
-                length,
-                records,
-            }),
-        ))
     }
 }
 
@@ -226,7 +187,7 @@ fn parse_options_template_record_option_field(
     ))
 }
 
-fn parse_options_template_record(input: &[u8]) -> IResult<&[u8], OptionsTemplateRecord> {
+fn parse_options_template_record(input: &[u8]) -> IResult<&[u8], FlowSetRecord> {
     let (input, template_id) = be_u16(input)?;
     let (input, option_scope_length) = be_u16(input)?;
     let (input, option_length) = be_u16(input)?;
@@ -240,45 +201,50 @@ fn parse_options_template_record(input: &[u8]) -> IResult<&[u8], OptionsTemplate
 
     Ok((
         input,
-        OptionsTemplateRecord {
+        FlowSetRecord::OptionsTemplate(OptionsTemplateRecord {
             template_id,
             option_scope_length,
             option_length,
             scope_fields,
             option_fields,
-        },
+        }),
     ))
 }
 
-fn parse_options_template_flow_set(input: &[u8]) -> IResult<&[u8], FlowSet> {
-    let (input, flow_set_id) =
-        verify(be_u16, |i| *i == OPTIONS_TEMPLATE_FLOW_SET_ID).parse(input)?;
-    let (input, length) = be_u16(input)?;
-    let (input, records) = many1(parse_options_template_record).parse(input)?;
+fn parse_flow_set(templates: &Templates) -> impl Fn(&[u8]) -> IResult<&[u8], FlowSet> {
+    move |input| {
+        let (input, flow_set_id) = be_u16(input)?;
+        let (input, length) = be_u16(input)?;
 
-    Ok((
-        input,
-        FlowSet::OptionsTemplate(OptionsTemplateFlowSet {
-            flow_set_id,
-            length,
-            records,
-        }),
-    ))
+        let (rest, input) = take(length - 4)(input)?;
+
+        let (_, records) = match flow_set_id {
+            TEMPLATE_FLOW_SET_ID => many1(parse_template_record).parse(input)?,
+            OPTIONS_TEMPLATE_FLOW_SET_ID => many1(parse_options_template_record).parse(input)?,
+            _ => {
+                if let Some(template) = templates.get(&(0, flow_set_id)) {
+                    many1(parse_data_record(template)).parse(input)?
+                } else {
+                    fail().parse(input)?
+                }
+            }
+        };
+
+        Ok((
+            rest,
+            FlowSet {
+                flow_set_id,
+                length,
+                records,
+            },
+        ))
+    }
 }
 
 pub fn parse_netflow_v9(templates: &Templates) -> impl FnMut(&[u8]) -> IResult<&[u8], NetFlowV9> {
     move |input| {
         let (input, header) = parse_header(input)?;
-
-        let (input, flow_sets) = all_consuming(many1(map_parser(
-            length_data(peek(preceded(be_u16, be_u16))),
-            alt((
-                parse_template_flow_set,
-                parse_options_template_flow_set,
-                parse_data_flow_set(templates, header.source_id),
-            )),
-        )))
-        .parse(input)?;
+        let (input, flow_sets) = many1(parse_flow_set(templates)).parse(input)?;
 
         Ok((input, NetFlowV9 { header, flow_sets }))
     }
