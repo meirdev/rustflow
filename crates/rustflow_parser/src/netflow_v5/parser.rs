@@ -117,6 +117,7 @@ fn parse_netflow_v5(input: &[u8]) -> IResult<&[u8], NetFlowV5> {
     ))
 }
 
+#[cfg(test)]
 mod test {
     use super::*;
 

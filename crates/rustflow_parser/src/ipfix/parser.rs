@@ -1,17 +1,17 @@
 use std::collections::HashMap;
 
+use nom::Parser;
 use nom::bytes::complete::take;
 use nom::combinator::{cond, fail, peek, verify};
 use nom::multi::{length_data, many, many1};
 use nom::number::complete::{be_u16, be_u32};
 use nom::sequence::preceded;
-use nom::Parser;
 use nom::{IResult, ToUsize};
 
 use crate::ipfix::packet::{
-    DataRecord, DataRecordField, FieldSpecifier, MessageHeader, OptionsTemplateRecord,
-    OptionsTemplateRecordHeader, Record, Set, SetHeader, TemplateRecord, TemplateRecordHeader,
-    TemplateRecordType, Ipfix, IPFIX_VERSION, OPTIONS_TEMPLATE_SET_ID, TEMPLATE_SET_ID,
+    DataRecord, DataRecordField, FieldSpecifier, IPFIX_VERSION, Ipfix, MessageHeader,
+    OPTIONS_TEMPLATE_SET_ID, OptionsTemplateRecord, OptionsTemplateRecordHeader, Record, Set,
+    SetHeader, TEMPLATE_SET_ID, TemplateRecord, TemplateRecordHeader, TemplateRecordType,
 };
 
 type ObservationDomain = u32;
@@ -53,7 +53,7 @@ impl IpfixParser {
     }
 }
 
-fn parse_header(input: &[u8]) -> IResult<&[u8], MessageHeader> {
+fn parse_message_header(input: &[u8]) -> IResult<&[u8], MessageHeader> {
     let (input, version) = verify(be_u16, |i| *i == IPFIX_VERSION).parse(input)?;
     let (input, length) = be_u16(input)?;
     let (input, export_time) = be_u32(input)?;
@@ -83,13 +83,13 @@ fn parse_set(templates: &Templates) -> impl Fn(&[u8]) -> IResult<&[u8], Set> {
     move |input| {
         let (rest, input) = length_data(peek(preceded(be_u16, be_u16))).parse(input)?;
 
-        let (input, header) = parse_set_header(input)?;
+        let (input, set_header) = parse_set_header(input)?;
 
-        let (_, records) = match header.set_id {
+        let (_, records) = match set_header.set_id {
             TEMPLATE_SET_ID => many1(parse_template_record).parse(input)?,
             OPTIONS_TEMPLATE_SET_ID => many1(parse_options_template_record).parse(input)?,
             _ => {
-                if let Some(template) = templates.get(&(0, header.set_id)) {
+                if let Some(template) = templates.get(&(0, set_header.set_id)) {
                     many1(parse_data_record(template)).parse(input)?
                 } else {
                     fail().parse(input)?
@@ -97,7 +97,13 @@ fn parse_set(templates: &Templates) -> impl Fn(&[u8]) -> IResult<&[u8], Set> {
             }
         };
 
-        Ok((rest, Set { set_header: header, records }))
+        Ok((
+            rest,
+            Set {
+                set_header,
+                records,
+            },
+        ))
     }
 }
 
@@ -141,10 +147,19 @@ fn parse_template_record_header(input: &[u8]) -> IResult<&[u8], TemplateRecordHe
 
 fn parse_template_record(input: &[u8]) -> IResult<&[u8], Record> {
     let (input, template_record_header) = parse_template_record_header.parse(input)?;
-    let (input, fields) =
-        many(0..=template_record_header.field_count.to_usize(), parse_field_specifier).parse(input)?;
+    let (input, fields) = many(
+        0..=template_record_header.field_count.to_usize(),
+        parse_field_specifier,
+    )
+    .parse(input)?;
 
-    Ok((input, Record::Template(TemplateRecord { template_record_header, fields })))
+    Ok((
+        input,
+        Record::Template(TemplateRecord {
+            template_record_header,
+            fields,
+        }),
+    ))
 }
 
 fn parse_options_template_record_header(
@@ -165,9 +180,13 @@ fn parse_options_template_record_header(
 }
 
 fn parse_options_template_record(input: &[u8]) -> IResult<&[u8], Record> {
-    let (input, options_template_record_header) = parse_options_template_record_header.parse(input)?;
-    let (input, fields) =
-        many(0..=options_template_record_header.field_count.to_usize(), parse_field_specifier).parse(input)?;
+    let (input, options_template_record_header) =
+        parse_options_template_record_header.parse(input)?;
+    let (input, fields) = many(
+        0..=options_template_record_header.field_count.to_usize(),
+        parse_field_specifier,
+    )
+    .parse(input)?;
     let (input, scope_fields) = many(
         0..=options_template_record_header.scope_field_count.to_usize(),
         parse_field_specifier,
@@ -228,9 +247,15 @@ fn parse_data_record(template: &TemplateRecordType) -> impl Fn(&[u8]) -> IResult
 
 fn parse_ipfix(templates: &Templates) -> impl FnMut(&[u8]) -> IResult<&[u8], Ipfix> {
     move |input| {
-        let (input, message_header) = parse_header(input)?;
+        let (input, message_header) = parse_message_header(input)?;
         let (input, sets) = many1(parse_set(templates)).parse(input)?;
 
-        Ok((input, Ipfix { message_header, sets }))
+        Ok((
+            input,
+            Ipfix {
+                message_header,
+                sets,
+            },
+        ))
     }
 }
