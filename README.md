@@ -1,4 +1,4 @@
-# RustFlow
+# RustFlow 🦀
 
 WIP
 
