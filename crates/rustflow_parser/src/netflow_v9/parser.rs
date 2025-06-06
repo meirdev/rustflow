@@ -218,16 +218,15 @@ fn parse_flow_set(templates: &Templates) -> impl Fn(&[u8]) -> IResult<&[u8], Flo
 
         let (rest, input) = take(length - 4)(input)?;
 
-        let (_, records) = match flow_set_id {
-            TEMPLATE_FLOW_SET_ID => many1(parse_template_record).parse(input)?,
-            OPTIONS_TEMPLATE_FLOW_SET_ID => many1(parse_options_template_record).parse(input)?,
-            _ => {
-                if let Some(template) = templates.get(&(0, flow_set_id)) {
-                    many1(parse_data_record(template)).parse(input)?
-                } else {
-                    fail().parse(input)?
-                }
+        let (_, records) = match templates.get(&(0, flow_set_id)) {
+            Some(template) => many1(parse_data_record(template)).parse(input)?,
+            None if flow_set_id == TEMPLATE_FLOW_SET_ID => {
+                many1(parse_template_record).parse(input)?
             }
+            None if flow_set_id == OPTIONS_TEMPLATE_FLOW_SET_ID => {
+                many1(parse_options_template_record).parse(input)?
+            }
+            _ => fail().parse(input)?,
         };
 
         Ok((
