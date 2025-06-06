@@ -8,7 +8,7 @@ use rustflow_parser::ipfix;
 fn main() {
     let socket = UdpSocket::bind("0.0.0.0:8020").expect("couldn't bind to address");
 
-    let mut parser = ipfix::parser::IPFIXParser::default();
+    let mut parser = ipfix::parser::IpfixParser::default();
     // let mut parser = netflow_v9::parser::NetFlowV9Parser::default();
 
     loop {
@@ -53,11 +53,11 @@ fn main() {
                     match record {
                         ipfix::packet::Record::Template(template_record) => {
                             // println!("Template ID: {}, Fields: {:?}", template_record.header.template_id, template_record.fields);
-                            parser.register_template(0, template_record.header.template_id, ipfix::packet::TemplateRecordType::Template(template_record.clone()));
+                            parser.register_template(0, template_record.template_record_header.template_id, ipfix::packet::TemplateRecordType::Template(template_record.clone()));
                         }
                         ipfix::packet::Record::OptionsTemplate(options_template_record) => {
                             // println!("Options Template ID: {}, Fields: {:?}", options_template_record.header.template_id, options_template_record.fields);
-                            parser.register_template(0, options_template_record.header.template_id, ipfix::packet::TemplateRecordType::OptionsTemplate(options_template_record.clone()));
+                            parser.register_template(0, options_template_record.options_template_record_header.template_id, ipfix::packet::TemplateRecordType::OptionsTemplate(options_template_record.clone()));
                         }
                         ipfix::packet::Record::Data(data_record) => {
                             // println!("Data Record: {:?}", serde_json::to_string(&data_record).unwrap());

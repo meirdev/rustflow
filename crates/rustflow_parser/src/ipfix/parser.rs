@@ -9,9 +9,9 @@ use nom::Parser;
 use nom::{IResult, ToUsize};
 
 use crate::ipfix::packet::{
-    DataRecord, DataRecordField, FieldSpecifier, Header, OptionsTemplateRecord,
+    DataRecord, DataRecordField, FieldSpecifier, MessageHeader, OptionsTemplateRecord,
     OptionsTemplateRecordHeader, Record, Set, SetHeader, TemplateRecord, TemplateRecordHeader,
-    TemplateRecordType, IPFIX, IPFIX_VERSION, OPTIONS_TEMPLATE_SET_ID, TEMPLATE_SET_ID,
+    TemplateRecordType, Ipfix, IPFIX_VERSION, OPTIONS_TEMPLATE_SET_ID, TEMPLATE_SET_ID,
 };
 
 type ObservationDomain = u32;
@@ -21,20 +21,20 @@ type TemplateKey = (ObservationDomain, TemplateId);
 type Templates = HashMap<TemplateKey, TemplateRecordType>;
 
 #[derive(Debug, Clone)]
-pub struct IPFIXParser {
+pub struct IpfixParser {
     templates: Templates,
 }
 
-impl Default for IPFIXParser {
+impl Default for IpfixParser {
     fn default() -> Self {
-        IPFIXParser {
+        IpfixParser {
             templates: HashMap::new(),
         }
     }
 }
 
-impl IPFIXParser {
-    pub fn parse<'a>(&'a self, input: &'a [u8]) -> IResult<&'a [u8], IPFIX> {
+impl IpfixParser {
+    pub fn parse<'a>(&'a self, input: &'a [u8]) -> IResult<&'a [u8], Ipfix> {
         parse_ipfix(&self.templates)(input)
     }
 
@@ -53,7 +53,7 @@ impl IPFIXParser {
     }
 }
 
-fn parse_header(input: &[u8]) -> IResult<&[u8], Header> {
+fn parse_header(input: &[u8]) -> IResult<&[u8], MessageHeader> {
     let (input, version) = verify(be_u16, |i| *i == IPFIX_VERSION).parse(input)?;
     let (input, length) = be_u16(input)?;
     let (input, export_time) = be_u32(input)?;
@@ -62,7 +62,7 @@ fn parse_header(input: &[u8]) -> IResult<&[u8], Header> {
 
     Ok((
         input,
-        Header {
+        MessageHeader {
             version,
             length,
             export_time,
@@ -97,7 +97,7 @@ fn parse_set(templates: &Templates) -> impl Fn(&[u8]) -> IResult<&[u8], Set> {
             }
         };
 
-        Ok((rest, Set { header, records }))
+        Ok((rest, Set { set_header: header, records }))
     }
 }
 
@@ -140,11 +140,11 @@ fn parse_template_record_header(input: &[u8]) -> IResult<&[u8], TemplateRecordHe
 }
 
 fn parse_template_record(input: &[u8]) -> IResult<&[u8], Record> {
-    let (input, header) = parse_template_record_header.parse(input)?;
+    let (input, template_record_header) = parse_template_record_header.parse(input)?;
     let (input, fields) =
-        many(0..=header.field_count.to_usize(), parse_field_specifier).parse(input)?;
+        many(0..=template_record_header.field_count.to_usize(), parse_field_specifier).parse(input)?;
 
-    Ok((input, Record::Template(TemplateRecord { header, fields })))
+    Ok((input, Record::Template(TemplateRecord { template_record_header, fields })))
 }
 
 fn parse_options_template_record_header(
@@ -165,11 +165,11 @@ fn parse_options_template_record_header(
 }
 
 fn parse_options_template_record(input: &[u8]) -> IResult<&[u8], Record> {
-    let (input, header) = parse_options_template_record_header.parse(input)?;
+    let (input, options_template_record_header) = parse_options_template_record_header.parse(input)?;
     let (input, fields) =
-        many(0..=header.field_count.to_usize(), parse_field_specifier).parse(input)?;
+        many(0..=options_template_record_header.field_count.to_usize(), parse_field_specifier).parse(input)?;
     let (input, scope_fields) = many(
-        0..=header.scope_field_count.to_usize(),
+        0..=options_template_record_header.scope_field_count.to_usize(),
         parse_field_specifier,
     )
     .parse(input)?;
@@ -177,7 +177,7 @@ fn parse_options_template_record(input: &[u8]) -> IResult<&[u8], Record> {
     Ok((
         input,
         Record::OptionsTemplate(OptionsTemplateRecord {
-            header,
+            options_template_record_header,
             fields,
             scope_fields,
         }),
@@ -226,11 +226,11 @@ fn parse_data_record(template: &TemplateRecordType) -> impl Fn(&[u8]) -> IResult
     }
 }
 
-fn parse_ipfix(templates: &Templates) -> impl FnMut(&[u8]) -> IResult<&[u8], IPFIX> {
+fn parse_ipfix(templates: &Templates) -> impl FnMut(&[u8]) -> IResult<&[u8], Ipfix> {
     move |input| {
-        let (input, header) = parse_header(input)?;
+        let (input, message_header) = parse_header(input)?;
         let (input, sets) = many1(parse_set(templates)).parse(input)?;
 
-        Ok((input, IPFIX { header, sets }))
+        Ok((input, Ipfix { message_header, sets }))
     }
 }
