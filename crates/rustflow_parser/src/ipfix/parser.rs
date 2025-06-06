@@ -210,14 +210,31 @@ fn parse_defined_fields<'a>(
     let mut values = Vec::new();
 
     for field_spec in field_specifiers {
-        let (input_, value_bytes) = take(field_spec.field_length)(input)?;
+        let mut value_bytes: &'a [u8];
+
+        if field_spec.field_length == 0xffff {
+            let (input_, value_length) = be_u8(input)?;
+
+            if value_length < 0xff {
+                let (input_, value_bytes) = take(value_length as usize)(input)?;
+
+                input = input_;
+            } else {
+                let (input_, value_length) = be_u16(input)?;
+                let (input_, value_bytes) = take(value_length as usize)(input)?;
+
+                input = input_;
+            }
+        } else {
+            let (input_, value_bytes) = take(field_spec.field_length)(input)?;
+
+            input = input_;
+        }
 
         values.push(DataRecordField(
             field_spec.information_element_identifier,
             value_bytes.into(),
         ));
-
-        input = input_;
     }
 
     Ok((input, values))
