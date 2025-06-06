@@ -244,7 +244,17 @@ fn parse_flow_set(templates: &Templates) -> impl Fn(&[u8]) -> IResult<&[u8], Flo
 pub fn parse_netflow_v9(templates: &Templates) -> impl FnMut(&[u8]) -> IResult<&[u8], NetFlowV9> {
     move |input| {
         let (input, header) = parse_header(input)?;
-        let (input, flow_sets) = many1(parse_flow_set(templates)).parse(input)?;
+        let (input, flow_sets) = verify(
+            many1(parse_flow_set(templates)),
+            |flow_sets: &Vec<FlowSet>| {
+                flow_sets
+                    .iter()
+                    .map(|flow_set| flow_set.records.len())
+                    .sum::<usize>()
+                    == header.count as usize
+            },
+        )
+        .parse(input)?;
 
         Ok((input, NetFlowV9 { header, flow_sets }))
     }
