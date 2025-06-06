@@ -5,6 +5,12 @@ edition = "2024"
 
 [dependencies]
 chrono = "0.4.41"
+criterion = "0.6.0"
 macaddr = "1.0.1"
 nom = "8.0.0"
+nom_derive = "0.10.1"
 serde = { version = "1.0.219", features = ["derive"] }
+
+[[bench]]
+name = "netflow_v5_parser_bench"
+harness = false
