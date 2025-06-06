@@ -148,7 +148,7 @@ fn parse_template_record_header(input: &[u8]) -> IResult<&[u8], TemplateRecordHe
 }
 
 fn parse_template_record(input: &[u8]) -> IResult<&[u8], Record> {
-    let (input, template_record_header) = parse_template_record_header.parse(input)?;
+    let (input, template_record_header) = parse_template_record_header(input)?;
     let (input, fields) = many(
         0..=template_record_header.field_count.to_usize(),
         parse_field_specifier,
@@ -184,7 +184,7 @@ fn parse_options_template_record_header(
 
 fn parse_options_template_record(input: &[u8]) -> IResult<&[u8], Record> {
     let (input, options_template_record_header) =
-        parse_options_template_record_header.parse(input)?;
+        parse_options_template_record_header(input)?;
     let (input, fields) = many(
         0..=options_template_record_header.field_count.to_usize(),
         parse_field_specifier,

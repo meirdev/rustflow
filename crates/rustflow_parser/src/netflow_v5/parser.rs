@@ -34,7 +34,7 @@ fn parse_header(input: &[u8]) -> IResult<&[u8], Header> {
     let (input, engine_id) = be_u8(input)?;
     let (input, sampling_interval) = be_u16(input)?;
 
-    let sampling_mode = sampling_interval >> 14;
+    let sampling_mode = (sampling_interval >> 14) as u8;
     let sampling_interval = sampling_interval & 0x3fff;
 
     Ok((

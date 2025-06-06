@@ -33,10 +33,10 @@ pub struct Header {
     pub engine_type: u8,
     /// Slot number of the flow-switching engine.
     pub engine_id: u8,
-    /// The most significant 2 bits are used for sampling mode.
-    pub sampling_mode: u16, // 2 bits
-    /// The least significant 14 bits are used for sampling interval.
-    pub sampling_interval: u16, // 14 bits
+    /// The first two bits hold the sampling mode.
+    pub sampling_mode: u8,
+    /// The remaining 14 bits hold the value of sampling interval.
+    pub sampling_interval: u16,
 }
 
 /// Represents a single flow record in a NetFlow Version 5 packet.
