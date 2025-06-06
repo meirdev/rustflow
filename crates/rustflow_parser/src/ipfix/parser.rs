@@ -111,16 +111,12 @@ fn parse_set(templates: &Templates) -> impl Fn(&[u8]) -> IResult<&[u8], Set> {
 fn parse_field_specifier(input: &[u8]) -> IResult<&[u8], FieldSpecifier> {
     let (input, enterprise_bit_and_information_element_identifier) = be_u16(input)?;
 
-    let enterprise_bit: u16 = if enterprise_bit_and_information_element_identifier & 0x8000 != 0 {
-        1
-    } else {
-        0
-    };
+    let enterprise_bit = enterprise_bit_and_information_element_identifier & 0x8000 != 0;
 
     let information_element_identifier = enterprise_bit_and_information_element_identifier & 0x7FFF;
 
     let (input, field_length) = be_u16(input)?;
-    let (input, enterprise_number) = cond(enterprise_bit == 1, be_u32).parse(input)?;
+    let (input, enterprise_number) = cond(enterprise_bit, be_u32).parse(input)?;
 
     Ok((
         input,
