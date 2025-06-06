@@ -1,13 +1,10 @@
-use std::net::Ipv4Addr;
-
-use nom::bytes::complete::take;
+use nom::Parser;
 use nom::combinator::{all_consuming, verify};
 use nom::multi::many;
-use nom::number::complete::{be_u16, be_u32, be_u8};
-use nom::Parser;
+use nom::number::complete::{be_u8, be_u16, be_u32};
 use nom::{IResult, ToUsize};
 
-use crate::netflow_v7::packet::{FlowRecord, Header, NetFlowV7, NETFLOW_V7_VERSION};
+use crate::netflow_v7::packet::{FlowRecord, Header, NETFLOW_V7_VERSION, NetFlowV7};
 
 pub struct NetFlowV7Parser;
 
@@ -47,9 +44,9 @@ fn parse_header(input: &[u8]) -> IResult<&[u8], Header> {
 }
 
 fn parse_flow_record(input: &[u8]) -> IResult<&[u8], FlowRecord> {
-    let (input, srcaddr) = take(4u8)(input)?;
-    let (input, dstaddr) = take(4u8)(input)?;
-    let (input, nexthop) = take(4u8)(input)?;
+    let (input, srcaddr) = be_u32(input)?;
+    let (input, dstaddr) = be_u32(input)?;
+    let (input, nexthop) = be_u32(input)?;
     let (input, input_) = be_u16(input)?;
     let (input, output) = be_u16(input)?;
     let (input, d_pkts) = be_u32(input)?;
@@ -72,9 +69,9 @@ fn parse_flow_record(input: &[u8]) -> IResult<&[u8], FlowRecord> {
     Ok((
         input,
         FlowRecord {
-            srcaddr: Ipv4Addr::from([srcaddr[0], srcaddr[1], srcaddr[2], srcaddr[3]]),
-            dstaddr: Ipv4Addr::from([dstaddr[0], dstaddr[1], dstaddr[2], dstaddr[3]]),
-            nexthop: Ipv4Addr::from([nexthop[0], nexthop[1], nexthop[2], nexthop[3]]),
+            srcaddr: srcaddr.into(),
+            dstaddr: dstaddr.into(),
+            nexthop: nexthop.into(),
             input: input_,
             output,
             d_pkts,
