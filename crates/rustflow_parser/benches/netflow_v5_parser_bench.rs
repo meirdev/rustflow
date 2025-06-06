@@ -1,6 +1,7 @@
-use criterion::{Criterion, criterion_group, criterion_main};
-use rustflow_parser::netflow_v5::parser::NetFlowV5Parser;
 use std::hint::black_box;
+
+use criterion::{criterion_group, criterion_main, Criterion};
+use rustflow_parser::netflow_v5::parser::NetFlowV5Parser;
 
 fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("parse_netflow_v5", |b| {

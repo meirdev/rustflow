@@ -9,6 +9,8 @@ pub const TEMPLATE_SET_ID: u16 = 2;
 
 pub const OPTIONS_TEMPLATE_SET_ID: u16 = 3;
 
+pub const VALID_TEMPLATE_ID_RANGE: std::ops::RangeInclusive<u16> = 256..=65535;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Ipfix {
     pub message_header: MessageHeader,

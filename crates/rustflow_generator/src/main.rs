@@ -1,9 +1,10 @@
-use clap::{Args, Parser, ValueEnum, value_parser};
-use ipnet::Ipv4Net;
-use net::Ipv4Addr;
 use std::net;
 use std::ops::RangeInclusive;
 use std::str::FromStr;
+
+use clap::{value_parser, Args, Parser, ValueEnum};
+use ipnet::Ipv4Net;
+use net::Ipv4Addr;
 
 #[derive(Debug, Clone)]
 enum Port {

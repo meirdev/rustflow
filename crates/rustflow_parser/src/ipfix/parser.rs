@@ -1,17 +1,18 @@
 use std::collections::HashMap;
 
-use nom::Parser;
 use nom::bytes::complete::take;
-use nom::combinator::{cond, fail, peek, verify};
+use nom::combinator::{cond, fail, map, peek, verify};
 use nom::multi::{length_data, many, many1};
-use nom::number::complete::{be_u16, be_u32};
+use nom::number::complete::{be_u16, be_u32, be_u8};
 use nom::sequence::preceded;
+use nom::Parser;
 use nom::{IResult, ToUsize};
 
 use crate::ipfix::packet::{
-    DataRecord, DataRecordField, FieldSpecifier, IPFIX_VERSION, Ipfix, MessageHeader,
-    OPTIONS_TEMPLATE_SET_ID, OptionsTemplateRecord, OptionsTemplateRecordHeader, Record, Set,
-    SetHeader, TEMPLATE_SET_ID, TemplateRecord, TemplateRecordHeader, TemplateRecordType,
+    DataRecord, DataRecordField, FieldSpecifier, Ipfix, MessageHeader, OptionsTemplateRecord,
+    OptionsTemplateRecordHeader, Record, Set, SetHeader, TemplateRecord, TemplateRecordHeader,
+    TemplateRecordType, IPFIX_VERSION, OPTIONS_TEMPLATE_SET_ID, TEMPLATE_SET_ID,
+    VALID_TEMPLATE_ID_RANGE,
 };
 
 type ObservationDomain = u32;
@@ -133,7 +134,8 @@ fn parse_field_specifier(input: &[u8]) -> IResult<&[u8], FieldSpecifier> {
 }
 
 fn parse_template_record_header(input: &[u8]) -> IResult<&[u8], TemplateRecordHeader> {
-    let (input, template_id) = verify(be_u16, |i| *i > 255).parse(input)?;
+    let (input, template_id) =
+        verify(be_u16, |i| VALID_TEMPLATE_ID_RANGE.contains(i)).parse(input)?;
     let (input, field_count) = be_u16(input)?;
 
     Ok((
@@ -165,7 +167,8 @@ fn parse_template_record(input: &[u8]) -> IResult<&[u8], Record> {
 fn parse_options_template_record_header(
     input: &[u8],
 ) -> IResult<&[u8], OptionsTemplateRecordHeader> {
-    let (input, template_id) = verify(be_u16, |i| *i > 255).parse(input)?;
+    let (input, template_id) =
+        verify(be_u16, |i| VALID_TEMPLATE_ID_RANGE.contains(i)).parse(input)?;
     let (input, field_count) = be_u16(input)?;
     let (input, scope_field_count) = be_u16(input)?;
 
@@ -210,23 +213,25 @@ fn parse_defined_fields<'a>(
     let mut values = Vec::new();
 
     for field_spec in field_specifiers {
-        let mut value_bytes: &'a [u8];
+        let mut value_length: u16;
+        let value_bytes: &'a [u8];
+        let input_: &'a [u8];
 
         if field_spec.field_length == 0xffff {
-            let (input_, value_length) = be_u8(input)?;
+            (input, value_length) = map(be_u8, |i| i as u16).parse(input)?;
 
             if value_length < 0xff {
-                let (input_, value_bytes) = take(value_length as usize)(input)?;
+                (input_, value_bytes) = take(value_length as usize)(input)?;
 
                 input = input_;
             } else {
-                let (input_, value_length) = be_u16(input)?;
-                let (input_, value_bytes) = take(value_length as usize)(input)?;
+                (input, value_length) = be_u16(input)?;
+                (input_, value_bytes) = take(value_length as usize)(input)?;
 
                 input = input_;
             }
         } else {
-            let (input_, value_bytes) = take(field_spec.field_length)(input)?;
+            (input_, value_bytes) = take(field_spec.field_length)(input)?;
 
             input = input_;
         }
