@@ -16,8 +16,7 @@ pub struct NetFlowV7 {
 pub struct Header {
     /// NetFlow export format version number (should be 7).
     pub version: u16,
-    /// Number of flows exported in this flow frame (protocol data unit, or
-    /// PDU).
+    /// Number of flows exported in this packet (1-30).
     pub count: u16,
     /// Current time in milliseconds since the export device booted.
     pub sys_uptime: u32,
@@ -31,13 +30,13 @@ pub struct Header {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FlowRecord {
-    /// Source IP address; in case of destination-only flows, set to zero.
+    /// Source IP address.
     pub srcaddr: Ipv4Addr,
     /// Destination IP address.
     pub dstaddr: Ipv4Addr,
-    /// Next hop router; always set to zero.
+    /// IP address of next hop router.
     pub nexthop: Ipv4Addr,
-    /// SNMP index of input interface; always set to zero.
+    /// SNMP index of input interface.
     pub input: u16,
     /// SNMP index of output interface.
     pub output: u16,
@@ -45,36 +44,29 @@ pub struct FlowRecord {
     pub d_pkts: u32,
     /// Total number of Layer 3 bytes in the packets of the flow.
     pub d_ockts: u32,
-    /// SysUptime, in milliseconds, at the start of flow.
+    /// SysUptime at start of flow.
     pub first: u32,
-    /// SysUptime, in milliseconds, at the time the last packet of the flow was
-    /// received.
+    /// SysUptime at the time the last packet of the flow was received.
     pub last: u32,
-    /// TCP/UDP source port number; set to zero if flow mask is destination-only
-    /// or source-destination.
+    /// TCP/UDP source port number or equivalent.
     pub srcport: u16,
-    /// TCP/UDP destination port number; set to zero if flow mask is
-    /// destination-only or source-destination.
+    /// TCP/UDP destination port number or equivalent.
     pub dstport: u16,
     /// Flags indicating, among other things, what flow fields are invalid.
     pub flags1: u8,
-    /// TCP flags; always set to zero.
+    /// Cumulative OR of TCP flags.
     pub tcp_flags: u8,
-    /// IP protocol type (for example, TCP = 6; UDP = 17); set to zero if flow
-    /// mask is destination-only or source-destination.
+    /// IP protocol type (for example, TCP = 6; UDP = 17).
     pub prot: u8,
-    /// IP type of service; switch sets it to the ToS of the first packet of the
-    /// flow.
+    /// IP type of service (ToS).
     pub tos: u8,
-    /// Source autonomous system number, either origin or peer; always set to
-    /// zero.
+    /// Source autonomous system number, either origin or peer.
     pub src_as: u16,
-    /// Destination autonomous system number, either origin or peer; always set
-    /// to zero.
+    /// Destination autonomous system number, either origin or peer.
     pub dst_as: u16,
-    /// Source address prefix mask; always set to zero.
+    /// Source address prefix mask bits.
     pub src_mask: u8,
-    /// Destination address prefix mask; always set to zero.
+    /// Destination address prefix mask bits.
     pub dst_mask: u8,
     /// Flags indicating, among other things, what flows are invalid.
     pub flags2: u16,
