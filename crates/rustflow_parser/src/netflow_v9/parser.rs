@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use nom::bytes::complete::take;
 use nom::combinator::{fail, verify};
+use nom::error::Error;
 use nom::multi::{many, many0, many1};
 use nom::number::complete::{be_u16, be_u32};
 use nom::Parser;
@@ -33,8 +34,34 @@ impl Default for NetFlowV9Parser {
 }
 
 impl NetFlowV9Parser {
-    pub fn parse<'a>(&'a self, input: &'a [u8]) -> IResult<&'a [u8], NetFlowV9> {
-        parse_netflow_v9(&self.templates)(input)
+    pub fn parse<'a>(
+        &'a self,
+        input: &'a [u8],
+    ) -> Result<NetFlowV9, nom::Err<Error<&'a [u8]>, Error<&'a [u8]>>> {
+        parse_netflow_v9(&self.templates)(input).map(|(_, packet)| packet)
+    }
+
+    pub fn register_templates_from_packet(&mut self, packet: &NetFlowV9) {
+        for flow_set in packet.flow_sets.iter() {
+            for record in flow_set.records.iter() {
+                match record {
+                    FlowSetRecord::Template(template_record) => {
+                        self.register_template(
+                            packet.header.source_id,
+                            template_record.template_id,
+                            TemplateRecordType::Template(template_record.clone()),
+                        );
+                    }
+                    FlowSetRecord::OptionsTemplate(options_template_flow_set) => self
+                        .register_template(
+                            packet.header.source_id,
+                            options_template_flow_set.template_id,
+                            TemplateRecordType::OptionsTemplate(options_template_flow_set.clone()),
+                        ),
+                    _ => {}
+                }
+            }
+        }
     }
 
     pub fn register_template(
