@@ -9,6 +9,7 @@ criterion = "0.6.0"
 macaddr = "1.0.1"
 nom = "8.0.0"
 serde = { version = "1.0.219", features = ["derive"] }
+primitive-types = "0.13.1"
 
 [[bench]]
 name = "netflow_v5_parser_bench"

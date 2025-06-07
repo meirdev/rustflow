@@ -1,16 +1,16 @@
 use std::collections::HashMap;
 
-use nom::Parser;
 use nom::bytes::complete::take;
 use nom::combinator::{fail, verify};
 use nom::multi::{many, many0, many1};
 use nom::number::complete::{be_u16, be_u32};
+use nom::Parser;
 use nom::{IResult, ToUsize};
 
 use crate::netflow_v9::packet::{
     DataRecordField, DataRecordFieldType, FieldDefinition, FieldType, FlowSet, FlowSetRecord,
-    Header, NETFLOW_V9_VERSION, NetFlowV9, OPTIONS_TEMPLATE_FLOW_SET_ID, OptionsTemplateRecord,
-    ScopeFieldType, TEMPLATE_FLOW_SET_ID, TemplateRecord, TemplateRecordType,
+    Header, NetFlowV9, OptionsTemplateRecord, ScopeFieldType, TemplateRecord, TemplateRecordType,
+    NETFLOW_V9_VERSION, OPTIONS_TEMPLATE_FLOW_SET_ID, TEMPLATE_FLOW_SET_ID,
 };
 
 type ObservationDomain = u32;

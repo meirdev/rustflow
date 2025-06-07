@@ -1,10 +1,10 @@
-use nom::Parser;
 use nom::combinator::{all_consuming, verify};
 use nom::multi::many;
-use nom::number::complete::{be_u8, be_u16, be_u32};
+use nom::number::complete::{be_u16, be_u32, be_u8};
+use nom::Parser;
 use nom::{IResult, ToUsize};
 
-use crate::netflow_v7::packet::{FlowRecord, Header, NETFLOW_V7_VERSION, NetFlowV7};
+use crate::netflow_v7::packet::{FlowRecord, Header, NetFlowV7, NETFLOW_V7_VERSION};
 
 pub struct NetFlowV7Parser;
 

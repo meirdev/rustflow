@@ -179,8 +179,7 @@ fn parse_options_template_record_header(
 }
 
 fn parse_options_template_record(input: &[u8]) -> IResult<&[u8], Record> {
-    let (input, options_template_record_header) =
-        parse_options_template_record_header(input)?;
+    let (input, options_template_record_header) = parse_options_template_record_header(input)?;
     let (input, fields) = many(
         0..=options_template_record_header.field_count.to_usize(),
         parse_field_specifier,
