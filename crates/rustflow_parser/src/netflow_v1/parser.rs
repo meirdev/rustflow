@@ -5,30 +5,28 @@ use nom::number::complete::{be_u16, be_u32, be_u8};
 use nom::Parser;
 use nom::{IResult, ToUsize};
 
-use crate::netflow_v7::packet::{FlowRecord, Header, NetFlowV7, NETFLOW_V7_VERSION};
+use crate::netflow_v1::packet::{FlowRecord, Header, NetFlowV1, NETFLOW_V1_VERSION};
 
-pub struct NetFlowV7Parser;
+pub struct NetFlowV1Parser;
 
-impl Default for NetFlowV7Parser {
+impl Default for NetFlowV1Parser {
     fn default() -> Self {
-        NetFlowV7Parser
+        NetFlowV1Parser
     }
 }
 
-impl NetFlowV7Parser {
-    pub fn parse<'a>(&self, input: &'a [u8]) -> IResult<&'a [u8], NetFlowV7> {
-        parse_netflow_v7(input)
+impl NetFlowV1Parser {
+    pub fn parse<'a>(&self, input: &'a [u8]) -> IResult<&'a [u8], NetFlowV1> {
+        parse_netflow_v1(input)
     }
 }
 
 fn parse_header(input: &[u8]) -> IResult<&[u8], Header> {
-    let (input, version) = verify(be_u16, |i| *i == NETFLOW_V7_VERSION).parse(input)?;
+    let (input, version) = verify(be_u16, |i| *i == NETFLOW_V1_VERSION).parse(input)?;
     let (input, count) = be_u16(input)?;
     let (input, sys_uptime) = be_u32(input)?;
     let (input, unix_secs) = be_u32(input)?;
     let (input, unix_nsecs) = be_u32(input)?;
-    let (input, flow_sequence) = be_u32(input)?;
-    let (input, _) = take(4usize)(input)?; // reserved
 
     Ok((
         input,
@@ -38,7 +36,6 @@ fn parse_header(input: &[u8]) -> IResult<&[u8], Header> {
             sys_uptime,
             unix_secs,
             unix_nsecs,
-            flow_sequence,
         },
     ))
 }
@@ -55,16 +52,12 @@ fn parse_flow_record(input: &[u8]) -> IResult<&[u8], FlowRecord> {
     let (input, last) = be_u32(input)?;
     let (input, srcport) = be_u16(input)?;
     let (input, dstport) = be_u16(input)?;
-    let (input, flags1) = be_u8(input)?;
-    let (input, tcp_flags) = be_u8(input)?;
+    let (input, _) = take(1usize)(input)?; // pad1
     let (input, prot) = be_u8(input)?;
     let (input, tos) = be_u8(input)?;
-    let (input, src_as) = be_u16(input)?;
-    let (input, dst_as) = be_u16(input)?;
-    let (input, src_mask) = be_u8(input)?;
-    let (input, dst_mask) = be_u8(input)?;
-    let (input, flags2) = be_u16(input)?;
-    let (input, router_sc) = be_u32(input)?;
+    let (input, flags) = be_u8(input)?;
+    let (input, _) = take(3usize)(input)?; // pad1, pad2, pad3
+    let (input, _) = take(4usize)(input)?; // reserved
 
     Ok((
         input,
@@ -80,28 +73,21 @@ fn parse_flow_record(input: &[u8]) -> IResult<&[u8], FlowRecord> {
             last,
             srcport,
             dstport,
-            flags1,
-            tcp_flags,
             prot,
             tos,
-            src_as,
-            dst_as,
-            src_mask,
-            dst_mask,
-            flags2,
-            router_sc,
+            flags,
         },
     ))
 }
 
-fn parse_netflow_v7(input: &[u8]) -> IResult<&[u8], NetFlowV7> {
+fn parse_netflow_v1(input: &[u8]) -> IResult<&[u8], NetFlowV1> {
     let (input, header) = parse_header(input)?;
     let (input, flow_records) =
         all_consuming(many(0..=header.count.to_usize(), parse_flow_record)).parse(input)?;
 
     Ok((
         input,
-        NetFlowV7 {
+        NetFlowV1 {
             header,
             flow_records,
         },

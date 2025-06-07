@@ -1,3 +1,4 @@
+use nom::bytes::complete::take;
 use nom::combinator::{all_consuming, verify};
 use nom::multi::many;
 use nom::number::complete::{be_u16, be_u32, be_u8};
@@ -63,7 +64,7 @@ fn parse_flow_record(input: &[u8]) -> IResult<&[u8], FlowRecord> {
     let (input, last) = be_u32(input)?;
     let (input, srcport) = be_u16(input)?;
     let (input, dstport) = be_u16(input)?;
-    let (input, pad1) = be_u8(input)?;
+    let (input, _) = take(1usize)(input)?; // pad1
     let (input, tcp_flags) = be_u8(input)?;
     let (input, prot) = be_u8(input)?;
     let (input, tos) = be_u8(input)?;
@@ -71,7 +72,7 @@ fn parse_flow_record(input: &[u8]) -> IResult<&[u8], FlowRecord> {
     let (input, dst_as) = be_u16(input)?;
     let (input, src_mask) = be_u8(input)?;
     let (input, dst_mask) = be_u8(input)?;
-    let (input, pad2) = be_u16(input)?;
+    let (input, _) = take(2usize)(input)?; // pad2
 
     Ok((
         input,
@@ -87,7 +88,6 @@ fn parse_flow_record(input: &[u8]) -> IResult<&[u8], FlowRecord> {
             last,
             srcport,
             dstport,
-            pad1,
             tcp_flags,
             prot,
             tos,
@@ -95,7 +95,6 @@ fn parse_flow_record(input: &[u8]) -> IResult<&[u8], FlowRecord> {
             dst_as,
             src_mask,
             dst_mask,
-            pad2,
         },
     ))
 }
@@ -157,7 +156,6 @@ mod test {
         assert_eq!(flow_record.last, 35011);
         assert_eq!(flow_record.srcport, 40);
         assert_eq!(flow_record.dstport, 80);
-        assert_eq!(flow_record.pad1, 0);
         assert_eq!(flow_record.tcp_flags, 0);
         assert_eq!(flow_record.prot, 6);
         assert_eq!(flow_record.tos, 0);
@@ -165,6 +163,5 @@ mod test {
         assert_eq!(flow_record.dst_as, 40194);
         assert_eq!(flow_record.src_mask, 7);
         assert_eq!(flow_record.dst_mask, 30);
-        assert_eq!(flow_record.pad2, 0);
     }
 }

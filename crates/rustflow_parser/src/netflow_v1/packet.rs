@@ -2,11 +2,11 @@ use std::net::Ipv4Addr;
 
 use serde::Serialize;
 
-pub const NETFLOW_V5_VERSION: u16 = 5;
+pub const NETFLOW_V1_VERSION: u16 = 1;
 
 #[derive(Debug, Clone, Serialize)]
-pub struct NetFlowV5 {
-    /// The header of the NetFlow V5 packet.
+pub struct NetFlowV1 {
+    /// The header of the NetFlow V1 packet.
     pub header: Header,
     /// A vector of flow records. Each record represents a flow.
     pub flow_records: Vec<FlowRecord>,
@@ -14,9 +14,9 @@ pub struct NetFlowV5 {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Header {
-    /// NetFlow export format version number (should be 5).
+    /// NetFlow export format version number (should be 1).
     pub version: u16,
-    /// Number of flows exported in this packet (1 to 30).
+    /// Number of flows exported in this packet (1-24).
     pub count: u16,
     /// Current time in milliseconds since the export device booted.
     pub sys_uptime: u32,
@@ -24,16 +24,6 @@ pub struct Header {
     pub unix_secs: u32,
     /// Residual nanoseconds since 0000 UTC 1970.
     pub unix_nsecs: u32,
-    /// Sequence counter of total flows seen.
-    pub flow_sequence: u32,
-    /// Type of flow-switching engine.
-    pub engine_type: u8,
-    /// Slot number of the flow-switching engine.
-    pub engine_id: u8,
-    /// The first two bits hold the sampling mode.
-    pub sampling_mode: u8,
-    /// The remaining 14 bits hold the value of sampling interval.
-    pub sampling_interval: u16,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -60,18 +50,10 @@ pub struct FlowRecord {
     pub srcport: u16,
     /// TCP/UDP destination port number or equivalent.
     pub dstport: u16,
-    /// Cumulative OR of TCP flags.
-    pub tcp_flags: u8,
     /// IP protocol type (for example, TCP = 6; UDP = 17).
     pub prot: u8,
     /// IP type of service (ToS).
     pub tos: u8,
-    /// Autonomous system number of the source, either origin or peer.
-    pub src_as: u16,
-    /// Autonomous system number of the destination, either origin or peer.
-    pub dst_as: u16,
-    /// Source address prefix mask bits.
-    pub src_mask: u8,
-    /// Destination address prefix mask bits.
-    pub dst_mask: u8,
+    /// Cumulative OR of TCP flags.
+    pub flags: u8,
 }
