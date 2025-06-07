@@ -2,9 +2,14 @@ use serde::Serialize;
 
 pub const NETFLOW_V9_VERSION: u16 = 9;
 
+/// FlowSet ID value of 0 is reserved for the Template FlowSet.
 pub const TEMPLATE_FLOW_SET_ID: u16 = 0;
 
+/// FlowSet ID value of 1 is reserved for the Options Template.
 pub const OPTIONS_TEMPLATE_FLOW_SET_ID: u16 = 1;
+
+/// Template IDs of Data FlowSets are numbered from 256 to 65,535.
+pub const DATA_FLOW_SET_ID_RANGE: std::ops::RangeInclusive<u16> = 256..=65535;
 
 #[repr(u16)]
 #[derive(Debug, Clone, Serialize)]
@@ -262,24 +267,40 @@ impl From<ScopeFieldType> for u16 {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct NetFlowV9 {
+    /// The header of the NetFlow V9 packet.
     pub header: Header,
+    /// A vector of flow sets. Each flow set can contain either template
+    /// records, options template records, or data records.
     pub flow_sets: Vec<FlowSet>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Header {
+    /// NetFlow export format version number (should be 9).
     pub version: u16,
+    /// Number of flow sets exported in this packet, both template and data
+    /// (1-30).
     pub count: u16,
+    /// Current time in milliseconds since the export device booted.
     pub sys_up_time: u32,
+    /// Current count of seconds since 0000 UTC 1970.
     pub unix_secs: u32,
+    /// Sequence counter of all export packets sent by the export device.
     pub sequence_number: u32,
+    /// A 32-bit value that is used to guarantee uniqueness for all flows
+    /// exported from a particular device.
     pub source_id: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FlowSet {
+    /// The FlowSet ID. Indicates the type of FlowSet.
     pub flow_set_id: u16,
+    /// The length of this FlowSet. Length is the sum of the lengths of the
+    /// FlowSet ID, Length itself, all Flow Records within this FlowSet, and the
+    /// padding bytes, if any.
     pub length: u16,
+    /// A vector of flow set records.
     pub records: Vec<FlowSetRecord>,
 }
 
@@ -293,21 +314,32 @@ pub enum FlowSetRecord {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FieldDefinition<T> {
+    /// The type of the field.
     pub field_type: T,
+    /// The length of the corresponding Field Type, in bytes.
     pub field_length: u16,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TemplateRecord {
+    /// Each of the newly generated Template Records is given a unique Template
+    /// ID. This uniqueness is local to the Observation Domain that generated
+    /// the Template ID.
     pub template_id: u16,
+    /// The number of fields in this template record.
     pub field_count: u16,
     pub fields: Vec<FieldDefinition<FieldType>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct OptionsTemplateRecord {
+    /// Template ID of this Options Template.
     pub template_id: u16,
+    /// The length in bytes of any Scope field definition contained in the
+    /// Options Template Record.
     pub option_scope_length: u16,
+    /// The length (in bytes) of any options field definitions contained in this
+    /// Options Template Record.
     pub option_length: u16,
     pub scope_fields: Vec<FieldDefinition<ScopeFieldType>>,
     pub option_fields: Vec<FieldDefinition<FieldType>>,
