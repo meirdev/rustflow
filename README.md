@@ -28,13 +28,13 @@ Links to relevant RFCs and specifications for flow protocols.
 
 ### IPFIX
 
-- [IP Flow Information Export (IPFIX) Entities](https://www.iana.org/assignments/ipfix/ipfix.txt)
-- [Information Model for IP Flow Information Export (IPFIX)](https://www.rfc-editor.org/rfc/rfc7012.txt)
-- [IP Flow Anonymization Support](https://www.rfc-editor.org/rfc/rfc6235.txt)
-- [Packet Sampling (PSAMP) Protocol Specifications](https://www.rfc-editor.org/rfc/rfc5476.txt)
-- [Textual Representation of IP Flow Information Export (IPFIX) Abstract Data Types](https://www.rfc-editor.org/rfc/rfc7373.txt)
-- [Flow Aggregation for the IP Flow Information Export (IPFIX) Protocol](https://www.rfc-editor.org/rfc/rfc7015.txt)
-- [Specification of the IP Flow Information Export (IPFIX) File Format](https://www.rfc-editor.org/rfc/rfc5655.txt)
+- [IP Flow Information Export (IPFIX) Entities](https://www.iana.org/assignments/ipfix/ipfix.xhtml)
+- [Information Model for IP Flow Information Export (IPFIX)](https://www.rfc-editor.org/rfc/rfc7012.html)
+- [IP Flow Anonymization Support](https://www.rfc-editor.org/rfc/rfc6235.html)
+- [Packet Sampling (PSAMP) Protocol Specifications](https://www.rfc-editor.org/rfc/rfc5476.html)
+- [Textual Representation of IP Flow Information Export (IPFIX) Abstract Data Types](https://www.rfc-editor.org/rfc/rfc7373.html)
+- [Flow Aggregation for the IP Flow Information Export (IPFIX) Protocol](https://www.rfc-editor.org/rfc/rfc7015.html)
+- [Specification of the IP Flow Information Export (IPFIX) File Format](https://www.rfc-editor.org/rfc/rfc5655.html)
 
 ### Netflow
 
