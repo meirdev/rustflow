@@ -76,6 +76,7 @@ fn main() {
         FieldId::DestinationTransportPort,
         FieldId::ProtocolIdentifier,
         FieldId::IpVersion,
+        FieldId::TcpControlBits,
         FieldId::FlowStartMilliseconds,
         FieldId::FlowEndMilliseconds,
         FieldId::SamplingInterval,
