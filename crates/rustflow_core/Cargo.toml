@@ -1,0 +1,22 @@
+[package]
+name = "rustflow_core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde = { version = "1.0.219", features = ["derive"] }
+chrono = { version = "0.4.42", features = ["serde"] }
+nom = "8.0.0"
+rustc-hash = { version = "2.1" }
+primitive-types = {version = "0.13.1", features = ["serde"]}
+macaddr = {version = "1.0.1", features = ["serde"]}
+pnet_packet = "0.35.0"
+pnet_base = "0.35.0"
+hex = "0.4.3"
+
+[dev-dependencies]
+criterion = "0.7.0"
+
+[[bench]]
+name = "netflow_v5_parser_bench"
+harness = false
