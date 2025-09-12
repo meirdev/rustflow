@@ -28,8 +28,8 @@ Links to relevant RFCs and specifications for flow protocols.
 
 ### IPFIX
 
+- [Specification of the IP Flow Information Export (IPFIX) Protocol for the Exchange of Flow Information](https://www.rfc-editor.org/rfc/rfc7011.html)
 - [IP Flow Information Export (IPFIX) Entities](https://www.iana.org/assignments/ipfix/ipfix.xhtml)
-- [Information Model for IP Flow Information Export (IPFIX)](https://www.rfc-editor.org/rfc/rfc7012.html)
 - [IP Flow Anonymization Support](https://www.rfc-editor.org/rfc/rfc6235.html)
 - [Packet Sampling (PSAMP) Protocol Specifications](https://www.rfc-editor.org/rfc/rfc5476.html)
 - [Textual Representation of IP Flow Information Export (IPFIX) Abstract Data Types](https://www.rfc-editor.org/rfc/rfc7373.html)
