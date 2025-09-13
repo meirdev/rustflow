@@ -370,10 +370,7 @@ fn parse_defined_fields<'a>(
 
         let field_id: FieldId = field_spec.information_element_identifier.into();
 
-        if field_id == FieldId::BasicList {
-            let (value_bytes, semantic) =
-                map(be_u8, |i| DataSemantic::from(i)).parse(value_bytes)?;
-        }
+        // TODO: add support for basicList, subTemplateList, and subTemplateMultiList
 
         values.push((
             field_id,
