@@ -4,7 +4,7 @@ WIP
 
 ## Comparison
 
-| Project                                          | Language | Licenses     |
+| Project                                          | Language | License     |
 | ------------------------------------------------ | -------- | ------------ |
 | [RustFlow](https://github.com/meirdev/rustflow)  | Rust     | BSD 3-Clause |
 | [GoFlow2](https://github.com/netsampler/goflow2) | Go       | BSD 3-Clause |
