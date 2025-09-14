@@ -130,7 +130,6 @@ pub enum DataType {
     Boolean,
     MacAddress,
     OctetArray,
-    OctetArrayFixed(usize),
     String,
     DateTimeSeconds,
     DateTimeMilliseconds,
@@ -159,7 +158,6 @@ pub enum DataValue {
     Boolean(bool),
     MacAddress(MacAddr6),
     OctetArray(Vec<u8>),
-    OctetArrayFixed(Vec<u8>),
     String(String),
     DateTimeSeconds(chrono::DateTime<Utc>),
     DateTimeMilliseconds(chrono::DateTime<Utc>),
@@ -185,7 +183,7 @@ impl DataType {
     }
 
     pub fn is_octet_array(&self) -> bool {
-        matches!(self, DataType::OctetArray | DataType::OctetArrayFixed(_))
+        matches!(self, DataType::OctetArray)
     }
 
     pub fn is_string(&self) -> bool {
@@ -259,7 +257,6 @@ impl Display for DataValue {
             DataValue::Boolean(v) => write!(f, "{}", v),
             DataValue::MacAddress(v) => write!(f, "{}", v),
             DataValue::OctetArray(v) => write!(f, "{}", hex::encode(v)),
-            DataValue::OctetArrayFixed(v) => write!(f, "{}", hex::encode(v)),
             DataValue::String(v) => write!(f, "{}", v),
             DataValue::DateTimeSeconds(v) => write!(f, "{}", v.format("%Y-%m-%dT%H:%M:%S")),
             DataValue::DateTimeMilliseconds(v) => {
@@ -422,16 +419,6 @@ impl DataType {
                 let value = bytes.to_vec();
                 Ok(DataValue::OctetArray(value))
             }
-            DataType::OctetArrayFixed(size) => {
-                let value: Vec<u8> = bytes
-                    .to_vec()
-                    .try_into()
-                    .or(Err(DataTypeConvertError::TryFromSliceError))?;
-                if value.len() != *size {
-                    return Err(DataTypeConvertError::TryFromSliceError);
-                }
-                Ok(DataValue::OctetArrayFixed(value))
-            }
             DataType::String => {
                 let value = String::from_utf8(bytes.to_vec())
                     .or(Err(DataTypeConvertError::FromUtf8Error))?;
@@ -569,9 +556,6 @@ mod tests {
         assert!(data_value.to_string().contains("-inf"));
 
         let data_value = DataValue::OctetArray(vec![1, 2, 3, 4]);
-        assert_eq!(data_value.to_string(), "01020304");
-
-        let data_value = DataValue::OctetArrayFixed(vec![1, 2, 3, 4]);
         assert_eq!(data_value.to_string(), "01020304");
 
         let data_value =
