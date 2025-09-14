@@ -629,7 +629,7 @@ pub enum CounterType {
     VgCounters = 4,
     VlanCounters = 5,
     Processor = 1001,
-    Unknown(u32)
+    Unknown(u32),
 }
 
 impl From<u32> for CounterType {
@@ -657,36 +657,34 @@ fn parse_counter_record(input: &[u8]) -> IResult<&[u8], CounterRecord> {
     let (input, data_length) = be_u32(input)?;
     let (input, data) = take(data_length as usize)(input)?;
 
-    let (_, records) = many1(|v| {
-        match CounterType::from(header.data_format) {
-            CounterType::IfCounters => {
-                let (input, v) = parse_if_counters(v)?;
-                Ok((input, CounterRecordType::IfCounters(v)))
-            }
-            CounterType::EthernetCounters => {
-                let (input, v) = parse_ethernet_counters(v)?;
-                Ok((input, CounterRecordType::EthernetCounters(v)))
-            }
-            CounterType::TokenringCounters => {
-                let (input, v) = parse_tokenring_counters(v)?;
-                Ok((input, CounterRecordType::TokenringCounters(v)))
-            }
-            CounterType::VgCounters => {
-                let (input, v) = parse_vg_counters(v)?;
-                Ok((input, CounterRecordType::VgCounters(v)))
-            }
-            CounterType::VlanCounters => {
-                let (input, v) = parse_vlan_counters(v)?;
-                Ok((input, CounterRecordType::VlanCounters(v)))
-            }
-            CounterType::Processor => {
-                let (input, v) = parse_processor(v)?;
-                Ok((input, CounterRecordType::Processor(v)))
-            }
-            CounterType::Unknown(_) => {
-                let (input, data) = take(data_length as usize)(v)?;
-                Ok((input, CounterRecordType::Unknown(data.to_vec())))
-            }
+    let (_, records) = many1(|v| match CounterType::from(header.data_format) {
+        CounterType::IfCounters => {
+            let (input, v) = parse_if_counters(v)?;
+            Ok((input, CounterRecordType::IfCounters(v)))
+        }
+        CounterType::EthernetCounters => {
+            let (input, v) = parse_ethernet_counters(v)?;
+            Ok((input, CounterRecordType::EthernetCounters(v)))
+        }
+        CounterType::TokenringCounters => {
+            let (input, v) = parse_tokenring_counters(v)?;
+            Ok((input, CounterRecordType::TokenringCounters(v)))
+        }
+        CounterType::VgCounters => {
+            let (input, v) = parse_vg_counters(v)?;
+            Ok((input, CounterRecordType::VgCounters(v)))
+        }
+        CounterType::VlanCounters => {
+            let (input, v) = parse_vlan_counters(v)?;
+            Ok((input, CounterRecordType::VlanCounters(v)))
+        }
+        CounterType::Processor => {
+            let (input, v) = parse_processor(v)?;
+            Ok((input, CounterRecordType::Processor(v)))
+        }
+        CounterType::Unknown(_) => {
+            let (input, data) = take(data_length as usize)(v)?;
+            Ok((input, CounterRecordType::Unknown(data.to_vec())))
         }
     })
     .parse(data)?;
@@ -1528,8 +1526,7 @@ fn parse_tokenring_counters(input: &[u8]) -> IResult<&[u8], TokenringCounters> {
     let (input, dot5_stats_internal_errors) = be_u32(input)?;
     let (input, dot5_stats_lost_frame_errors) = be_u32(input)?;
     let (input, dot5_stats_receive_congestions) = be_u32(input)?;
-    let (input, dot5_stats_frame_copied_errors) = be_u32(input
-    )?;
+    let (input, dot5_stats_frame_copied_errors) = be_u32(input)?;
     let (input, dot5_stats_token_errors) = be_u32(input)?;
     let (input, dot5_stats_soft_errors) = be_u32(input)?;
     let (input, dot5_stats_hard_errors) = be_u32(input)?;
