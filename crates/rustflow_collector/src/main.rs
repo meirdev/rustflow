@@ -110,7 +110,11 @@ fn main() {
                     .ok_or_else(|| format!("Could not find network interface: {}", interface))
                     .unwrap();
 
-                let mut cap = Capture::from_device(interface).unwrap().open().unwrap();
+                let mut cap = Capture::from_device(interface)
+                    .unwrap()
+                    .immediate_mode(true)
+                    .open()
+                    .unwrap();
 
                 let filter = if let Some(host) = &host {
                     format!("host {} and port {}", host, port)
