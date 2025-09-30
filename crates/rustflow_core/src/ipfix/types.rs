@@ -75,7 +75,7 @@ impl UserDefindDataType {
 
 #[repr(u8)]
 #[derive(Debug, Clone, Serialize)]
-pub enum DataSemantic {
+pub enum StructuredDataSemantic {
     NoneOf = 0x00,
     ExactlyOneOf = 0x01,
     OneOrMoreOf = 0x02,
@@ -84,29 +84,29 @@ pub enum DataSemantic {
     Undefined = 0xff,
 }
 
-impl From<u8> for DataSemantic {
+impl From<u8> for StructuredDataSemantic {
     fn from(value: u8) -> Self {
         match value {
-            0x00 => DataSemantic::NoneOf,
-            0x01 => DataSemantic::ExactlyOneOf,
-            0x02 => DataSemantic::OneOrMoreOf,
-            0x03 => DataSemantic::AllOf,
-            0x04 => DataSemantic::Ordered,
-            0xff => DataSemantic::Undefined,
+            0x00 => StructuredDataSemantic::NoneOf,
+            0x01 => StructuredDataSemantic::ExactlyOneOf,
+            0x02 => StructuredDataSemantic::OneOrMoreOf,
+            0x03 => StructuredDataSemantic::AllOf,
+            0x04 => StructuredDataSemantic::Ordered,
+            0xff => StructuredDataSemantic::Undefined,
             _ => todo!(),
         }
     }
 }
 
-impl Display for DataSemantic {
+impl Display for StructuredDataSemantic {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
-            DataSemantic::NoneOf => write!(f, "noneOf"),
-            DataSemantic::ExactlyOneOf => write!(f, "exactlyOneOf"),
-            DataSemantic::OneOrMoreOf => write!(f, "oneOrMoreOf"),
-            DataSemantic::AllOf => write!(f, "allOf"),
-            DataSemantic::Ordered => write!(f, "ordered"),
-            DataSemantic::Undefined => write!(f, "undefined"),
+            StructuredDataSemantic::NoneOf => write!(f, "noneOf"),
+            StructuredDataSemantic::ExactlyOneOf => write!(f, "exactlyOneOf"),
+            StructuredDataSemantic::OneOrMoreOf => write!(f, "oneOrMoreOf"),
+            StructuredDataSemantic::AllOf => write!(f, "allOf"),
+            StructuredDataSemantic::Ordered => write!(f, "ordered"),
+            StructuredDataSemantic::Undefined => write!(f, "undefined"),
         }
     }
 }

@@ -10,7 +10,7 @@ use rustc_hash::FxHashMap;
 use serde::Serialize;
 
 use crate::ipfix::fields::{FieldId, FieldsMap, default_fields};
-use crate::ipfix::types::{DataSemantic, DataValue};
+use crate::ipfix::types::DataValue;
 
 pub const IPFIX_VERSION: u16 = 10;
 
