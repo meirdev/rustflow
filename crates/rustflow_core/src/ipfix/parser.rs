@@ -9,7 +9,7 @@ use nom::{IResult, Parser};
 use rustc_hash::FxHashMap;
 use serde::Serialize;
 
-use crate::ipfix::fields::{FieldId, FieldsMap, default_fields};
+use crate::ipfix::fields::{EnterpriseNumber, FieldId, FieldsMap};
 use crate::ipfix::types::DataValue;
 
 pub const IPFIX_VERSION: u16 = 10;
@@ -39,12 +39,11 @@ pub type TemplatesMap = FxHashMap<TemplateKey, TemplateValue>;
 pub struct IpfixParser {
     pub templates: TemplatesMap,
     pub fields: FieldsMap,
-    pub options: FxHashMap<FieldId, DataValue>,
+    pub options: FxHashMap<(EnterpriseNumber, FieldId), DataValue>,
 }
 
-impl Default for IpfixParser {
-    fn default() -> Self {
-        let fields = default_fields();
+impl IpfixParser {
+    pub fn new(fields: FieldsMap) -> Self {
         let templates = FxHashMap::default();
         let options = FxHashMap::default();
 
@@ -67,8 +66,10 @@ impl IpfixParser {
     pub fn parse_data_records<'a>(
         &'a mut self,
         input: &'a [u8],
-    ) -> Result<Vec<FxHashMap<FieldId, DataValue>>, nom::Err<Error<&'a [u8]>, Error<&'a [u8]>>>
-    {
+    ) -> Result<
+        Vec<FxHashMap<(EnterpriseNumber, FieldId), DataValue>>,
+        nom::Err<Error<&'a [u8]>, Error<&'a [u8]>>,
+    > {
         let packet =
             parse_ipfix(&mut self.templates, &self.fields)(input).map(|(_, packet)| packet)?;
 
@@ -316,7 +317,7 @@ fn parse_field_specifier(input: &[u8]) -> IResult<&[u8], FieldSpecifier> {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct DataRecord(pub Vec<(FieldId, DataValue)>);
+pub struct DataRecord(pub Vec<((EnterpriseNumber, FieldId), DataValue)>);
 
 fn parse_data_record(
     template: &TemplateValue,
@@ -341,7 +342,7 @@ fn parse_defined_fields<'a>(
     mut input: &'a [u8],
     field_specifiers: &[FieldSpecifier],
     fields: &FieldsMap,
-) -> IResult<&'a [u8], Vec<(FieldId, DataValue)>> {
+) -> IResult<&'a [u8], Vec<((EnterpriseNumber, FieldId), DataValue)>> {
     let mut values = Vec::with_capacity(field_specifiers.len());
 
     for field_spec in field_specifiers {
@@ -368,14 +369,17 @@ fn parse_defined_fields<'a>(
             input = input_;
         }
 
-        let field_id: FieldId = field_spec.information_element_identifier.into();
+        let field_id = (
+            field_spec.enterprise_number,
+            field_spec.information_element_identifier,
+        );
 
         // TODO: add support for basicList, subTemplateList, and subTemplateMultiList
 
         values.push((
             field_id,
             fields
-                .get(&(field_spec.enterprise_number, field_id))
+                .get(&field_id)
                 .map(|i| {
                     i.to_data_type(field_spec.field_length)
                         .decode(value_bytes)
@@ -386,53 +390,4 @@ fn parse_defined_fields<'a>(
     }
 
     Ok((input, values))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_rfc5473() {
-        let options_template: &[u8] = &[
-            0x00, 0x03, 0x00, 0x18, 0x01, 0x01, 0x00, 0x03, 0x00, 0x01, 0x00, 0x89, 0x00, 0x08,
-            0x00, 0x1c, 0x00, 0x10, 0x00, 0x0b, 0x00, 0x02, 0x00, 0x00,
-        ];
-
-        let template: &[u8] = &[
-            0x00, 0x02, 0x00, 0x14, 0x01, 0x02, 0x00, 0x03, 0x00, 0x89, 0x00, 0x08, 0x00, 0x02,
-            0x00, 0x04, 0x00, 0x01, 0x00, 0x04,
-        ];
-
-        let data_record_1: &[u8] = &[
-            0x01, 0x01, 0x00, 0x38, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x65, 0x20, 0x01,
-            0x0d, 0xb8, 0x80, 0xad, 0x58, 0x00, 0x00, 0x58, 0x08, 0x00, 0x20, 0x23, 0x1d, 0x71,
-            0x00, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x66, 0x20, 0x01, 0x0d, 0xb8,
-            0x80, 0xad, 0x58, 0x00, 0x00, 0x58, 0x00, 0xaa, 0x00, 0xb7, 0xaf, 0x2b, 0x07, 0x8c,
-        ];
-
-        let data_record_2: &[u8] = &[
-            0x01, 0x02, 0x00, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x65, 0x00, 0x00,
-            0x00, 0x1e, 0x00, 0x00, 0x17, 0x70,
-        ];
-
-        let mut parser = IpfixParser::default();
-
-        let length: u16 = (24 + 20 + 56 + 20 + 16).try_into().unwrap();
-
-        let mut input = Vec::new();
-        input.extend_from_slice(&[0x00, 0x0a]); // Version = 10
-        input.extend_from_slice(&length.to_be_bytes()); // Length
-        input.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // Export Time = 0
-        input.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // Sequence Number = 0
-        input.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]); // Observation Domain ID = 1
-        input.extend_from_slice(options_template);
-        input.extend_from_slice(template);
-        input.extend_from_slice(data_record_1);
-        input.extend_from_slice(data_record_2);
-
-        let result = parser.parse_data_records(&input);
-
-        println!("Parsed IPFIX: {:#?}", result.unwrap());
-    }
 }

@@ -270,7 +270,6 @@ impl Display for DataValue {
             DataValue::Ipv6Address(v) => write!(f, "{}", v),
             DataValue::BasicList(v) => write!(f, "{:?}", v),
             DataValue::Null => write!(f, ""),
-            _ => write!(f, "Unknown DataValue"),
         }
     }
 }

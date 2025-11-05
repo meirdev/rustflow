@@ -2,15 +2,15 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::net::IpAddr;
 use std::path::PathBuf;
-use std::thread;
 use std::time::Duration;
+use std::thread;
 
 use clap::{Parser, Subcommand};
 use crossbeam::channel::{after, unbounded};
 use crossbeam::select;
 use pcap::{Activated, Capture, Device};
 use rustc_hash::FxHashMap;
-use rustflow_core::ipfix::fields::FieldId;
+use rustflow_core::ipfix::fields::{EnterpriseNumber, FieldId, default_fields};
 use rustflow_core::ipfix::parser::IpfixParser;
 use rustflow_core::ipfix::types::DataValue;
 use rustflow_core::utils::parse_udp_packet;
@@ -31,7 +31,7 @@ pub struct Cli {
         short = 'i',
         long,
         help = "Interval for flushing data to disk in seconds",
-        default_value = "60"
+        default_value_t = 60
     )]
     pub interval: u64,
 
@@ -39,21 +39,32 @@ pub struct Cli {
         short = 'm',
         long,
         help = "Maximum number of flows to keep in memory before flushing to disk",
-        default_value = "100000"
+        default_value_t = 100000
     )]
     pub max_flows: u64,
+
+    #[arg(
+        long,
+        help = "List of fields to include in the output, comma-separated",
+        default_value = "octetDeltaCount,packetDeltaCount,sourceIPv4Address,destinationIPv4Address,sourceIPv6Address,destinationIPv6Address,sourceTransportPort,destinationTransportPort,protocolIdentifier,ipVersion,tcpControlBits,flowStartMilliseconds,flowEndMilliseconds,samplingInterval,samplerRandomInterval,samplingPacketInterval"
+    )]
+    pub fields: String,
 }
 
 #[derive(Subcommand, Debug)]
 enum Commands {
     Live {
-        #[arg(short = 'i', help = "Network interface to capture traffic from")]
+        #[arg(
+            short = 'i',
+            help = "Network interface to capture traffic from",
+            default_value = "any"
+        )]
         interface: String,
 
         #[arg(short = 'b', help = "Host to bind to")]
         host: Option<String>,
 
-        #[arg(short = 'p', help = "Port to bind to", default_value = "2055")]
+        #[arg(short = 'p', help = "Port to bind to", default_value_t = 2055)]
         port: u16,
     },
     Pcap {
@@ -65,26 +76,18 @@ enum Commands {
 fn main() {
     let cli = Cli::parse();
 
-    let fields = vec![
-        FieldId::OctetDeltaCount,
-        FieldId::PacketDeltaCount,
-        FieldId::SourceIpv4address,
-        FieldId::DestinationIpv4address,
-        FieldId::SourceIpv6address,
-        FieldId::DestinationIpv6address,
-        FieldId::SourceTransportPort,
-        FieldId::DestinationTransportPort,
-        FieldId::ProtocolIdentifier,
-        FieldId::IpVersion,
-        FieldId::TcpControlBits,
-        FieldId::FlowStartMilliseconds,
-        FieldId::FlowEndMilliseconds,
-        FieldId::SamplingInterval,
-        FieldId::SamplerRandomInterval,
-        FieldId::SamplingPacketInterval,
-    ];
+    let fields = default_fields();
 
-    let header = fields
+    let selected_fields = cli.fields
+        .split(',')
+        .collect::<Vec<&str>>();
+
+    let field_ids = selected_fields
+        .iter()
+        .map(|i| fields.get_id(i).unwrap())
+        .collect::<Vec<(EnterpriseNumber, FieldId)>>();
+
+    let header = selected_fields
         .clone()
         .iter()
         .map(|field| field.to_string())
@@ -132,32 +135,40 @@ fn main() {
                 .into(),
         };
 
-        while let Ok(packet) = cap.next_packet() {
-            let time_received = chrono::Utc::now();
+        loop {
+            match cap.next_packet() {
+                Ok(packet) => {
+                    let time_received = chrono::Utc::now();
 
-            if let Ok((src, payload)) = parse_udp_packet(&packet.data) {
-                if !parsers.contains_key(&src) {
-                    parsers.insert(src, IpfixParser::default());
-                }
+                    if let Ok((src, payload)) = parse_udp_packet(&packet.data) {
+                        if !parsers.contains_key(&src) {
+                            parsers.insert(src, IpfixParser::new(fields.clone()));
+                        }
 
-                let parser = parsers.get_mut(&src).unwrap();
+                        let parser = parsers.get_mut(&src).unwrap();
 
-                if let Ok(data_records) = parser.parse_data_records(&payload) {
-                    for record in data_records.into_iter() {
-                        let line = fields
-                            .iter()
-                            .map(|field| {
-                                record
-                                    .get(field)
-                                    .or(parser.options.get(field))
-                                    .unwrap_or(&DataValue::Null)
-                                    .to_string()
-                            })
-                            .collect::<Vec<String>>()
-                            .join(",");
+                        if let Ok(data_records) = parser.parse_data_records(&payload) {
+                            for record in data_records.into_iter() {
+                                let line = field_ids
+                                    .iter()
+                                    .map(|field| {
+                                        record
+                                            .get(field)
+                                            .or(parser.options.get(field))
+                                            .unwrap_or(&DataValue::Null)
+                                            .to_string()
+                                    })
+                                    .collect::<Vec<String>>()
+                                    .join(",");
 
-                        sender.send(line).expect("Failed to send message");
+                                sender.send(line).expect("Failed to send message");
+                            }
+                        }
                     }
+                }
+                Err(e) => {
+                    eprintln!("Error reading packet: {}", e);
+                    continue;
                 }
             }
         }
