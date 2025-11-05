@@ -2,8 +2,8 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::net::IpAddr;
 use std::path::PathBuf;
-use std::time::Duration;
 use std::thread;
+use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use crossbeam::channel::{after, unbounded};
@@ -78,9 +78,7 @@ fn main() {
 
     let fields = default_fields();
 
-    let selected_fields = cli.fields
-        .split(',')
-        .collect::<Vec<&str>>();
+    let selected_fields = cli.fields.split(',').collect::<Vec<&str>>();
 
     let field_ids = selected_fields
         .iter()
