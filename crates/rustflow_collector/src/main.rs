@@ -10,10 +10,8 @@ use crossbeam::channel::{after, unbounded};
 use crossbeam::select;
 use pcap::{Activated, Capture, Device};
 use rustc_hash::FxHashMap;
-use rustflow_core::ipfix::fields::{EnterpriseNumber, FieldId, default_fields};
-use rustflow_core::ipfix::parser::IpfixParser;
-use rustflow_core::ipfix::types::DataValue;
 use rustflow_core::utils::parse_udp_packet;
+use rustflow_parser::ie_registry::{IEDefinition, IERegistry};
 
 #[derive(Parser, Debug)]
 #[command(version)]
@@ -76,14 +74,15 @@ enum Commands {
 fn main() {
     let cli = Cli::parse();
 
-    let fields = default_fields();
+    let ie_registry = IERegistry::default();
 
     let selected_fields = cli.fields.split(',').collect::<Vec<&str>>();
 
-    let field_ids = selected_fields
+    let _field_ids: Vec<IEDefinition> = selected_fields
         .iter()
-        .map(|i| fields.get_id(i).unwrap())
-        .collect::<Vec<(EnterpriseNumber, FieldId)>>();
+        .map(|i| ie_registry.lookup_by_name(i).unwrap())
+        .cloned()
+        .collect();
 
     let header = selected_fields
         .clone()
@@ -140,18 +139,28 @@ fn main() {
 
                     if let Ok((src, payload)) = parse_udp_packet(&packet.data) {
                         if !parsers.contains_key(&src) {
-                            parsers.insert(src, rustflow_parser::parser::Parser::default());
+                            parsers.insert(
+                                src,
+                                rustflow_parser::parser::Parser::with_registry(ie_registry.clone()),
+                            );
                         }
 
                         let parser = parsers.get_mut(&src).unwrap();
 
                         if let Ok((_, message)) = parser.parse(payload.as_slice()) {
-                            let ie_registry = parser.templates_manager().borrow().ie_registry().clone();
                             for set in &message.sets {
                                 for record in &set.records {
-                                    if let rustflow_parser::types::Record::Data(data_record) = record {
-                                        for ((enterprise_number, element_id), value) in &data_record.0 {
-                                            let enterprise_opt = if *enterprise_number == 0 { None } else { Some(*enterprise_number) };
+                                    if let rustflow_parser::types::Record::Data(data_record) =
+                                        record
+                                    {
+                                        for ((enterprise_number, element_id), value) in
+                                            &data_record.0
+                                        {
+                                            let enterprise_opt = if *enterprise_number == 0 {
+                                                None
+                                            } else {
+                                                Some(*enterprise_number)
+                                            };
                                             let name = ie_registry
                                                 .lookup(*element_id, enterprise_opt)
                                                 .map(|def| def.name.as_str())

@@ -96,7 +96,7 @@ impl IERegistry {
 
     fn add_iana_elements(&mut self) {
         #[rustfmt::skip]
-        let fields = [
+        let elements = [
             (1, "octetDeltaCount", "unsigned"),
             (2, "packetDeltaCount", "unsigned"),
             (3, "deltaFlowCount", "unsigned"),
@@ -597,7 +597,7 @@ impl IERegistry {
             (529, "udpUnsafeExIDList", "basicList"),
         ];
 
-        fields.iter().for_each(|(id, name, data_type)| {
+        elements.iter().for_each(|(id, name, data_type)| {
             self.add_element(*id, None, name.to_string(), (*data_type).into());
         });
     }

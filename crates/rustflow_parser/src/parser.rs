@@ -304,11 +304,6 @@ fn parse_float(data: &[u8], length: u16) -> FieldValue {
     }
 }
 
-/// Parse a BasicList (IE 291) according to RFC 6313 Section 4.5.1
-/// Format:
-/// - 1 byte: semantic
-/// - Field specifier (4 or 8 bytes depending on enterprise bit)
-/// - Variable content: homogeneous field values
 fn parse_basic_list<'a>(input: &'a [u8], ctx: &ParserContext<'_>) -> IResult<&'a [u8], BasicList> {
     let (input, semantic_byte) = be_u8(input)?;
     let semantic = parse_semantic(semantic_byte);
@@ -344,11 +339,6 @@ fn parse_basic_list<'a>(input: &'a [u8], ctx: &ParserContext<'_>) -> IResult<&'a
     ))
 }
 
-/// Parse a SubTemplateList (IE 292) according to RFC 6313 Section 4.5.2
-/// Format:
-/// - 1 byte: semantic
-/// - 2 bytes: template ID
-/// - Variable content: records using that template
 fn parse_subtemplate_list<'a>(
     input: &'a [u8],
     ctx: &ParserContext<'_>,
@@ -522,25 +512,37 @@ fn parse_field_value_with_context<'a>(
         }
         Some(DataType::DateTimeSeconds) => {
             let secs = parse_unsigned_raw(field_data, length);
-            FieldValue::DateTimeSeconds(Utc.timestamp_opt(secs as i64, 0).unwrap())
+            let dt = Utc.timestamp_opt(secs as i64, 0).single().ok_or_else(|| {
+                nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Verify))
+            })?;
+            FieldValue::DateTimeSeconds(dt)
         }
         Some(DataType::DateTimeMilliseconds) => {
             let millis = parse_unsigned_raw(field_data, length);
             let secs = (millis / 1000) as i64;
             let nanos = ((millis % 1000) * 1_000_000) as u32;
-            FieldValue::DateTimeMilliseconds(Utc.timestamp_opt(secs, nanos).unwrap())
+            let dt = Utc.timestamp_opt(secs, nanos).single().ok_or_else(|| {
+                nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Verify))
+            })?;
+            FieldValue::DateTimeMilliseconds(dt)
         }
         Some(DataType::DateTimeMicroseconds) => {
             let micros = parse_unsigned_raw(field_data, length);
             let secs = (micros / 1_000_000) as i64;
             let nanos = ((micros % 1_000_000) * 1_000) as u32;
-            FieldValue::DateTimeMicroseconds(Utc.timestamp_opt(secs, nanos).unwrap())
+            let dt = Utc.timestamp_opt(secs, nanos).single().ok_or_else(|| {
+                nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Verify))
+            })?;
+            FieldValue::DateTimeMicroseconds(dt)
         }
         Some(DataType::DateTimeNanoseconds) => {
             let nanos = parse_unsigned_raw(field_data, length);
             let secs = (nanos / 1_000_000_000) as i64;
             let nanos = (nanos % 1_000_000_000) as u32;
-            FieldValue::DateTimeNanoseconds(Utc.timestamp_opt(secs, nanos).unwrap())
+            let dt = Utc.timestamp_opt(secs, nanos).single().ok_or_else(|| {
+                nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Verify))
+            })?;
+            FieldValue::DateTimeNanoseconds(dt)
         }
         Some(DataType::OctetArray) | None => FieldValue::OctetArray(field_data.to_vec()),
         Some(DataType::BasicList) => {
