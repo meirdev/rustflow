@@ -95,7 +95,7 @@ fn main() {
     let (sender, receiver) = unbounded::<String>();
 
     thread::spawn(move || {
-        let mut parsers: FxHashMap<IpAddr, IpfixParser> = FxHashMap::default();
+        let mut parsers: FxHashMap<IpAddr, rustflow_parser::parser::Parser> = FxHashMap::default();
 
         let mut cap: Capture<dyn Activated> = match cli.command {
             Commands::Live {
@@ -140,27 +140,30 @@ fn main() {
 
                     if let Ok((src, payload)) = parse_udp_packet(&packet.data) {
                         if !parsers.contains_key(&src) {
-                            parsers.insert(src, IpfixParser::new(fields.clone()));
+                            parsers.insert(src, rustflow_parser::parser::Parser::default());
                         }
 
                         let parser = parsers.get_mut(&src).unwrap();
 
-                        if let Ok(data_records) = parser.parse_data_records(&payload) {
-                            for record in data_records.into_iter() {
-                                let line = field_ids
-                                    .iter()
-                                    .map(|field| {
-                                        record
-                                            .get(field)
-                                            .or(parser.options.get(field))
-                                            .unwrap_or(&DataValue::Null)
-                                            .to_string()
-                                    })
-                                    .collect::<Vec<String>>()
-                                    .join(",");
-
-                                sender.send(line).expect("Failed to send message");
+                        if let Ok((_, message)) = parser.parse(payload.as_slice()) {
+                            let ie_registry = parser.templates_manager().borrow().ie_registry().clone();
+                            for set in &message.sets {
+                                for record in &set.records {
+                                    if let rustflow_parser::types::Record::Data(data_record) = record {
+                                        for ((enterprise_number, element_id), value) in &data_record.0 {
+                                            let enterprise_opt = if *enterprise_number == 0 { None } else { Some(*enterprise_number) };
+                                            let name = ie_registry
+                                                .lookup(*element_id, enterprise_opt)
+                                                .map(|def| def.name.as_str())
+                                                .unwrap_or("unknown");
+                                            println!("{}: {}", name, value);
+                                        }
+                                        println!("---");
+                                    }
+                                }
                             }
+                        } else {
+                            println!("error parsing");
                         }
                     }
                 }

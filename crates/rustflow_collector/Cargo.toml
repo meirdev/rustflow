@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 rustflow_core = { path = "../rustflow_core" }
+rustflow_parser = { path = "../rustflow_parser" }
 clap = { version = "4.5.45", features = ["derive"] }
 chrono = "0.4.41"
 prometheus = "0.14.0"
