@@ -125,6 +125,22 @@ pub struct SubTemplateMultiItem {
     pub data: Vec<DataRecord>,
 }
 
+impl TryFrom<u8> for Semantic {
+    type Error = ();
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0x00 => Ok(Semantic::NoneOf),
+            0x01 => Ok(Semantic::ExactlyOneOf),
+            0x02 => Ok(Semantic::OneOrMoreOf),
+            0x03 => Ok(Semantic::AllOf),
+            0x04 => Ok(Semantic::Ordered),
+            0xff => Ok(Semantic::Undefined),
+            _ => Err(()),
+        }
+    }
+}
+
 impl Display for Semantic {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
