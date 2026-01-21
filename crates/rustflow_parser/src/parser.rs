@@ -28,33 +28,26 @@ pub struct Parser {
 }
 
 impl Parser {
-    /// Create a new parser with the default IANA IE registry.
     pub fn new() -> Self {
         Self {
             templates_manager: RefCell::new(TemplatesManager::new()),
         }
     }
 
-    /// Create a new parser with a custom IE registry.
     pub fn with_registry(registry: IERegistry) -> Self {
         Self {
             templates_manager: RefCell::new(TemplatesManager::with_registry(registry)),
         }
     }
 
-    /// Parse an IPFIX message from raw bytes.
-    ///
-    /// Returns the parsed message and any remaining unparsed bytes.
     pub fn parse<'a>(&'a self, input: &'a [u8]) -> IResult<&'a [u8], Message> {
         parse_message(input, &self.templates_manager)
     }
 
-    /// Clear all stored templates.
     pub fn clear_templates(&self) {
         self.templates_manager.borrow_mut().clear();
     }
 
-    /// Get a reference to the templates manager.
     pub fn templates_manager(&self) -> &RefCell<TemplatesManager> {
         &self.templates_manager
     }
@@ -72,7 +65,6 @@ pub const VALID_TEMPLATE_ID_RANGE: RangeInclusive<u16> = 256..=65535;
 
 pub const VARIABLE_LENGTH: u16 = 0xffff;
 
-/// Context for parsing structured data types that require template lookups
 pub struct ParserContext<'a> {
     pub templates_manager: &'a TemplatesManager,
     pub ie_registry: &'a IERegistry,
