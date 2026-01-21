@@ -12,6 +12,7 @@ use pcap::{Activated, Capture, Device};
 use rustc_hash::FxHashMap;
 use rustflow_core::utils::parse_udp_packet;
 use rustflow_parser::ie_registry::{IEDefinition, IERegistry};
+use rustflow_parser::types::SerializableMessage;
 
 #[derive(Parser, Debug)]
 #[command(version)]
@@ -148,6 +149,8 @@ fn main() {
                         let parser = parsers.get_mut(&src).unwrap();
 
                         if let Ok((_, message)) = parser.parse(payload.as_slice()) {
+                            println!("{}\n\n", serde_json::to_string_pretty(&SerializableMessage::new(&message, &ie_registry)).unwrap());
+
                             for set in &message.sets {
                                 for record in &set.records {
                                     if let rustflow_parser::types::Record::Data(data_record) =
@@ -178,7 +181,8 @@ fn main() {
                 }
                 Err(e) => {
                     eprintln!("Error reading packet: {}", e);
-                    continue;
+                    drop(sender);
+                    break;
                 }
             }
         }

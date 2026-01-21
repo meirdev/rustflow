@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::ops::RangeInclusive;
 
-use chrono::{TimeZone, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use macaddr::MacAddr6;
 use nom::bytes::complete::take;
 use nom::combinator::{cond, map, verify};
@@ -103,6 +103,10 @@ pub fn parse_message<'a>(
         )
     })
     .parse(input)?;
+
+    let export_time = DateTime::<Utc>::from_timestamp(export_time as i64, 0).ok_or_else(|| {
+        nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Verify))
+    })?;
 
     Ok((
         input,
