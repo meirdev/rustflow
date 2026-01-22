@@ -5,7 +5,7 @@ use std::ops::RangeInclusive;
 use chrono::{DateTime, TimeZone, Utc};
 use macaddr::MacAddr6;
 use nom::bytes::complete::take;
-use nom::combinator::{cond, map, verify};
+use nom::combinator::{cond, map, peek, verify};
 use nom::multi::{fold_many1, many, many1};
 use nom::number::complete::{be_u8, be_u16, be_u32};
 use nom::{IResult, Parser as _};
@@ -13,6 +13,7 @@ use primitive_types::U256;
 use rustc_hash::FxHashMap;
 
 use crate::ie_registry::{DataType, IERegistry};
+use crate::netflow::{v9_parser, v9_types};
 use crate::templates_manager::TemplatesManager;
 use crate::types::{
     BasicList, DataRecord, FieldSpecifier, FieldValue, Message, OptionsTemplateRecord, Record,
@@ -25,6 +26,11 @@ pub const TEMPLATE_SET_ID: u16 = 2;
 
 pub struct Parser {
     templates_manager: RefCell<TemplatesManager>,
+}
+
+pub enum MessageVersion {
+    V9(v9_types::Message),
+    V10(Message),
 }
 
 impl Parser {
@@ -40,8 +46,19 @@ impl Parser {
         }
     }
 
-    pub fn parse<'a>(&'a self, input: &'a [u8]) -> IResult<&'a [u8], Message> {
-        parse_message(input, &self.templates_manager)
+    pub fn parse<'a>(&'a self, input: &'a [u8]) -> IResult<&'a [u8], MessageVersion> {
+        let (_, version) = peek(be_u16).parse(input)?;
+
+        match version {
+            9 => v9_parser::parse_message(input, &self.templates_manager)
+                .map(|(i, m)| (i, MessageVersion::V9(m))),
+            10 => parse_message(input, &self.templates_manager)
+                .map(|(i, m)| (i, MessageVersion::V10(m))),
+            _ => Err(nom::Err::Failure(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::Verify,
+            ))),
+        }
     }
 
     pub fn clear_templates(&self) {
@@ -371,10 +388,6 @@ fn parse_subtemplate_list<'a>(
     ))
 }
 
-/// Parse a SubTemplateMultiList (IE 293) according to RFC 6313 Section 4.5.3
-/// Format:
-/// - 1 byte: semantic
-/// - Multiple items, each: template ID (2) + content length (2) + records
 fn parse_subtemplate_multi_list<'a>(
     input: &'a [u8],
     ctx: &ParserContext<'_>,
@@ -461,7 +474,7 @@ fn parse_data_record_with_context<'a>(
     Ok((remaining, DataRecord(record)))
 }
 
-fn parse_field_value_with_context<'a>(
+pub fn parse_field_value_with_context<'a>(
     input: &'a [u8],
     length: u16,
     data_type: Option<&DataType>,

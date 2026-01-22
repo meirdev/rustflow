@@ -10,9 +10,10 @@ nom = "8.0.0"
 rustc-hash = { version = "2.1" }
 primitive-types = {version = "0.13.1", features = ["serde"]}
 macaddr = {version = "1.0.1", features = ["serde"]}
+etherparse = "0.18"
+hex = "0.4.3"
 pnet_packet = "0.35.0"
 pnet_base = "0.35.0"
-hex = "0.4.3"
 
 [dev-dependencies]
 criterion = "0.7.0"

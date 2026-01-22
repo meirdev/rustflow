@@ -5,6 +5,7 @@ use crate::types::FieldSpecifier;
 
 pub type Key = (u32, u16);
 
+#[derive(Debug)]
 pub struct Template {
     pub fields: Vec<FieldSpecifier>,
 }

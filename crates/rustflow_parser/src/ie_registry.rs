@@ -1,6 +1,11 @@
-use rustc_hash::FxHashMap;
+use std::path::Path;
 
-#[derive(Debug, Clone)]
+use rustc_hash::FxHashMap;
+use serde::Deserialize;
+use strum::EnumString;
+
+#[derive(Debug, Clone, Deserialize, EnumString)]
+#[strum(serialize_all = "camelCase")]
 pub enum DataType {
     Unsigned,
     Signed,
@@ -20,31 +25,7 @@ pub enum DataType {
     SubTemplateMultiList,
 }
 
-impl From<&str> for DataType {
-    fn from(value: &str) -> Self {
-        match value {
-            "unsigned" => DataType::Unsigned,
-            "signed" => DataType::Signed,
-            "float" => DataType::Float,
-            "boolean" => DataType::Boolean,
-            "macAddress" => DataType::MacAddress,
-            "octetArray" => DataType::OctetArray,
-            "string" => DataType::String,
-            "dateTimeSeconds" => DataType::DateTimeSeconds,
-            "dateTimeMilliseconds" => DataType::DateTimeMilliseconds,
-            "dateTimeMicroseconds" => DataType::DateTimeMicroseconds,
-            "dateTimeNanoseconds" => DataType::DateTimeNanoseconds,
-            "ipv4Address" => DataType::Ipv4Address,
-            "ipv6Address" => DataType::Ipv6Address,
-            "basicList" => DataType::BasicList,
-            "subTemplateList" => DataType::SubTemplateList,
-            "subTemplateMultiList" => DataType::SubTemplateMultiList,
-            _ => panic!("Unknown user defined data type: {}", value),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct IEDefinition {
     pub id: u16,
     pub enterprise_number: Option<u32>,
@@ -92,6 +73,19 @@ impl IERegistry {
 
     pub fn lookup_by_name(&self, name: &str) -> Option<&IEDefinition> {
         self.elements.values().find(|def| def.name == name)
+    }
+
+    pub fn load_from_csv<P: AsRef<Path>>(&mut self, path: P) -> Result<usize, csv::Error> {
+        let mut reader = csv::Reader::from_path(path)?;
+        let mut count = 0;
+
+        for result in reader.deserialize() {
+            let def: IEDefinition = result?;
+            self.elements.insert((def.id, def.enterprise_number), def);
+            count += 1;
+        }
+
+        Ok(count)
     }
 
     fn add_iana_elements(&mut self) {
@@ -598,7 +592,12 @@ impl IERegistry {
         ];
 
         elements.iter().for_each(|(id, name, data_type)| {
-            self.add_element(*id, None, name.to_string(), (*data_type).into());
+            self.add_element(
+                *id,
+                None,
+                name.to_string(),
+                (*data_type).try_into().unwrap(),
+            );
         });
     }
 }
