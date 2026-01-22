@@ -12,7 +12,6 @@ use pcap::{Activated, Capture, Device};
 use rustc_hash::FxHashMap;
 use rustflow_core::utils::parse_udp_packet;
 use rustflow_parser::ie_registry::{IEDefinition, IERegistry};
-use rustflow_parser::parser::MessageVersion;
 use rustflow_parser::types::SerializableMessage;
 
 #[derive(Parser, Debug)]
@@ -154,59 +153,26 @@ fn main() {
                             // serde_json::to_string_pretty(&SerializableMessage::new(&message,
                             // &ie_registry)).unwrap());
 
-                            match message {
-                                MessageVersion::V9(msg) => {
-                                    for set in &msg.sets {
-                                        for record in &set.records {
-                                            if let rustflow_parser::netflow::v9_types::Record::Data(
-                                                data_record,
-                                            ) = record
-                                            {
-                                                for ((enterprise_number, element_id), value) in
-                                                    &data_record.0
-                                                {
-                                                    let enterprise_opt = if *enterprise_number == 0
-                                                    {
-                                                        None
-                                                    } else {
-                                                        Some(*enterprise_number)
-                                                    };
-                                                    let name = ie_registry
-                                                        .lookup(*element_id, enterprise_opt)
-                                                        .map(|def| def.name.as_str())
-                                                        .unwrap_or("unknown");
-                                                    println!("{}: {}", name, value);
-                                                }
-                                                println!("---");
-                                            }
+                            for set in &message.sets {
+                                for record in &set.records {
+                                    if let rustflow_parser::types::Record::Data(data_record) =
+                                        record
+                                    {
+                                        for ((enterprise_number, element_id), value) in
+                                            &data_record.0
+                                        {
+                                            let enterprise_opt = if *enterprise_number == 0 {
+                                                None
+                                            } else {
+                                                Some(*enterprise_number)
+                                            };
+                                            let name = ie_registry
+                                                .lookup(*element_id, enterprise_opt)
+                                                .map(|def| def.name.as_str())
+                                                .unwrap_or("unknown");
+                                            println!("{}: {}", name, value);
                                         }
-                                    }
-                                }
-                                MessageVersion::V10(msg) => {
-                                    for set in &msg.sets {
-                                        for record in &set.records {
-                                            if let rustflow_parser::types::Record::Data(
-                                                data_record,
-                                            ) = record
-                                            {
-                                                for ((enterprise_number, element_id), value) in
-                                                    &data_record.0
-                                                {
-                                                    let enterprise_opt = if *enterprise_number == 0
-                                                    {
-                                                        None
-                                                    } else {
-                                                        Some(*enterprise_number)
-                                                    };
-                                                    let name = ie_registry
-                                                        .lookup(*element_id, enterprise_opt)
-                                                        .map(|def| def.name.as_str())
-                                                        .unwrap_or("unknown");
-                                                    println!("{}: {}", name, value);
-                                                }
-                                                println!("---");
-                                            }
-                                        }
+                                        println!("---");
                                     }
                                 }
                             }

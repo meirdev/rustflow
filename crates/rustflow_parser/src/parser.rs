@@ -13,7 +13,7 @@ use primitive_types::U256;
 use rustc_hash::FxHashMap;
 
 use crate::ie_registry::{DataType, IERegistry};
-use crate::netflow::{v9_parser, v9_types};
+use crate::netflow::{v5_parser, v9_parser};
 use crate::templates_manager::TemplatesManager;
 use crate::types::{
     BasicList, DataRecord, FieldSpecifier, FieldValue, Message, OptionsTemplateRecord, Record,
@@ -26,11 +26,6 @@ pub const TEMPLATE_SET_ID: u16 = 2;
 
 pub struct Parser {
     templates_manager: RefCell<TemplatesManager>,
-}
-
-pub enum MessageVersion {
-    V9(v9_types::Message),
-    V10(Message),
 }
 
 impl Parser {
@@ -46,14 +41,13 @@ impl Parser {
         }
     }
 
-    pub fn parse<'a>(&'a self, input: &'a [u8]) -> IResult<&'a [u8], MessageVersion> {
+    pub fn parse<'a>(&'a self, input: &'a [u8]) -> IResult<&'a [u8], Message> {
         let (_, version) = peek(be_u16).parse(input)?;
 
         match version {
-            9 => v9_parser::parse_message(input, &self.templates_manager)
-                .map(|(i, m)| (i, MessageVersion::V9(m))),
-            10 => parse_message(input, &self.templates_manager)
-                .map(|(i, m)| (i, MessageVersion::V10(m))),
+            5 => v5_parser::parse_message(input),
+            9 => v9_parser::parse_message(input, &self.templates_manager),
+            10 => parse_message(input, &self.templates_manager),
             _ => Err(nom::Err::Failure(nom::error::Error::new(
                 input,
                 nom::error::ErrorKind::Verify,
@@ -133,7 +127,7 @@ pub fn parse_message<'a>(
             export_time,
             sequence_number,
             observation_domain_id,
-            nf_count: None,
+            nf_count: 0,
             nf_system_uptime: None,
             sets,
         },
@@ -216,7 +210,7 @@ pub fn parse_set<'a>(
     ))
 }
 
-fn parse_template_record(input: &[u8]) -> IResult<&[u8], TemplateRecord> {
+pub fn parse_template_record(input: &[u8]) -> IResult<&[u8], TemplateRecord> {
     let (input, template_id) =
         verify(be_u16, |i| VALID_TEMPLATE_ID_RANGE.contains(i)).parse(input)?;
     let (input, field_count) = be_u16(input)?;
@@ -447,7 +441,7 @@ fn parse_subtemplate_multi_item<'a>(
     ))
 }
 
-fn parse_data_record_with_context<'a>(
+pub fn parse_data_record_with_context<'a>(
     input: &'a [u8],
     fields: &[FieldSpecifier],
     ctx: &ParserContext<'_>,
