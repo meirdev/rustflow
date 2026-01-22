@@ -21,6 +21,7 @@ fn parse_timestamp(input: &[u8]) -> IResult<&[u8], DateTime<Utc>> {
 }
 
 pub fn parse_message(input: &[u8]) -> IResult<&[u8], Message> {
+    let length = input.len() as u16;
     let (input, version) = verify(be_u16, |i| *i == NETFLOW_V5_VERSION).parse(input)?;
     let (input, count) = be_u16(input)?;
     let (input, system_uptime) = parse_timestamp(input)?;
@@ -33,6 +34,8 @@ pub fn parse_message(input: &[u8]) -> IResult<&[u8], Message> {
 
     let sampling_mode = sampling_interval >> 14;
     let sampling_interval = sampling_interval & 0x3fff;
+
+    let set_length = input.len() as u16;
 
     let (input, records) = many(count.to_usize(), |i| {
         let (i, data_record) =
@@ -48,15 +51,15 @@ pub fn parse_message(input: &[u8]) -> IResult<&[u8], Message> {
         input,
         Message {
             version,
-            length: 0,
-            export_time: export_time,
+            length,
+            export_time,
             sequence_number: flow_sequence,
             observation_domain_id: 0,
-            nf_count: count,
-            nf_system_uptime: Some(system_uptime),
+            count,
+            system_uptime: Some(system_uptime),
             sets: vec![Set {
                 set_id: 256,
-                length: 0,
+                length: set_length,
                 records,
             }],
         },

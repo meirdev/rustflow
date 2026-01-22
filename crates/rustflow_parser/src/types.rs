@@ -18,8 +18,9 @@ pub struct Message {
     pub sequence_number: u32,
     pub observation_domain_id: u32,
 
-    pub nf_count: u16,
-    pub nf_system_uptime: Option<DateTime<Utc>>,
+    // NetFlow V5 & V9
+    pub count: u16,
+    pub system_uptime: Option<DateTime<Utc>>,
 
     pub sets: Vec<Set>,
 }

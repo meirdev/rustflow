@@ -133,6 +133,9 @@ fn main() {
                 .into(),
         };
 
+        let mut packets = 0;
+        let mut records = 0;
+
         loop {
             match cap.next_packet() {
                 Ok(packet) => {
@@ -149,6 +152,7 @@ fn main() {
                         let parser = parsers.get_mut(&src).unwrap();
 
                         if let Ok((_, message)) = parser.parse(payload.as_slice()) {
+                            packets += 1;
                             // println!("{}\n\n",
                             // serde_json::to_string_pretty(&SerializableMessage::new(&message,
                             // &ie_registry)).unwrap());
@@ -170,9 +174,10 @@ fn main() {
                                                 .lookup(*element_id, enterprise_opt)
                                                 .map(|def| def.name.as_str())
                                                 .unwrap_or("unknown");
-                                            println!("{}: {}", name, value);
+                                            // println!("{}: {}", name, value);
+                                            records += 1;
                                         }
-                                        println!("---");
+                                        // println!("---");
                                     }
                                 }
                             }
@@ -188,6 +193,9 @@ fn main() {
                 }
             }
         }
+
+        println!("packets: {}", packets);
+        println!("records: {}", records);
     });
 
     if let Some(output) = cli.output {

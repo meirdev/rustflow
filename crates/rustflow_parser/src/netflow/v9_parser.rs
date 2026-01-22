@@ -29,6 +29,7 @@ pub fn parse_message<'a>(
     input: &'a [u8],
     templates_manager: &'a RefCell<TemplatesManager>,
 ) -> IResult<&'a [u8], Message> {
+    let length = input.len() as u16;
     let (input, version) = verify(be_u16, |i| *i == NETFLOW_V9_VERSION).parse(input)?;
     let (input, count) = be_u16(input)?;
     let (input, system_uptime) = parse_timestamp_millis(input)?;
@@ -43,12 +44,12 @@ pub fn parse_message<'a>(
         input,
         Message {
             version,
-            length: 0,
+            length,
             export_time: unix_secs,
             sequence_number,
             observation_domain_id: source_id,
-            nf_count: count,
-            nf_system_uptime: Some(system_uptime),
+            count,
+            system_uptime: Some(system_uptime),
             sets,
         },
     ))
