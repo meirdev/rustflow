@@ -1,7 +1,7 @@
 use std::fmt::{self, Display, Formatter};
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use macaddr::MacAddr6;
 use primitive_types::U256;
 use rustc_hash::FxHashMap;
@@ -12,12 +12,14 @@ use crate::ie_registry::IERegistry;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Message {
-    /// Header
     pub version: u16,
     pub length: u16,
-    pub export_time: chrono::DateTime<Utc>,
+    pub export_time: DateTime<Utc>,
     pub sequence_number: u32,
     pub observation_domain_id: u32,
+
+    pub nf_count: Option<u16>,
+    pub nf_system_uptime: Option<DateTime<Utc>>,
 
     pub sets: Vec<Set>,
 }
@@ -79,10 +81,10 @@ pub enum FieldValue {
     MacAddress(MacAddr6),
     OctetArray(Vec<u8>),
     String(String),
-    DateTimeSeconds(chrono::DateTime<Utc>),
-    DateTimeMilliseconds(chrono::DateTime<Utc>),
-    DateTimeMicroseconds(chrono::DateTime<Utc>),
-    DateTimeNanoseconds(chrono::DateTime<Utc>),
+    DateTimeSeconds(DateTime<Utc>),
+    DateTimeMilliseconds(DateTime<Utc>),
+    DateTimeMicroseconds(DateTime<Utc>),
+    DateTimeNanoseconds(DateTime<Utc>),
     Ipv4Address(Ipv4Addr),
     Ipv6Address(Ipv6Addr),
     BasicList(BasicList),

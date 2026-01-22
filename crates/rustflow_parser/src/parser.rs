@@ -133,6 +133,8 @@ pub fn parse_message<'a>(
             export_time,
             sequence_number,
             observation_domain_id,
+            nf_count: None,
+            nf_system_uptime: None,
             sets,
         },
     ))
