@@ -5,3 +5,4 @@ pub mod parser;
 pub mod serializer;
 pub mod templates_manager;
 pub mod types;
+pub mod sflow;
