@@ -94,29 +94,32 @@ fn parse_data_record(
     let (input, dst_mask) = be_u8(input)?;
     let (input, _) = take(2usize)(input)?;
 
-    let mut fields = FxHashMap::default();
-    fields.insert((0, 38), FieldValue::Unsigned8(engine_type)); // engineType
-    fields.insert((0, 39), FieldValue::Unsigned8(engine_id)); // engineId
-    fields.insert((0, 8), FieldValue::Ipv4Address(srcaddr)); // sourceIPv4Address
-    fields.insert((0, 12), FieldValue::Ipv4Address(dstaddr)); // destinationIPv4Address
-    fields.insert((0, 15), FieldValue::Ipv4Address(nexthop)); // ipNextHopIPv4Address
-    fields.insert((0, 10), FieldValue::Unsigned16(input_)); // ingressInterface
-    fields.insert((0, 14), FieldValue::Unsigned16(output)); // egressInterface
-    fields.insert((0, 2), FieldValue::Unsigned32(d_pkts)); // packetDeltaCount
-    fields.insert((0, 1), FieldValue::Unsigned32(d_ockts)); // octetDeltaCount
-    fields.insert((0, 152), FieldValue::DateTimeMilliseconds(first)); // flowStartMilliseconds
-    fields.insert((0, 153), FieldValue::DateTimeMilliseconds(last)); // flowEndMilliseconds
-    fields.insert((0, 7), FieldValue::Unsigned16(srcport)); // sourceTransportPort
-    fields.insert((0, 11), FieldValue::Unsigned16(dstport)); // destinationTransportPort
-    fields.insert((0, 6), FieldValue::Unsigned8(tcp_flags)); // tcpControlBits
-    fields.insert((0, 4), FieldValue::Unsigned8(prot)); // protocolIdentifier
-    fields.insert((0, 5), FieldValue::Unsigned8(tos)); // ipClassOfService
-    fields.insert((0, 16), FieldValue::Unsigned16(src_as)); // bgpSourceAsNumber
-    fields.insert((0, 17), FieldValue::Unsigned16(dst_as)); // bgpDestinationAsNumber
-    fields.insert((0, 9), FieldValue::Unsigned8(src_mask)); // sourceIPv4PrefixLength
-    fields.insert((0, 13), FieldValue::Unsigned8(dst_mask)); // destinationIPv4PrefixLength
-    fields.insert((0, 35), FieldValue::Unsigned8(sampling_mode as u8)); // samplingAlgorithm
-    fields.insert((0, 34), FieldValue::Unsigned32(sampling_interval as u32)); // samplingInterval
+    let fields: FxHashMap<(u32, u16), FieldValue> = [
+        ((0, 38), FieldValue::Unsigned8(engine_type)),
+        ((0, 39), FieldValue::Unsigned8(engine_id)),
+        ((0, 8), FieldValue::Ipv4Address(srcaddr)),
+        ((0, 12), FieldValue::Ipv4Address(dstaddr)),
+        ((0, 15), FieldValue::Ipv4Address(nexthop)),
+        ((0, 10), FieldValue::Unsigned16(input_)),
+        ((0, 14), FieldValue::Unsigned16(output)),
+        ((0, 2), FieldValue::Unsigned32(d_pkts)),
+        ((0, 1), FieldValue::Unsigned32(d_ockts)),
+        ((0, 152), FieldValue::DateTimeMilliseconds(first)),
+        ((0, 153), FieldValue::DateTimeMilliseconds(last)),
+        ((0, 7), FieldValue::Unsigned16(srcport)),
+        ((0, 11), FieldValue::Unsigned16(dstport)),
+        ((0, 6), FieldValue::Unsigned8(tcp_flags)),
+        ((0, 4), FieldValue::Unsigned8(prot)),
+        ((0, 5), FieldValue::Unsigned8(tos)),
+        ((0, 16), FieldValue::Unsigned16(src_as)),
+        ((0, 17), FieldValue::Unsigned16(dst_as)),
+        ((0, 9), FieldValue::Unsigned8(src_mask)),
+        ((0, 13), FieldValue::Unsigned8(dst_mask)),
+        ((0, 35), FieldValue::Unsigned8(sampling_mode as u8)),
+        ((0, 34), FieldValue::Unsigned32(sampling_interval as u32)),
+    ]
+    .into_iter()
+    .collect();
 
     Ok((input, DataRecord(fields)))
 }

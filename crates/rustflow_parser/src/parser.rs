@@ -264,21 +264,6 @@ fn parse_field_specifier(input: &[u8]) -> IResult<&[u8], FieldSpecifier> {
     ))
 }
 
-fn parse_unsigned(data: &[u8], length: u16) -> FieldValue {
-    match length {
-        1 => FieldValue::Unsigned8(data[0]),
-        2 => FieldValue::Unsigned16(u16::from_be_bytes(data.try_into().unwrap())),
-        4 => FieldValue::Unsigned32(u32::from_be_bytes(data.try_into().unwrap())),
-        8 => FieldValue::Unsigned64(u64::from_be_bytes(data.try_into().unwrap())),
-        _ => {
-            let mut bytes = [0u8; 32];
-            let start = 32 - data.len().min(32);
-            bytes[start..].copy_from_slice(&data[..data.len().min(32)]);
-            FieldValue::Unsigned256(U256::from_big_endian(&bytes))
-        }
-    }
-}
-
 fn parse_unsigned_raw(data: &[u8], length: u16) -> u64 {
     match length {
         1 => data[0] as u64,
@@ -291,6 +276,21 @@ fn parse_unsigned_raw(data: &[u8], length: u16) -> u64 {
                 result = (result << 8) | (b as u64);
             }
             result
+        }
+    }
+}
+
+fn parse_unsigned(data: &[u8], length: u16) -> FieldValue {
+    match length {
+        1 => FieldValue::Unsigned8(data[0]),
+        2 => FieldValue::Unsigned16(u16::from_be_bytes(data.try_into().unwrap())),
+        4 => FieldValue::Unsigned32(u32::from_be_bytes(data.try_into().unwrap())),
+        8 => FieldValue::Unsigned64(u64::from_be_bytes(data.try_into().unwrap())),
+        _ => {
+            let mut bytes = [0u8; 32];
+            let start = 32 - data.len().min(32);
+            bytes[start..].copy_from_slice(&data[..data.len().min(32)]);
+            FieldValue::Unsigned256(U256::from_big_endian(&bytes))
         }
     }
 }
