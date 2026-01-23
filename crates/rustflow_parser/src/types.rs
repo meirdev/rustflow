@@ -188,7 +188,7 @@ impl Display for FieldValue {
             }
             FieldValue::Ipv4Address(v) => write!(f, "{}", v),
             FieldValue::Ipv6Address(v) => write!(f, "{}", v),
-            // There is no RFC for this:
+            // There is no RFC for these
             FieldValue::BasicList(v) => write!(f, "{:?}", v),
             FieldValue::SubTemplateList(v) => write!(f, "{:?}", v),
             FieldValue::SubTemplateMultiList(v) => write!(f, "{:?}", v),
