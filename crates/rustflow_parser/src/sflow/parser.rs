@@ -1,5 +1,6 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
+use etherparse::{LinkSlice, NetSlice, SlicedPacket, TransportSlice};
 use macaddr::MacAddr6;
 use nom::bytes::complete::take;
 use nom::combinator::{fail, map, map_res, peek, verify};
@@ -7,12 +8,6 @@ use nom::error::Error;
 use nom::multi::{many, many1};
 use nom::number::complete::{be_i32, be_u32, be_u64, be_u128};
 use nom::{IResult, Parser};
-use pnet_packet::Packet;
-use pnet_packet::ethernet::{EtherTypes, EthernetPacket};
-use pnet_packet::ip::IpNextHeaderProtocols;
-use pnet_packet::ipv4::Ipv4Packet;
-use pnet_packet::tcp::TcpPacket;
-use pnet_packet::udp::UdpPacket;
 use rustc_hash::FxHashMap;
 
 use crate::sflow::types::{
@@ -64,96 +59,107 @@ impl SFlowV5Parser {
                     .for_each(|record| match &record.data {
                         FlowRecordType::SampledHeader(flow_record) => match flow_record.protocol {
                             HeaderProtocol::EthernetIso8023 => {
-                                EthernetPacket::new(&flow_record.header).map(|eth_packet| {
-                                    let src_mac = eth_packet.get_source();
-                                    let dst_mac = eth_packet.get_destination();
+                                if let Ok(sliced) = SlicedPacket::from_ethernet(&flow_record.header)
+                                {
+                                    let (src_mac, dst_mac, etype) = match &sliced.link {
+                                        Some(LinkSlice::Ethernet2(eth)) => {
+                                            let header = eth.to_header();
+                                            (
+                                                MacAddr6::from(header.source),
+                                                MacAddr6::from(header.destination),
+                                                header.ether_type.0,
+                                            )
+                                        }
+                                        _ => return,
+                                    };
 
-                                    match eth_packet.get_ethertype() {
-                                        EtherTypes::Ipv4 => {
-                                            let ipv4_packet =
-                                                Ipv4Packet::new(&eth_packet.payload());
+                                    match &sliced.net {
+                                        Some(NetSlice::Ipv4(ipv4_slice)) => {
+                                            let ipv4_header = ipv4_slice.header();
+                                            let src_ip = Ipv4Addr::from(ipv4_header.source_addr());
+                                            let dst_ip =
+                                                Ipv4Addr::from(ipv4_header.destination_addr());
+                                            let protocol = ipv4_header.protocol().0;
 
-                                            if let Some(ipv4_packet) = ipv4_packet {
-                                                match ipv4_packet.get_next_level_protocol() {
-                                                IpNextHeaderProtocols::Tcp => {
-                                                    if let Some(tcp_packet) =
-                                                        TcpPacket::new(&ipv4_packet.payload())
-                                                    {
-                                                        let src_ip = ipv4_packet.get_source();
-                                                        let dst_ip = ipv4_packet.get_destination();
-                                                        let src_port = tcp_packet.get_source();
-                                                        let dst_port = tcp_packet.get_destination();
+                                            match &sliced.transport {
+                                                Some(TransportSlice::Tcp(tcp_slice)) => {
+                                                    let src_port = tcp_slice.source_port();
+                                                    let dst_port = tcp_slice.destination_port();
 
-                                                        records.push(FxHashMap::from_iter([
-                                                            ("sampling_rate", DataValue::U32(flow_sample.sampling_rate)),
-                                                            ("bytes", DataValue::U32(flow_record.frame_length)),
-                                                            ("packets", DataValue::U32(1)),
-                                                            ("protocol", DataValue::U8(ipv4_packet.get_next_level_protocol().0)),
-                                                            ("etype", DataValue::U16(eth_packet.get_ethertype().0)),
-                                                            (
-                                                                "src_mac",
-                                                                DataValue::MacAddr(src_mac),
+                                                    records.push(FxHashMap::from_iter([
+                                                        (
+                                                            "sampling_rate",
+                                                            DataValue::U32(
+                                                                flow_sample.sampling_rate,
                                                             ),
-                                                            (
-                                                                "dst_mac",
-                                                                DataValue::MacAddr(dst_mac),
+                                                        ),
+                                                        (
+                                                            "bytes",
+                                                            DataValue::U32(
+                                                                flow_record.frame_length,
                                                             ),
-                                                            ("src_ip", DataValue::Ipv4(src_ip)),
-                                                            ("dst_ip", DataValue::Ipv4(dst_ip)),
-                                                            ("src_port", DataValue::U16(src_port)),
-                                                            ("dst_port", DataValue::U16(dst_port)),
-                                                        ]));
-                                                    }
+                                                        ),
+                                                        ("packets", DataValue::U32(1)),
+                                                        ("protocol", DataValue::U8(protocol)),
+                                                        ("etype", DataValue::U16(etype)),
+                                                        ("src_mac", DataValue::MacAddr(src_mac)),
+                                                        ("dst_mac", DataValue::MacAddr(dst_mac)),
+                                                        ("src_ip", DataValue::Ipv4(src_ip)),
+                                                        ("dst_ip", DataValue::Ipv4(dst_ip)),
+                                                        ("src_port", DataValue::U16(src_port)),
+                                                        ("dst_port", DataValue::U16(dst_port)),
+                                                    ]));
                                                 }
-                                                IpNextHeaderProtocols::Udp => {
-                                                    if let Some(udp_packet) = UdpPacket::new(&ipv4_packet.payload()) {
-                                                        let src_ip = ipv4_packet.get_source();
-                                                        let dst_ip = ipv4_packet.get_destination();
-                                                        let src_port = udp_packet.get_source();
-                                                        let dst_port = udp_packet.get_destination();
+                                                Some(TransportSlice::Udp(udp_slice)) => {
+                                                    let src_port = udp_slice.source_port();
+                                                    let dst_port = udp_slice.destination_port();
 
-                                                        records.push(FxHashMap::from_iter([
-                                                            ("sampling_rate", DataValue::U32(flow_sample.sampling_rate)),
-                                                            ("bytes", DataValue::U32(flow_record.frame_length)),
-                                                            ("packets", DataValue::U32(1)),
-                                                            ("protocol", DataValue::U8(ipv4_packet.get_next_level_protocol().0)),
-                                                            ("etype", DataValue::U16(eth_packet.get_ethertype().0)),
-                                                            (
-                                                                "src_mac",
-                                                                DataValue::MacAddr(src_mac),
+                                                    records.push(FxHashMap::from_iter([
+                                                        (
+                                                            "sampling_rate",
+                                                            DataValue::U32(
+                                                                flow_sample.sampling_rate,
                                                             ),
-                                                            (
-                                                                "dst_mac",
-                                                                DataValue::MacAddr(dst_mac),
+                                                        ),
+                                                        (
+                                                            "bytes",
+                                                            DataValue::U32(
+                                                                flow_record.frame_length,
                                                             ),
-                                                            ("src_ip", DataValue::Ipv4(src_ip)),
-                                                            ("dst_ip", DataValue::Ipv4(dst_ip)),
-                                                            ("src_port", DataValue::U16(src_port)),
-                                                            ("dst_port", DataValue::U16(dst_port)),
-                                                        ]));
-                                                    }
+                                                        ),
+                                                        ("packets", DataValue::U32(1)),
+                                                        ("protocol", DataValue::U8(protocol)),
+                                                        ("etype", DataValue::U16(etype)),
+                                                        ("src_mac", DataValue::MacAddr(src_mac)),
+                                                        ("dst_mac", DataValue::MacAddr(dst_mac)),
+                                                        ("src_ip", DataValue::Ipv4(src_ip)),
+                                                        ("dst_ip", DataValue::Ipv4(dst_ip)),
+                                                        ("src_port", DataValue::U16(src_port)),
+                                                        ("dst_port", DataValue::U16(dst_port)),
+                                                    ]));
                                                 }
                                                 _ => {}
                                             }
                                         }
+                                        _ => {}
                                     }
-                                    _ => {}
-                                }});
+                                }
                             }
-                            HeaderProtocol::Iso88024TokenBus => {},
-                            HeaderProtocol::Iso88025TokenRing => {},
-                            HeaderProtocol::Fddi => {},
-                            HeaderProtocol::FrameRelay => {},
-                            HeaderProtocol::X25 => {},
-                            HeaderProtocol::Ppp => {},
-                            HeaderProtocol::Smds => {},
-                            HeaderProtocol::Aal5 => {},
-                            HeaderProtocol::Aal5Ip => {},
-                            HeaderProtocol::Ipv4 => {},
-                            HeaderProtocol::Ipv6 => {},
-                            HeaderProtocol::Mpls => {},
+                            HeaderProtocol::Iso88024TokenBus => {}
+                            HeaderProtocol::Iso88025TokenRing => {}
+                            HeaderProtocol::Fddi => {}
+                            HeaderProtocol::FrameRelay => {}
+                            HeaderProtocol::X25 => {}
+                            HeaderProtocol::Ppp => {}
+                            HeaderProtocol::Smds => {}
+                            HeaderProtocol::Aal5 => {}
+                            HeaderProtocol::Aal5Ip => {}
+                            HeaderProtocol::Ipv4 => {}
+                            HeaderProtocol::Ipv6 => {}
+                            HeaderProtocol::Mpls => {}
+                            HeaderProtocol::Pos => {},
                         },
-                        FlowRecordType::SampledEthernet(sampled_ethernet) => {},
+                        FlowRecordType::SampledEthernet(sampled_ethernet) => {}
                         FlowRecordType::SampledIpv4(flow_record) => {
                             let src_ip = flow_record.src_ip;
                             let dst_ip = flow_record.dst_ip;
@@ -171,7 +177,7 @@ impl SFlowV5Parser {
                                 ("src_port", DataValue::U32(src_port)),
                                 ("dst_port", DataValue::U32(dst_port)),
                             ]));
-                        },
+                        }
                         FlowRecordType::SampledIpv6(flow_record) => {
                             let src_ip = flow_record.src_ip;
                             let dst_ip = flow_record.dst_ip;
@@ -189,22 +195,22 @@ impl SFlowV5Parser {
                                 ("src_port", DataValue::U32(src_port)),
                                 ("dst_port", DataValue::U32(dst_port)),
                             ]));
-                        },
-                        FlowRecordType::ExtendedSwitch(extended_switch) => {},
-                        FlowRecordType::ExtendedRouter(extended_router) => {},
-                        FlowRecordType::ExtendedGateway(extended_gateway) => {},
-                        FlowRecordType::ExtendedUser(extended_user) => {},
-                        FlowRecordType::ExtendedUrl(extended_url) => {},
-                        FlowRecordType::ExtendedEgressQueue(extended_egress_queue) => {},
-                        FlowRecordType::ExtendedAcl(extended_acl) => {},
-                        FlowRecordType::ExtendedFunction(extended_function) => {},
-                        FlowRecordType::Unknown(items) => {},
+                        }
+                        FlowRecordType::ExtendedSwitch(extended_switch) => {}
+                        FlowRecordType::ExtendedRouter(extended_router) => {}
+                        FlowRecordType::ExtendedGateway(extended_gateway) => {}
+                        FlowRecordType::ExtendedUser(extended_user) => {}
+                        FlowRecordType::ExtendedUrl(extended_url) => {}
+                        FlowRecordType::ExtendedEgressQueue(extended_egress_queue) => {}
+                        FlowRecordType::ExtendedAcl(extended_acl) => {}
+                        FlowRecordType::ExtendedFunction(extended_function) => {}
+                        FlowRecordType::Unknown(items) => {}
                     });
             }
-            Sample::Counter(counter_sample) => {},
-            Sample::ExpandedFlow(expanded_flow_sample) => {},
-            Sample::Drop(drop_sample) => {},
-            Sample::Unknown(items) => {},
+            Sample::Counter(counter_sample) => {}
+            Sample::ExpandedFlow(expanded_flow_sample) => {}
+            Sample::Drop(drop_sample) => {}
+            Sample::Unknown(items) => {}
         });
 
         Ok(records)

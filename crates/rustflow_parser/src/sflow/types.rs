@@ -1,8 +1,10 @@
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use serde::Serialize;
 
 use macaddr::MacAddr6;
 
+#[derive(Debug, Clone, Serialize)]
 pub enum DataValue {
     Null,
     Ipv4(Ipv4Addr),
@@ -16,7 +18,7 @@ pub enum DataValue {
     Boolean(bool),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SFlowV5 {
     pub version: u32,
     pub agent_address: IpAddr,
@@ -26,7 +28,7 @@ pub struct SFlowV5 {
     pub samples: Vec<Sample>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum Sample {
     Flow(FlowSample),
     Counter(CounterSample),
@@ -35,10 +37,10 @@ pub enum Sample {
     Unknown(Vec<u8>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum DataFormat {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SampleHeader {
     pub format: u32,
     pub length: u32,
@@ -47,7 +49,7 @@ pub struct SampleHeader {
     pub source_id_value: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct FlowSample {
     pub header: SampleHeader,
     pub sampling_rate: u32,
@@ -58,13 +60,13 @@ pub struct FlowSample {
     pub records: Vec<FlowRecord>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct CounterSample {
     pub header: SampleHeader,
     pub records: Vec<CounterRecord>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ExpandedFlowSample {
     pub header: SampleHeader,
     pub sampling_rate: u32,
@@ -77,7 +79,7 @@ pub struct ExpandedFlowSample {
     pub records: Vec<FlowRecord>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DropSample {
     pub header: SampleHeader,
     pub drops: u32,
@@ -87,13 +89,13 @@ pub struct DropSample {
     pub records: Vec<FlowRecord>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RecordHeader {
     pub data_format: u32,
     pub length: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum FlowRecordType {
     SampledHeader(SampledHeader),
     SampledEthernet(SampledEthernet),
@@ -110,7 +112,7 @@ pub enum FlowRecordType {
     Unknown(Vec<u8>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 #[repr(u32)]
 pub enum FlowType {
     SampledHeader = 1,
@@ -127,13 +129,13 @@ pub enum FlowType {
     ExtendedFunction = 1038,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct FlowRecord {
     pub header: RecordHeader,
     pub data: FlowRecordType,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum CounterRecordType {
     IfCounters(IfCounters),
     EthernetCounters(EthernetCounters),
@@ -144,7 +146,7 @@ pub enum CounterRecordType {
     Unknown(Vec<u8>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 #[repr(u32)]
 pub enum CounterType {
     IfCounters = 1,
@@ -155,13 +157,13 @@ pub enum CounterType {
     Processor = 1001,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct CounterRecord {
     pub header: RecordHeader,
     pub data: Vec<CounterRecordType>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 #[repr(u32)]
 pub enum HeaderProtocol {
     EthernetIso8023 = 1,
@@ -180,7 +182,7 @@ pub enum HeaderProtocol {
     Pos = 14,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 #[repr(u32)]
 pub enum DropReason {
     NetUnreachable = 0,
@@ -264,7 +266,7 @@ pub enum FlowData {
     ExtendedFunction = 1038,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SampledHeader {
     pub protocol: HeaderProtocol,
     pub frame_length: u32,
@@ -272,7 +274,7 @@ pub struct SampledHeader {
     pub header: Vec<u8>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SampledEthernet {
     pub length: u32,
     pub src_mac: MacAddr6,
@@ -280,7 +282,7 @@ pub struct SampledEthernet {
     pub r#type: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SampledIpv4 {
     pub length: u32,
     pub protocol: u32,
@@ -292,7 +294,7 @@ pub struct SampledIpv4 {
     pub tos: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SampledIpv6 {
     pub length: u32,
     pub protocol: u32,
@@ -304,7 +306,7 @@ pub struct SampledIpv6 {
     pub priority: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum PacketInformationType {
     Header(SampledHeader),
     Ethernet(SampledEthernet),
@@ -312,7 +314,7 @@ pub enum PacketInformationType {
     Ipv6(SampledIpv6),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ExtendedSwitch {
     pub src_vlan: u32,
     pub src_priority: u32,
@@ -320,26 +322,26 @@ pub struct ExtendedSwitch {
     pub dst_priority: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ExtendedRouter {
     pub nexthop: IpAddr,
     pub src_mask: u32,
     pub dst_mask: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum AsPathSegmentType {
     AsSet = 1,
     AsSequence = 2,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum AsPathType {
     AsSet(HashSet<u32>),
     AsSequence(HashSet<u32>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ExtendedGateway {
     pub r#as: u32,
     pub src_as: u32,
@@ -349,30 +351,30 @@ pub struct ExtendedGateway {
     pub localpref: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ExtendedUser {
     pub src_user: String,
     pub dst_user: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum UrlDirection {
     Src = 1,
     Dst = 2,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ExtendedUrl {
     pub direction: UrlDirection,
     pub url: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ExtendedEgressQueue {
     pub queue: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 #[repr(u32)]
 pub enum Direction {
     Unknown = 0,
@@ -380,19 +382,19 @@ pub enum Direction {
     Egress = 2,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ExtendedAcl {
     pub number: u32,
     pub name: String,
     pub direction: Direction,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ExtendedFunction {
     pub symbol: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum ExtendedDataType {
     Switch(ExtendedSwitch),
     Router(ExtendedRouter),
@@ -404,7 +406,7 @@ pub enum ExtendedDataType {
     Function(ExtendedFunction),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct IfCounters {
     pub if_index: u32,
     pub if_type: u32,
@@ -427,7 +429,7 @@ pub struct IfCounters {
     pub if_promiscuous_mode: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DiscardedPacket {
     pub sequence_number: u32,
     pub source_id: u32,
@@ -438,7 +440,7 @@ pub struct DiscardedPacket {
     pub discard_records: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct EthernetCounters {
     pub dot3_stats_alignment_errors: u32,
     pub dot3_stats_fcs_errors: u32,
@@ -455,7 +457,7 @@ pub struct EthernetCounters {
     pub dot3_stats_symbol_errors: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct TokenringCounters {
     pub dot5_stats_line_errors: u32,
     pub dot5_stats_burst_errors: u32,
@@ -477,7 +479,7 @@ pub struct TokenringCounters {
     pub dot5_stats_freq_errors: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct VgCounters {
     pub dot12_in_high_priority_frames: u32,
     pub dot12_in_high_priority_octets: u64,
@@ -495,7 +497,7 @@ pub struct VgCounters {
     pub dot12_hc_out_high_priority_octets: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct VlanCounters {
     pub vlan_id: u32,
     pub octets: u64,
@@ -505,7 +507,7 @@ pub struct VlanCounters {
     pub discards: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Processor {
     pub avg_5s_cpu: i32,
     pub avg_1m_cpu: i32,
