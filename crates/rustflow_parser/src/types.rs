@@ -333,7 +333,6 @@ impl Serialize for SerializableRecord<'_> {
     }
 }
 
-/// Wrapper for serializing a DataRecord with IE names instead of numeric IDs.
 pub struct SerializableDataRecord<'a> {
     pub record: &'a DataRecord,
     pub registry: &'a IERegistry,
