@@ -6,6 +6,7 @@ use macaddr::MacAddr6;
 use primitive_types::U256;
 use rustc_hash::FxHashMap;
 use serde::Serialize;
+use strum::EnumString;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Message {
@@ -90,8 +91,9 @@ pub enum FieldValue {
     SubTemplateMultiList(SubTemplateMultiList),
 }
 
+#[derive(Debug, Clone, Serialize, EnumString)]
+#[strum(serialize_all = "camelCase")]
 #[repr(u8)]
-#[derive(Debug, Clone, Serialize)]
 pub enum Semantic {
     NoneOf = 0x00,
     ExactlyOneOf = 0x01,
@@ -126,35 +128,6 @@ pub struct SubTemplateMultiItem {
     pub template_id: u16,
     pub length: u16,
     pub data: Vec<DataRecord>,
-}
-
-impl TryFrom<u8> for Semantic {
-    type Error = ();
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0x00 => Ok(Semantic::NoneOf),
-            0x01 => Ok(Semantic::ExactlyOneOf),
-            0x02 => Ok(Semantic::OneOrMoreOf),
-            0x03 => Ok(Semantic::AllOf),
-            0x04 => Ok(Semantic::Ordered),
-            0xff => Ok(Semantic::Undefined),
-            _ => Err(()),
-        }
-    }
-}
-
-impl Display for Semantic {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        match self {
-            Semantic::NoneOf => write!(f, "noneOf"),
-            Semantic::ExactlyOneOf => write!(f, "exactlyOneOf"),
-            Semantic::OneOrMoreOf => write!(f, "oneOrMoreOf"),
-            Semantic::AllOf => write!(f, "allOf"),
-            Semantic::Ordered => write!(f, "ordered"),
-            Semantic::Undefined => write!(f, "undefined"),
-        }
-    }
 }
 
 impl Display for FieldValue {

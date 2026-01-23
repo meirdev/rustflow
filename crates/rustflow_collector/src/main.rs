@@ -10,9 +10,10 @@ use crossbeam::channel::{after, unbounded};
 use crossbeam::select;
 use pcap::{Activated, Capture, Device};
 use rustc_hash::FxHashMap;
-use rustflow_core::utils::parse_udp_packet;
-use rustflow_parser::ie_registry::{IEDefinition, IERegistry};
-use rustflow_parser::types::SerializableMessage;
+use rustflow_collector::utils::parse_udp_packet;
+use rustflow_core::ie_registry::{IEDefinition, IERegistry};
+use rustflow_core::serializer::SerializableMessage;
+use rustflow_core::sflow::parser::SFlowV5Parser;
 
 #[derive(Parser, Debug)]
 #[command(version)]
@@ -94,8 +95,10 @@ fn main() {
 
     let (sender, receiver) = unbounded::<String>();
 
+    // let mut parser_sflow = SFlowV5Parser::default();
+
     thread::spawn(move || {
-        let mut parsers: FxHashMap<IpAddr, rustflow_parser::parser::Parser> = FxHashMap::default();
+        let mut parsers: FxHashMap<IpAddr, rustflow_core::parser::Parser> = FxHashMap::default();
 
         let mut cap: Capture<dyn Activated> = match cli.command {
             Commands::Live {
@@ -145,39 +148,71 @@ fn main() {
                         if !parsers.contains_key(&src) {
                             parsers.insert(
                                 src,
-                                rustflow_parser::parser::Parser::with_registry(ie_registry.clone()),
+                                rustflow_core::parser::Parser::with_registry(ie_registry.clone()),
                             );
                         }
+
+                        // let records = parser_sflow.parse_data_records(payload.as_slice());
+
+                        // println!("{:#?}", records);
 
                         let parser = parsers.get_mut(&src).unwrap();
 
                         if let Ok((_, message)) = parser.parse(payload.as_slice()) {
                             packets += 1;
-                            // println!("{}\n\n",
-                            // serde_json::to_string_pretty(&SerializableMessage::new(&message,
-                            // &ie_registry)).unwrap());
+                            println!(
+                                "{}\n\n",
+                                serde_json::to_string_pretty(&SerializableMessage::new(
+                                    &message,
+                                    &ie_registry
+                                ))
+                                .unwrap()
+                            );
 
                             for set in &message.sets {
                                 for record in &set.records {
-                                    if let rustflow_parser::types::Record::Data(data_record) =
-                                        record
+                                    if let rustflow_core::types::Record::Data(data_record) = record
                                     {
-                                        for ((enterprise_number, element_id), value) in
-                                            &data_record.0
-                                        {
-                                            let enterprise_opt = if *enterprise_number == 0 {
-                                                None
-                                            } else {
-                                                Some(*enterprise_number)
-                                            };
-                                            let name = ie_registry
-                                                .lookup(*element_id, enterprise_opt)
-                                                .map(|def| def.name.as_str())
-                                                .unwrap_or("unknown");
-                                            // println!("{}: {}", name, value);
-                                            records += 1;
-                                        }
+                                        // for ((enterprise_number, element_id),
+                                        // value) in
+                                        //     &data_record.0
+                                        // {
+                                        //     let enterprise_opt = if
+                                        // *enterprise_number == 0 {
+                                        //         None
+                                        //     } else {
+                                        //         Some(*enterprise_number)
+                                        //     };
+                                        //     let name = ie_registry
+                                        //         .lookup(*element_id,
+                                        // enterprise_opt)
+                                        //         .map(|def| def.name.as_str())
+                                        //         .unwrap_or("unknown");
+                                        //     // println!("{}: {}", name,
+                                        // value);
+                                        //     records += 1;
+                                        // }
                                         // println!("---");
+
+                                        // let line = _field_ids
+                                        //     .iter()
+                                        //     .map(|field| {
+                                        //         data_record
+                                        //             .0
+                                        //             .get(&(
+                                        //
+                                        // field.enterprise_number.unwrap_or(0),
+                                        //                 field.id,
+                                        //             ))
+                                        //             .map(|v| v.to_string())
+                                        //
+                                        // .unwrap_or("".to_string())
+                                        //     })
+                                        //     .collect::<Vec<String>>()
+                                        //     .join(",");
+
+                                        // sender.send(line).expect("Failed to
+                                        // send message");
                                     }
                                 }
                             }
