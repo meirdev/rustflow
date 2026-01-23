@@ -8,7 +8,7 @@ pub fn parse_udp_packet(packet: &[u8]) -> Result<(IpAddr, Vec<u8>), ()> {
     let source_ip = match sliced.net {
         Some(InternetSlice::Ipv4(ipv4)) => IpAddr::V4(ipv4.header().source_addr()),
         Some(InternetSlice::Ipv6(ipv6)) => IpAddr::V6(ipv6.header().source_addr()),
-        Some(InternetSlice::Arp(_)) | None => return Err(()),
+        _ => return Err(()),
     };
 
     let payload = match sliced.transport {
