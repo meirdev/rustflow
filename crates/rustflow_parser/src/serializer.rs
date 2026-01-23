@@ -202,12 +202,10 @@ impl Serialize for SerializableFieldValue<'_> {
         S: serde::Serializer,
     {
         match self.value {
-            // Primitives - serialize the inner value directly
             FieldValue::Unsigned8(v) => serializer.serialize_u8(*v),
             FieldValue::Unsigned16(v) => serializer.serialize_u16(*v),
             FieldValue::Unsigned32(v) => serializer.serialize_u32(*v),
             FieldValue::Unsigned64(v) => serializer.serialize_u64(*v),
-            FieldValue::Unsigned256(v) => v.serialize(serializer),
             FieldValue::Signed8(v) => serializer.serialize_i8(*v),
             FieldValue::Signed16(v) => serializer.serialize_i16(*v),
             FieldValue::Signed32(v) => serializer.serialize_i32(*v),
@@ -217,7 +215,7 @@ impl Serialize for SerializableFieldValue<'_> {
             FieldValue::Boolean(v) => serializer.serialize_bool(*v),
             FieldValue::String(v) => serializer.serialize_str(v),
 
-            // Types with their own Serialize impl - delegate directly
+            FieldValue::Unsigned256(v) => v.serialize(serializer),
             FieldValue::MacAddress(v) => v.serialize(serializer),
             FieldValue::Ipv4Address(v) => v.serialize(serializer),
             FieldValue::Ipv6Address(v) => v.serialize(serializer),
@@ -225,11 +223,8 @@ impl Serialize for SerializableFieldValue<'_> {
             FieldValue::DateTimeMilliseconds(v) => v.serialize(serializer),
             FieldValue::DateTimeMicroseconds(v) => v.serialize(serializer),
             FieldValue::DateTimeNanoseconds(v) => v.serialize(serializer),
-
-            // OctetArray as hex string
             FieldValue::OctetArray(v) => serializer.serialize_str(&hex::encode(v)),
 
-            // Nested structures that contain DataRecord - pass the registry
             FieldValue::BasicList(list) => SerializableBasicList {
                 list,
                 registry: self.registry,
