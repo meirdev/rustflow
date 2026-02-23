@@ -1,0 +1,19 @@
+[package]
+name = "rustflow_core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+chrono = { version = "0.4.43", features = ["serde"] }
+csv = "1.4.0"
+etherparse = "0.19.0"
+hex = { version = "0.4.3", features = ["serde"] }
+log = "0.4.29"
+macaddr = { version = "1.0.1", features = ["serde"] }
+nom = "8.0.0"
+num_enum = "0.7.5"
+primitive-types = { version = "0.14.0", features = ["serde"] }
+rustc-hash = "2.1.1"
+serde = { version = "1.0.228", features = ["derive", "rc"] }
+strum = { version = "0.27.2", features = ["derive"] }
+strum_macros = "0.27.2"

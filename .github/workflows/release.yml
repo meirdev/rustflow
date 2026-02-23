@@ -1,0 +1,35 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - v*
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    permissions:
+      contents: write
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        BUILD_TARGET: [x86_64-unknown-linux-musl]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add the musl target
+        run: rustup target add ${{ matrix.BUILD_TARGET }}
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.BUILD_TARGET }}
+
+      - name: Update binaries to release
+        uses: softprops/action-gh-release@v2
+        if: github.ref_type == 'tag'
+        with:
+          files: target/${{ matrix.BUILD_TARGET }}/release/rustflow_collector
