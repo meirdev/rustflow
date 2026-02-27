@@ -1,41 +1,43 @@
-use anyhow::Result;
-use log::{debug, info};
 use std::net::UdpSocket;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::config::Config;
-use crate::flow::Flow;
-use crate::ipfix::data::{DataRecord, OptionsDataRecord};
-use crate::ipfix::template::{create_flow_template, create_options_template};
-use crate::ipfix::{IpfixMessage, FLOW_TEMPLATE_ID, OPTIONS_TEMPLATE_ID};
+use anyhow::Result;
+use chrono::Utc;
+use log::{debug, info};
+use rustflow_core::ipfix::encoder::Encode;
+use rustflow_core::ipfix::parser::{
+    Header, IPFIX_OPTIONS_TEMPLATE_SET_ID, IPFIX_TEMPLATE_SET_ID, IPFIX_VERSION, IpfixPacket,
+    Record, Set,
+};
 
-// IPFIX header (16 bytes) + Set header (4 bytes) = 20 bytes overhead per packet
-const IPFIX_HEADER_SIZE: usize = 16;
-const SET_HEADER_SIZE: usize = 4;
-// Each flow record: 4+4+1+2+2+8+8+2+4 = 35 bytes
-const FLOW_RECORD_SIZE: usize = 35;
-// Target max UDP packet size (conservative to avoid fragmentation)
-const MAX_PACKET_SIZE: usize = 1400;
+use crate::Args;
+use crate::flow::Flow;
+use crate::ipfix::data::OptionsData;
+use crate::ipfix::template::{
+    FLOW_TEMPLATE_ID, OPTIONS_TEMPLATE_ID, create_flow_template, create_options_template,
+};
+
+// Maximum data records per set
+const MAX_RECORDS_PER_SET: usize = 30;
 
 pub struct Exporter {
     socket: UdpSocket,
-    config: Config,
+    args: Args,
     sequence_number: AtomicU32,
     last_template_send: Instant,
 }
 
 impl Exporter {
-    pub fn new(config: Config) -> Result<Self> {
-        let collector_addr = config.exporter.collector_addr()?;
+    pub fn new(args: Args) -> Result<Self> {
+        let collector_addr = args.collector_addr()?;
         info!("Connecting to collector at {}", collector_addr);
 
         let socket = UdpSocket::bind("0.0.0.0:0")?;
-        // socket.connect(collector_addr)?;
 
         Ok(Self {
             socket,
-            config,
+            args,
             sequence_number: AtomicU32::new(0),
             last_template_send: Instant::now() - Duration::from_secs(9999), // Force initial send
         })
@@ -43,29 +45,37 @@ impl Exporter {
 
     pub fn should_send_template(&self) -> bool {
         let elapsed = Instant::now().duration_since(self.last_template_send);
-        elapsed >= Duration::from_secs(self.config.template.refresh_rate)
+        elapsed >= Duration::from_secs(self.args.template_refresh_rate)
     }
 
     pub fn send_templates(&mut self) -> Result<()> {
         info!("Sending templates to collector");
 
-        let mut message = IpfixMessage::new(
-            self.config.exporter.observation_domain_id,
-            self.sequence_number.load(Ordering::SeqCst),
-        );
+        let packet = IpfixPacket {
+            header: Header {
+                version: IPFIX_VERSION,
+                length: 0, // Will be calculated during encoding
+                export_time: Utc::now(),
+                sequence_number: self.sequence_number.load(Ordering::SeqCst),
+                observation_domain_id: self.args.observation_domain_id,
+            },
+            sets: vec![
+                Set {
+                    id: IPFIX_TEMPLATE_SET_ID,
+                    length: 0,
+                    records: vec![Record::Template(create_flow_template())],
+                },
+                Set {
+                    id: IPFIX_OPTIONS_TEMPLATE_SET_ID,
+                    length: 0,
+                    records: vec![Record::OptionsTemplate(create_options_template())],
+                },
+            ],
+        };
 
-        // Add flow template
-        let flow_template = create_flow_template();
-        message.add_set(flow_template.encode_as_set()?);
-
-        // Add options template
-        let options_template = create_options_template();
-        message.add_set(options_template.encode_as_set()?);
-
-        // Send message
-        let encoded = message.encode()?;
-        // self.socket.send(&encoded)?;
-        self.socket.send_to(&encoded, self.config.exporter.collector_addr()?)?;
+        let mut encoded = Vec::new();
+        packet.encode(&mut encoded);
+        self.socket.send_to(&encoded, self.args.collector_addr()?)?;
 
         self.last_template_send = Instant::now();
         debug!("Templates sent successfully");
@@ -76,22 +86,29 @@ impl Exporter {
     pub fn send_options_data(&mut self) -> Result<()> {
         debug!("Sending options data");
 
-        let mut message = IpfixMessage::new(
-            self.config.exporter.observation_domain_id,
-            self.sequence_number.load(Ordering::SeqCst),
+        let options_data = OptionsData::new(
+            self.args.observation_domain_id,
+            self.args.sampling_packet_interval,
         );
 
-        let options_data = OptionsDataRecord::new(
-            OPTIONS_TEMPLATE_ID,
-            self.config.exporter.observation_domain_id,
-            self.config.options.sampling_packet_interval,
-        );
+        let packet = IpfixPacket {
+            header: Header {
+                version: IPFIX_VERSION,
+                length: 0,
+                export_time: Utc::now(),
+                sequence_number: self.sequence_number.load(Ordering::SeqCst),
+                observation_domain_id: self.args.observation_domain_id,
+            },
+            sets: vec![Set {
+                id: OPTIONS_TEMPLATE_ID,
+                length: 0,
+                records: vec![Record::OptionsData(options_data.to_data_record())],
+            }],
+        };
 
-        message.add_set(options_data.encode_as_set()?);
-
-        let encoded = message.encode()?;
-        // self.socket.send(&encoded)?;
-        self.socket.send_to(&encoded, self.config.exporter.collector_addr()?)?;
+        let mut encoded = Vec::new();
+        packet.encode(&mut encoded);
+        self.socket.send_to(&encoded, self.args.collector_addr()?)?;
 
         debug!("Options data sent successfully");
 
@@ -105,40 +122,52 @@ impl Exporter {
 
         info!("Exporting {} flows", flows.len());
 
-        // Calculate how many flows can fit in one packet
-        let available_space = MAX_PACKET_SIZE - IPFIX_HEADER_SIZE - SET_HEADER_SIZE;
-        let flows_per_packet = available_space / FLOW_RECORD_SIZE;
+        let collector_addr = self.args.collector_addr()?;
+        let mut total_exported = 0;
+        let mut num_packets = 0;
 
-        let collector_addr = self.config.exporter.collector_addr()?;
-        let mut total_exported = 0u32;
+        for chunk in flows.chunks(MAX_RECORDS_PER_SET) {
+            let records: Vec<Record> = chunk
+                .iter()
+                .map(|flow| Record::Data(flow.to_flow_data().to_data_record()))
+                .collect();
 
-        // Split flows into chunks and send multiple packets
-        for chunk in flows.chunks(flows_per_packet) {
-            let mut message = IpfixMessage::new(
-                self.config.exporter.observation_domain_id,
-                self.sequence_number.load(Ordering::SeqCst),
-            );
+            let chunk_len = records.len() as u32;
 
-            let mut data_record = DataRecord::new(FLOW_TEMPLATE_ID);
+            let packet = IpfixPacket {
+                header: Header {
+                    version: IPFIX_VERSION,
+                    length: 0,
+                    export_time: Utc::now(),
+                    sequence_number: self.sequence_number.load(Ordering::SeqCst),
+                    observation_domain_id: self.args.observation_domain_id,
+                },
+                sets: vec![Set {
+                    id: FLOW_TEMPLATE_ID,
+                    length: 0,
+                    records,
+                }],
+            };
 
-            for flow in chunk {
-                data_record.add_flow(flow.to_flow_data());
-            }
-
-            message.add_set(data_record.encode_as_set()?);
-
-            let encoded = message.encode()?;
+            let mut encoded = Vec::new();
+            packet.encode(&mut encoded);
             self.socket.send_to(&encoded, &collector_addr)?;
 
-            let chunk_len = data_record.len() as u32;
             self.sequence_number.fetch_add(chunk_len, Ordering::SeqCst);
             total_exported += chunk_len;
+            num_packets += 1;
 
-            debug!("Sent packet with {} flows ({} bytes)", chunk_len, encoded.len());
+            debug!(
+                "Sent packet with {} flows ({} bytes)",
+                chunk_len,
+                encoded.len()
+            );
         }
 
-        let num_packets = (flows.len() + flows_per_packet - 1) / flows_per_packet;
-        debug!("Exported {} flows in {} packets", total_exported, num_packets);
+        debug!(
+            "Exported {} flows in {} packets",
+            total_exported, num_packets
+        );
 
         Ok(())
     }

@@ -6,8 +6,8 @@ use macaddr::MacAddr6;
 use serde::Serialize;
 use strum::Display;
 
-use crate::common::timeout_map::TimeoutHashMap;
 use crate::common::InformationElement;
+use crate::common::timeout_map::TimeoutHashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Display)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]

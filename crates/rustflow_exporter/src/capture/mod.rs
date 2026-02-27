@@ -1,8 +1,9 @@
-use anyhow::{anyhow, Result};
+use std::net::Ipv4Addr;
+
+use anyhow::{Result, anyhow};
 use etherparse::{SlicedPacket, TransportSlice};
 use log::{debug, error, info};
 use pcap::{Capture, Device};
-use std::net::Ipv4Addr;
 
 use crate::flow::FlowKey;
 
@@ -29,23 +30,21 @@ impl PacketCapture {
 
     pub fn next_packet(&mut self) -> Option<PacketInfo> {
         match self.capture.next_packet() {
-            Ok(packet) => {
-                match parse_packet(packet.data) {
-                    Some(info) => {
-                        debug!(
-                            "Captured packet: {}:{} -> {}:{} proto={} size={}",
-                            info.flow_key.source_ip,
-                            info.flow_key.source_port,
-                            info.flow_key.destination_ip,
-                            info.flow_key.destination_port,
-                            info.flow_key.protocol,
-                            info.packet_size
-                        );
-                        Some(info)
-                    }
-                    None => None,
+            Ok(packet) => match parse_packet(packet.data) {
+                Some(info) => {
+                    debug!(
+                        "Captured packet: {}:{} -> {}:{} proto={} size={}",
+                        info.flow_key.source_ip,
+                        info.flow_key.source_port,
+                        info.flow_key.destination_ip,
+                        info.flow_key.destination_port,
+                        info.flow_key.protocol,
+                        info.packet_size
+                    );
+                    Some(info)
                 }
-            }
+                None => None,
+            },
             Err(pcap::Error::TimeoutExpired) => None,
             Err(e) => {
                 error!("Error capturing packet: {}", e);
@@ -113,9 +112,7 @@ fn parse_packet(data: &[u8]) -> Option<PacketInfo> {
             let header = udp.to_header();
             (header.source_port, header.destination_port, 0)
         }
-        _ => {
-            (0, 0, 0)
-        }
+        _ => (0, 0, 0),
     };
 
     Some(PacketInfo {

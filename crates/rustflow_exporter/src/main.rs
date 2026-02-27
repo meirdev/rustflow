@@ -1,60 +1,67 @@
 mod capture;
-mod config;
 mod exporter;
 mod flow;
 mod ipfix;
 
-use anyhow::Result;
-use clap::Parser;
-use log::{error, info, warn};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use anyhow::Result;
 use capture::PacketCapture;
-use config::Config;
+use clap::Parser;
 use exporter::Exporter;
 use flow::FlowCache;
+use log::{error, info, warn};
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(name = "rustflow_exporter")]
 #[command(about = "IPFIX exporter for network flow data", long_about = None)]
-struct Args {
+pub struct Args {
     /// Network interface to capture from
     #[arg(short, long, default_value = "lo")]
-    interface: String,
+    pub interface: String,
 
     /// Collector host address
     #[arg(short = 'H', long, default_value = "127.0.0.1")]
-    collector_host: String,
+    pub collector_host: String,
 
     /// Collector port
     #[arg(short = 'p', long, default_value = "4739")]
-    collector_port: u16,
+    pub collector_port: u16,
 
     /// Observation domain ID
     #[arg(long, default_value = "1")]
-    observation_domain_id: u32,
+    pub observation_domain_id: u32,
 
     /// Active flow timeout in seconds
     #[arg(long, default_value = "60")]
-    active_timeout: u64,
+    pub active_timeout: u64,
 
     /// Inactive flow timeout in seconds
     #[arg(long, default_value = "15")]
-    inactive_timeout: u64,
+    pub inactive_timeout: u64,
 
     /// Template refresh rate in seconds
     #[arg(long, default_value = "300")]
-    template_refresh: u64,
+    pub template_refresh_rate: u64,
 
     /// Sampling packet interval
     #[arg(long, default_value = "1")]
-    sampling_interval: u32,
+    pub sampling_packet_interval: u32,
 
     /// Enable promiscuous mode
     #[arg(long)]
-    promiscuous: bool,
+    pub promiscuous: bool,
+}
+
+impl Args {
+    pub fn collector_addr(&self) -> Result<SocketAddr> {
+        let addr = format!("{}:{}", self.collector_host, self.collector_port);
+        addr.parse()
+            .map_err(|e| anyhow::anyhow!("Invalid collector address: {}", e))
+    }
 }
 
 fn main() -> Result<()> {
@@ -62,52 +69,26 @@ fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    // Build configuration from CLI arguments
-    let config = Config {
-        exporter: config::ExporterConfig {
-            collector_host: args.collector_host,
-            collector_port: args.collector_port,
-            observation_domain_id: args.observation_domain_id,
-        },
-        capture: config::CaptureConfig {
-            interface: args.interface,
-            promiscuous: args.promiscuous,
-        },
-        flow: config::FlowConfig {
-            active_timeout: args.active_timeout,
-            inactive_timeout: args.inactive_timeout,
-        },
-        template: config::TemplateConfig {
-            refresh_rate: args.template_refresh,
-        },
-        options: config::OptionsConfig {
-            sampling_packet_interval: args.sampling_interval,
-        },
-    };
-
     info!("Configuration:");
-    info!("  Interface: {}", config.capture.interface);
+    info!("  Interface: {}", args.interface);
     info!(
         "  Collector: {}:{}",
-        config.exporter.collector_host, config.exporter.collector_port
+        args.collector_host, args.collector_port
     );
     info!(
         "  Active timeout: {}s, Inactive timeout: {}s",
-        config.flow.active_timeout, config.flow.inactive_timeout
+        args.active_timeout, args.inactive_timeout
     );
-    info!(
-        "  Template refresh: {}s",
-        config.template.refresh_rate
-    );
+    info!("  Template refresh: {}s", args.template_refresh_rate);
     info!(
         "  Sampling interval: 1 out of {} packets",
-        config.options.sampling_packet_interval
+        args.sampling_packet_interval
     );
 
     // Initialize components
-    let mut capture = PacketCapture::new(&config.capture.interface, config.capture.promiscuous)?;
-    let mut exporter = Exporter::new(config.clone())?;
-    let mut flow_cache = FlowCache::new(config.flow.active_timeout, config.flow.inactive_timeout);
+    let mut capture = PacketCapture::new(&args.interface, args.promiscuous)?;
+    let mut exporter = Exporter::new(args.clone())?;
+    let mut flow_cache = FlowCache::new(args.active_timeout, args.inactive_timeout);
 
     // Send initial templates and options
     exporter.send_templates()?;
@@ -122,13 +103,15 @@ fn main() -> Result<()> {
     ctrlc::set_handler(move || {
         warn!("Received shutdown signal, flushing flows...");
         r.store(false, Ordering::SeqCst);
-    }).expect("Error setting Ctrl-C handler");
+    })
+    .expect("Error setting Ctrl-C handler");
 
     let mut last_check = Instant::now();
     let check_interval = Duration::from_secs(1);
 
     while running.load(Ordering::SeqCst) {
-        // Capture packets (has 1-second timeout, so loop continues even without packets)
+        // Capture packets (has 1-second timeout, so loop continues even without
+        // packets)
         if let Some(packet_info) = capture.next_packet() {
             flow_cache.update_flow(
                 packet_info.flow_key,
@@ -138,7 +121,6 @@ fn main() -> Result<()> {
         }
 
         // Periodically check for expired flows and template refresh
-        // Note: This runs every second due to pcap timeout, even without packets
         if last_check.elapsed() >= check_interval {
             // Check for expired flows
             let expired_flows = flow_cache.check_expired_flows();

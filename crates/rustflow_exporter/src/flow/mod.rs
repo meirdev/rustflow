@@ -21,7 +21,6 @@ pub struct Flow {
     pub tcp_flags: u16,
     pub first_seen: Instant,
     pub last_seen: Instant,
-    pub forwarding_status: u32,
 }
 
 impl Flow {
@@ -34,7 +33,6 @@ impl Flow {
             tcp_flags: 0,
             first_seen: now,
             last_seen: now,
-            forwarding_status: 0, // Unknown (0x00)
         }
     }
 
@@ -55,7 +53,6 @@ impl Flow {
             octet_count: self.octet_count,
             packet_count: self.packet_count,
             tcp_flags: self.tcp_flags,
-            forwarding_status: self.forwarding_status,
         }
     }
 }
