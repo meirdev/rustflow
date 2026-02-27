@@ -7,6 +7,7 @@ use serde::Serialize;
 use strum::Display;
 
 use crate::common::timeout_map::TimeoutHashMap;
+use crate::common::InformationElement;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Display)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -283,54 +284,6 @@ use crate::netflow_v9::parser::{
     DataRecord as V9DataRecord, FieldValue as V9FieldValue, Header as V9Header,
 };
 
-mod ie {
-    pub const OCTET_DELTA_COUNT: u16 = 1;
-    pub const PACKET_DELTA_COUNT: u16 = 2;
-    pub const PROTOCOL_IDENTIFIER: u16 = 4;
-    pub const IP_CLASS_OF_SERVICE: u16 = 5;
-    pub const TCP_CONTROL_BITS: u16 = 6;
-    pub const SOURCE_TRANSPORT_PORT: u16 = 7;
-    pub const SOURCE_IPV4_ADDRESS: u16 = 8;
-    pub const SOURCE_IPV4_PREFIX_LENGTH: u16 = 9;
-    pub const INGRESS_INTERFACE: u16 = 10;
-    pub const DESTINATION_TRANSPORT_PORT: u16 = 11;
-    pub const DESTINATION_IPV4_ADDRESS: u16 = 12;
-    pub const DESTINATION_IPV4_PREFIX_LENGTH: u16 = 13;
-    pub const EGRESS_INTERFACE: u16 = 14;
-    pub const IP_NEXT_HOP_IPV4_ADDRESS: u16 = 15;
-    pub const BGP_SOURCE_AS_NUMBER: u16 = 16;
-    pub const BGP_DESTINATION_AS_NUMBER: u16 = 17;
-    pub const BGP_NEXT_HOP_IPV4_ADDRESS: u16 = 18;
-    pub const FLOW_END_SYS_UP_TIME: u16 = 21;
-    pub const FLOW_START_SYS_UP_TIME: u16 = 22;
-    pub const SOURCE_IPV6_ADDRESS: u16 = 27;
-    pub const DESTINATION_IPV6_ADDRESS: u16 = 28;
-    pub const SOURCE_IPV6_PREFIX_LENGTH: u16 = 29;
-    pub const DESTINATION_IPV6_PREFIX_LENGTH: u16 = 30;
-    pub const FLOW_LABEL_IPV6: u16 = 31;
-    pub const ICMP_TYPE_CODE_IPV4: u16 = 32;
-    pub const SAMPLING_INTERVAL: u16 = 34;
-    pub const IP_NEXT_HOP_IPV6_ADDRESS: u16 = 62;
-    pub const BGP_NEXT_HOP_IPV6_ADDRESS: u16 = 63;
-    pub const MINIMUM_TTL: u16 = 52;
-    pub const MAXIMUM_TTL: u16 = 53;
-    pub const FRAGMENT_IDENTIFICATION: u16 = 54;
-    pub const ICMP_TYPE_IPV4: u16 = 176;
-    pub const ICMP_CODE_IPV4: u16 = 177;
-    pub const ICMP_TYPE_IPV6: u16 = 178;
-    pub const ICMP_CODE_IPV6: u16 = 179;
-    pub const FLOW_START_SECONDS: u16 = 150;
-    pub const FLOW_END_SECONDS: u16 = 151;
-    pub const FLOW_START_MILLISECONDS: u16 = 152;
-    pub const FLOW_END_MILLISECONDS: u16 = 153;
-    pub const SRC_VLAN: u16 = 58;
-    pub const DST_VLAN: u16 = 59;
-    pub const SOURCE_MAC_ADDRESS: u16 = 56;
-    pub const POST_DESTINATION_MAC_ADDRESS: u16 = 57;
-    pub const DESTINATION_MAC_ADDRESS: u16 = 80;
-    pub const POST_SOURCE_MAC_ADDRESS: u16 = 81;
-}
-
 pub struct NetFlowV9Context<'a> {
     pub header: &'a V9Header,
     pub sampler_address: Option<IpAddr>,
@@ -339,6 +292,8 @@ pub struct NetFlowV9Context<'a> {
 
 impl NetFlowV9Context<'_> {
     pub fn convert(&self, record: &V9DataRecord) -> CommonFlow {
+        use InformationElement::*;
+
         let mut flow = CommonFlow::new(FlowType::NetflowV9);
         flow.sequence_num = self.header.sequence_number;
         flow.sampler_address = self.sampler_address;
@@ -349,102 +304,101 @@ impl NetFlowV9Context<'_> {
         }
 
         for (field_type, _, value) in &record.0 {
-            match *field_type {
-                ie::OCTET_DELTA_COUNT => flow.bytes = extract_u64(value),
-                ie::PACKET_DELTA_COUNT => flow.packets = extract_u64(value),
-                ie::PROTOCOL_IDENTIFIER => flow.proto = extract_u8(value),
-                ie::IP_CLASS_OF_SERVICE => flow.ip_tos = extract_u8(value),
-                ie::TCP_CONTROL_BITS => flow.tcp_flags = extract_u8(value),
-                ie::SOURCE_TRANSPORT_PORT => flow.src_port = extract_u16(value),
-                ie::SOURCE_IPV4_ADDRESS => {
-                    if let V9FieldValue::Ipv4Address(addr) = value {
-                        flow.src_addr = Some(IpAddr::V4(*addr));
-                        flow.etype = Some(0x0800);
+            if let Ok(ie) = InformationElement::try_from(*field_type) {
+                match ie {
+                    OctetDeltaCount => flow.bytes = extract_u64(value),
+                    PacketDeltaCount => flow.packets = extract_u64(value),
+                    ProtocolIdentifier => flow.proto = extract_u8(value),
+                    IpClassOfService => flow.ip_tos = extract_u8(value),
+                    TcpControlBits => flow.tcp_flags = extract_u8(value),
+                    SourceTransportPort => flow.src_port = extract_u16(value),
+                    SourceIpv4Address => {
+                        if let V9FieldValue::Ipv4Address(addr) = value {
+                            flow.src_addr = Some(IpAddr::V4(*addr));
+                            flow.etype = Some(0x0800);
+                        }
                     }
-                }
-                ie::SOURCE_IPV4_PREFIX_LENGTH => flow.src_net = extract_u8(value),
-                ie::INGRESS_INTERFACE => flow.in_if = extract_u32(value),
-                ie::DESTINATION_TRANSPORT_PORT => flow.dst_port = extract_u16(value),
-                ie::DESTINATION_IPV4_ADDRESS => {
-                    if let V9FieldValue::Ipv4Address(addr) = value {
-                        flow.dst_addr = Some(IpAddr::V4(*addr));
+                    SourceIpv4PrefixLength => flow.src_net = extract_u8(value),
+                    IngressInterface => flow.in_if = extract_u32(value),
+                    DestinationTransportPort => flow.dst_port = extract_u16(value),
+                    DestinationIpv4Address => {
+                        if let V9FieldValue::Ipv4Address(addr) = value {
+                            flow.dst_addr = Some(IpAddr::V4(*addr));
+                        }
                     }
-                }
-                ie::DESTINATION_IPV4_PREFIX_LENGTH => flow.dst_net = extract_u8(value),
-                ie::EGRESS_INTERFACE => flow.out_if = extract_u32(value),
-                ie::IP_NEXT_HOP_IPV4_ADDRESS => {
-                    if let V9FieldValue::Ipv4Address(addr) = value {
-                        flow.next_hop = Some(IpAddr::V4(*addr));
+                    DestinationIpv4PrefixLength => flow.dst_net = extract_u8(value),
+                    EgressInterface => flow.out_if = extract_u32(value),
+                    IpNextHopIpv4Address => {
+                        if let V9FieldValue::Ipv4Address(addr) = value {
+                            flow.next_hop = Some(IpAddr::V4(*addr));
+                        }
                     }
-                }
-                ie::BGP_SOURCE_AS_NUMBER => flow.src_as = extract_u32(value),
-                ie::BGP_DESTINATION_AS_NUMBER => flow.dst_as = extract_u32(value),
-                ie::BGP_NEXT_HOP_IPV4_ADDRESS => {
-                    if let V9FieldValue::Ipv4Address(addr) = value {
-                        flow.bgp_next_hop = Some(IpAddr::V4(*addr));
+                    BgpSourceAsNumber => flow.src_as = extract_u32(value),
+                    BgpDestinationAsNumber => flow.dst_as = extract_u32(value),
+                    BgpNextHopIpv4Address => {
+                        if let V9FieldValue::Ipv4Address(addr) = value {
+                            flow.bgp_next_hop = Some(IpAddr::V4(*addr));
+                        }
                     }
-                }
-                ie::FLOW_START_SYS_UP_TIME
-                | ie::FLOW_START_SECONDS
-                | ie::FLOW_START_MILLISECONDS => {
-                    flow.time_flow_start_ns = extract_datetime_ns(value);
-                }
-                ie::FLOW_END_SYS_UP_TIME | ie::FLOW_END_SECONDS | ie::FLOW_END_MILLISECONDS => {
-                    flow.time_flow_end_ns = extract_datetime_ns(value);
-                }
-                ie::SOURCE_IPV6_ADDRESS => {
-                    if let V9FieldValue::Ipv6Address(addr) = value {
-                        flow.src_addr = Some(IpAddr::V6(*addr));
-                        flow.etype = Some(0x86dd);
+                    FlowStartSysUpTime | FlowStartSeconds | FlowStartMilliseconds => {
+                        flow.time_flow_start_ns = extract_datetime_ns(value);
                     }
-                }
-                ie::DESTINATION_IPV6_ADDRESS => {
-                    if let V9FieldValue::Ipv6Address(addr) = value {
-                        flow.dst_addr = Some(IpAddr::V6(*addr));
+                    FlowEndSysUpTime | FlowEndSeconds | FlowEndMilliseconds => {
+                        flow.time_flow_end_ns = extract_datetime_ns(value);
                     }
-                }
-                ie::SOURCE_IPV6_PREFIX_LENGTH => flow.src_net = extract_u8(value),
-                ie::DESTINATION_IPV6_PREFIX_LENGTH => flow.dst_net = extract_u8(value),
-                ie::FLOW_LABEL_IPV6 => flow.ipv6_flow_label = extract_u32(value),
-                ie::ICMP_TYPE_CODE_IPV4 => {
-                    if let Some(v) = extract_u16(value) {
-                        flow.icmp_type = Some((v >> 8) as u8);
-                        flow.icmp_code = Some((v & 0xff) as u8);
+                    SourceIpv6Address => {
+                        if let V9FieldValue::Ipv6Address(addr) = value {
+                            flow.src_addr = Some(IpAddr::V6(*addr));
+                            flow.etype = Some(0x86dd);
+                        }
                     }
-                }
-                ie::ICMP_TYPE_IPV4 | ie::ICMP_TYPE_IPV6 => flow.icmp_type = extract_u8(value),
-                ie::ICMP_CODE_IPV4 | ie::ICMP_CODE_IPV6 => flow.icmp_code = extract_u8(value),
-                ie::SAMPLING_INTERVAL => {
-                    // Only use record value if not overridden by context
-                    if self.sampling_rate.is_none() {
-                        flow.sampling_rate = extract_u32(value);
+                    DestinationIpv6Address => {
+                        if let V9FieldValue::Ipv6Address(addr) = value {
+                            flow.dst_addr = Some(IpAddr::V6(*addr));
+                        }
                     }
-                }
-                ie::SRC_VLAN => flow.src_vlan = extract_u16(value),
-                ie::DST_VLAN => flow.dst_vlan = extract_u16(value),
-                ie::IP_NEXT_HOP_IPV6_ADDRESS => {
-                    if let V9FieldValue::Ipv6Address(addr) = value {
-                        flow.next_hop = Some(IpAddr::V6(*addr));
+                    SourceIpv6PrefixLength => flow.src_net = extract_u8(value),
+                    DestinationIpv6PrefixLength => flow.dst_net = extract_u8(value),
+                    FlowLabelIpv6 => flow.ipv6_flow_label = extract_u32(value),
+                    IcmpTypeCodeIpv4 => {
+                        if let Some(v) = extract_u16(value) {
+                            flow.icmp_type = Some((v >> 8) as u8);
+                            flow.icmp_code = Some((v & 0xff) as u8);
+                        }
                     }
-                }
-                ie::BGP_NEXT_HOP_IPV6_ADDRESS => {
-                    if let V9FieldValue::Ipv6Address(addr) = value {
-                        flow.bgp_next_hop = Some(IpAddr::V6(*addr));
+                    IcmpTypeIpv4 | IcmpTypeIpv6 => flow.icmp_type = extract_u8(value),
+                    IcmpCodeIpv4 | IcmpCodeIpv6 => flow.icmp_code = extract_u8(value),
+                    SamplingInterval => {
+                        if self.sampling_rate.is_none() {
+                            flow.sampling_rate = extract_u32(value);
+                        }
                     }
-                }
-                ie::MINIMUM_TTL | ie::MAXIMUM_TTL => flow.ip_ttl = extract_u8(value),
-                ie::FRAGMENT_IDENTIFICATION => flow.fragment_id = extract_u32(value),
-                ie::SOURCE_MAC_ADDRESS | ie::POST_SOURCE_MAC_ADDRESS => {
-                    if let V9FieldValue::MacAddress(mac) = value {
-                        flow.src_mac = Some(*mac);
+                    SrcVlan => flow.src_vlan = extract_u16(value),
+                    DstVlan => flow.dst_vlan = extract_u16(value),
+                    IpNextHopIpv6Address => {
+                        if let V9FieldValue::Ipv6Address(addr) = value {
+                            flow.next_hop = Some(IpAddr::V6(*addr));
+                        }
                     }
-                }
-                ie::DESTINATION_MAC_ADDRESS | ie::POST_DESTINATION_MAC_ADDRESS => {
-                    if let V9FieldValue::MacAddress(mac) = value {
-                        flow.dst_mac = Some(*mac);
+                    BgpNextHopIpv6Address => {
+                        if let V9FieldValue::Ipv6Address(addr) = value {
+                            flow.bgp_next_hop = Some(IpAddr::V6(*addr));
+                        }
                     }
+                    MinimumTtl | MaximumTtl => flow.ip_ttl = extract_u8(value),
+                    FragmentIdentification => flow.fragment_id = extract_u32(value),
+                    SourceMacAddress | PostSourceMacAddress => {
+                        if let V9FieldValue::MacAddress(mac) = value {
+                            flow.src_mac = Some(*mac);
+                        }
+                    }
+                    DestinationMacAddress | PostDestinationMacAddress => {
+                        if let V9FieldValue::MacAddress(mac) = value {
+                            flow.dst_mac = Some(*mac);
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
 
@@ -453,8 +407,9 @@ impl NetFlowV9Context<'_> {
 }
 
 pub fn extract_v9_sampling_rate(record: &V9DataRecord) -> Option<u32> {
+    let sampling_interval_id: u16 = InformationElement::SamplingInterval.into();
     for (field_type, _, value) in &record.0 {
-        if *field_type == ie::SAMPLING_INTERVAL {
+        if *field_type == sampling_interval_id {
             return extract_u32(value);
         }
     }
@@ -523,6 +478,8 @@ pub struct IpfixContext<'a> {
 
 impl IpfixContext<'_> {
     pub fn convert(&self, record: &IpfixDataRecord) -> CommonFlow {
+        use InformationElement::*;
+
         let mut flow = CommonFlow::new(FlowType::Ipfix);
         flow.sequence_num = self.header.sequence_number;
         flow.sampler_address = self.sampler_address;
@@ -533,102 +490,101 @@ impl IpfixContext<'_> {
         }
 
         for (_, field_type, _, value) in &record.0 {
-            match *field_type {
-                ie::OCTET_DELTA_COUNT => flow.bytes = ipfix_extract_u64(value),
-                ie::PACKET_DELTA_COUNT => flow.packets = ipfix_extract_u64(value),
-                ie::PROTOCOL_IDENTIFIER => flow.proto = ipfix_extract_u8(value),
-                ie::IP_CLASS_OF_SERVICE => flow.ip_tos = ipfix_extract_u8(value),
-                ie::TCP_CONTROL_BITS => flow.tcp_flags = ipfix_extract_u8(value),
-                ie::SOURCE_TRANSPORT_PORT => flow.src_port = ipfix_extract_u16(value),
-                ie::SOURCE_IPV4_ADDRESS => {
-                    if let IpfixFieldValue::Ipv4Address(addr) = value {
-                        flow.src_addr = Some(IpAddr::V4(*addr));
-                        flow.etype = Some(0x0800);
+            if let Ok(ie) = InformationElement::try_from(*field_type) {
+                match ie {
+                    OctetDeltaCount => flow.bytes = ipfix_extract_u64(value),
+                    PacketDeltaCount => flow.packets = ipfix_extract_u64(value),
+                    ProtocolIdentifier => flow.proto = ipfix_extract_u8(value),
+                    IpClassOfService => flow.ip_tos = ipfix_extract_u8(value),
+                    TcpControlBits => flow.tcp_flags = ipfix_extract_u8(value),
+                    SourceTransportPort => flow.src_port = ipfix_extract_u16(value),
+                    SourceIpv4Address => {
+                        if let IpfixFieldValue::Ipv4Address(addr) = value {
+                            flow.src_addr = Some(IpAddr::V4(*addr));
+                            flow.etype = Some(0x0800);
+                        }
                     }
-                }
-                ie::SOURCE_IPV4_PREFIX_LENGTH => flow.src_net = ipfix_extract_u8(value),
-                ie::INGRESS_INTERFACE => flow.in_if = ipfix_extract_u32(value),
-                ie::DESTINATION_TRANSPORT_PORT => flow.dst_port = ipfix_extract_u16(value),
-                ie::DESTINATION_IPV4_ADDRESS => {
-                    if let IpfixFieldValue::Ipv4Address(addr) = value {
-                        flow.dst_addr = Some(IpAddr::V4(*addr));
+                    SourceIpv4PrefixLength => flow.src_net = ipfix_extract_u8(value),
+                    IngressInterface => flow.in_if = ipfix_extract_u32(value),
+                    DestinationTransportPort => flow.dst_port = ipfix_extract_u16(value),
+                    DestinationIpv4Address => {
+                        if let IpfixFieldValue::Ipv4Address(addr) = value {
+                            flow.dst_addr = Some(IpAddr::V4(*addr));
+                        }
                     }
-                }
-                ie::DESTINATION_IPV4_PREFIX_LENGTH => flow.dst_net = ipfix_extract_u8(value),
-                ie::EGRESS_INTERFACE => flow.out_if = ipfix_extract_u32(value),
-                ie::IP_NEXT_HOP_IPV4_ADDRESS => {
-                    if let IpfixFieldValue::Ipv4Address(addr) = value {
-                        flow.next_hop = Some(IpAddr::V4(*addr));
+                    DestinationIpv4PrefixLength => flow.dst_net = ipfix_extract_u8(value),
+                    EgressInterface => flow.out_if = ipfix_extract_u32(value),
+                    IpNextHopIpv4Address => {
+                        if let IpfixFieldValue::Ipv4Address(addr) = value {
+                            flow.next_hop = Some(IpAddr::V4(*addr));
+                        }
                     }
-                }
-                ie::BGP_SOURCE_AS_NUMBER => flow.src_as = ipfix_extract_u32(value),
-                ie::BGP_DESTINATION_AS_NUMBER => flow.dst_as = ipfix_extract_u32(value),
-                ie::BGP_NEXT_HOP_IPV4_ADDRESS => {
-                    if let IpfixFieldValue::Ipv4Address(addr) = value {
-                        flow.bgp_next_hop = Some(IpAddr::V4(*addr));
+                    BgpSourceAsNumber => flow.src_as = ipfix_extract_u32(value),
+                    BgpDestinationAsNumber => flow.dst_as = ipfix_extract_u32(value),
+                    BgpNextHopIpv4Address => {
+                        if let IpfixFieldValue::Ipv4Address(addr) = value {
+                            flow.bgp_next_hop = Some(IpAddr::V4(*addr));
+                        }
                     }
-                }
-                ie::FLOW_START_SYS_UP_TIME
-                | ie::FLOW_START_SECONDS
-                | ie::FLOW_START_MILLISECONDS => {
-                    flow.time_flow_start_ns = ipfix_extract_datetime_ns(value);
-                }
-                ie::FLOW_END_SYS_UP_TIME | ie::FLOW_END_SECONDS | ie::FLOW_END_MILLISECONDS => {
-                    flow.time_flow_end_ns = ipfix_extract_datetime_ns(value);
-                }
-                ie::SOURCE_IPV6_ADDRESS => {
-                    if let IpfixFieldValue::Ipv6Address(addr) = value {
-                        flow.src_addr = Some(IpAddr::V6(*addr));
-                        flow.etype = Some(0x86dd);
+                    FlowStartSysUpTime | FlowStartSeconds | FlowStartMilliseconds => {
+                        flow.time_flow_start_ns = ipfix_extract_datetime_ns(value);
                     }
-                }
-                ie::DESTINATION_IPV6_ADDRESS => {
-                    if let IpfixFieldValue::Ipv6Address(addr) = value {
-                        flow.dst_addr = Some(IpAddr::V6(*addr));
+                    FlowEndSysUpTime | FlowEndSeconds | FlowEndMilliseconds => {
+                        flow.time_flow_end_ns = ipfix_extract_datetime_ns(value);
                     }
-                }
-                ie::SOURCE_IPV6_PREFIX_LENGTH => flow.src_net = ipfix_extract_u8(value),
-                ie::DESTINATION_IPV6_PREFIX_LENGTH => flow.dst_net = ipfix_extract_u8(value),
-                ie::FLOW_LABEL_IPV6 => flow.ipv6_flow_label = ipfix_extract_u32(value),
-                ie::ICMP_TYPE_CODE_IPV4 => {
-                    if let Some(v) = ipfix_extract_u16(value) {
-                        flow.icmp_type = Some((v >> 8) as u8);
-                        flow.icmp_code = Some((v & 0xff) as u8);
+                    SourceIpv6Address => {
+                        if let IpfixFieldValue::Ipv6Address(addr) = value {
+                            flow.src_addr = Some(IpAddr::V6(*addr));
+                            flow.etype = Some(0x86dd);
+                        }
                     }
-                }
-                ie::ICMP_TYPE_IPV4 | ie::ICMP_TYPE_IPV6 => flow.icmp_type = ipfix_extract_u8(value),
-                ie::ICMP_CODE_IPV4 | ie::ICMP_CODE_IPV6 => flow.icmp_code = ipfix_extract_u8(value),
-                ie::SAMPLING_INTERVAL => {
-                    // Only use record value if not overridden by context
-                    if self.sampling_rate.is_none() {
-                        flow.sampling_rate = ipfix_extract_u32(value);
+                    DestinationIpv6Address => {
+                        if let IpfixFieldValue::Ipv6Address(addr) = value {
+                            flow.dst_addr = Some(IpAddr::V6(*addr));
+                        }
                     }
-                }
-                ie::SRC_VLAN => flow.src_vlan = ipfix_extract_u16(value),
-                ie::DST_VLAN => flow.dst_vlan = ipfix_extract_u16(value),
-                ie::IP_NEXT_HOP_IPV6_ADDRESS => {
-                    if let IpfixFieldValue::Ipv6Address(addr) = value {
-                        flow.next_hop = Some(IpAddr::V6(*addr));
+                    SourceIpv6PrefixLength => flow.src_net = ipfix_extract_u8(value),
+                    DestinationIpv6PrefixLength => flow.dst_net = ipfix_extract_u8(value),
+                    FlowLabelIpv6 => flow.ipv6_flow_label = ipfix_extract_u32(value),
+                    IcmpTypeCodeIpv4 => {
+                        if let Some(v) = ipfix_extract_u16(value) {
+                            flow.icmp_type = Some((v >> 8) as u8);
+                            flow.icmp_code = Some((v & 0xff) as u8);
+                        }
                     }
-                }
-                ie::BGP_NEXT_HOP_IPV6_ADDRESS => {
-                    if let IpfixFieldValue::Ipv6Address(addr) = value {
-                        flow.bgp_next_hop = Some(IpAddr::V6(*addr));
+                    IcmpTypeIpv4 | IcmpTypeIpv6 => flow.icmp_type = ipfix_extract_u8(value),
+                    IcmpCodeIpv4 | IcmpCodeIpv6 => flow.icmp_code = ipfix_extract_u8(value),
+                    SamplingInterval => {
+                        if self.sampling_rate.is_none() {
+                            flow.sampling_rate = ipfix_extract_u32(value);
+                        }
                     }
-                }
-                ie::MINIMUM_TTL | ie::MAXIMUM_TTL => flow.ip_ttl = ipfix_extract_u8(value),
-                ie::FRAGMENT_IDENTIFICATION => flow.fragment_id = ipfix_extract_u32(value),
-                ie::SOURCE_MAC_ADDRESS | ie::POST_SOURCE_MAC_ADDRESS => {
-                    if let IpfixFieldValue::MacAddress(mac) = value {
-                        flow.src_mac = Some(*mac);
+                    SrcVlan => flow.src_vlan = ipfix_extract_u16(value),
+                    DstVlan => flow.dst_vlan = ipfix_extract_u16(value),
+                    IpNextHopIpv6Address => {
+                        if let IpfixFieldValue::Ipv6Address(addr) = value {
+                            flow.next_hop = Some(IpAddr::V6(*addr));
+                        }
                     }
-                }
-                ie::DESTINATION_MAC_ADDRESS | ie::POST_DESTINATION_MAC_ADDRESS => {
-                    if let IpfixFieldValue::MacAddress(mac) = value {
-                        flow.dst_mac = Some(*mac);
+                    BgpNextHopIpv6Address => {
+                        if let IpfixFieldValue::Ipv6Address(addr) = value {
+                            flow.bgp_next_hop = Some(IpAddr::V6(*addr));
+                        }
                     }
+                    MinimumTtl | MaximumTtl => flow.ip_ttl = ipfix_extract_u8(value),
+                    FragmentIdentification => flow.fragment_id = ipfix_extract_u32(value),
+                    SourceMacAddress | PostSourceMacAddress => {
+                        if let IpfixFieldValue::MacAddress(mac) = value {
+                            flow.src_mac = Some(*mac);
+                        }
+                    }
+                    DestinationMacAddress | PostDestinationMacAddress => {
+                        if let IpfixFieldValue::MacAddress(mac) = value {
+                            flow.dst_mac = Some(*mac);
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
 
@@ -687,8 +643,9 @@ fn ipfix_extract_datetime_ns(value: &IpfixFieldValue) -> Option<i64> {
 }
 
 pub fn extract_ipfix_sampling_rate(record: &IpfixDataRecord) -> Option<u32> {
+    let sampling_interval_id: u16 = InformationElement::SamplingInterval.into();
     for (_, field_type, _, value) in &record.0 {
-        if *field_type == ie::SAMPLING_INTERVAL {
+        if *field_type == sampling_interval_id {
             return ipfix_extract_u32(value);
         }
     }

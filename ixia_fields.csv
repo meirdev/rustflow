@@ -1,0 +1,4 @@
+id,enterprise_number,name,data_type
+110,3054,L7 Application ID,Unsigned
+111,3054,L7 Application Name,String
+197,3054,DNS Records,SubTemplateList
