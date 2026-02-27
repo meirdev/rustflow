@@ -10,6 +10,7 @@ use crate::common::timeout_map::TimeoutHashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Display)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum FlowType {
     NetflowV5,
     NetflowV9,

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::fs::OpenOptions;
 use std::io::{self, BufWriter, Write};
 use std::sync::Mutex;
@@ -106,45 +107,51 @@ impl OutputWriter {
     }
 }
 
-/// Convert CommonFlow to CSV record (vector of strings in header order)
+fn opt_str<T: Display>(value: &Option<T>) -> String {
+    match value {
+        Some(v) => v.to_string(),
+        None => String::new(),
+    }
+}
+
 fn flow_to_csv_record(flow: &CommonFlow) -> Vec<String> {
     vec![
-        format!("{:?}", flow.flow_type),
-        flow.time_received_ns.map(|v| v.to_string()).unwrap_or_default(),
+        flow.flow_type.to_string(),
+        opt_str(&flow.time_received_ns),
         flow.sequence_num.to_string(),
-        flow.sampling_rate.map(|v| v.to_string()).unwrap_or_default(),
-        flow.sampler_address.map(|v| v.to_string()).unwrap_or_default(),
-        flow.time_flow_start_ns.map(|v| v.to_string()).unwrap_or_default(),
-        flow.time_flow_end_ns.map(|v| v.to_string()).unwrap_or_default(),
+        opt_str(&flow.sampling_rate),
+        opt_str(&flow.sampler_address),
+        opt_str(&flow.time_flow_start_ns),
+        opt_str(&flow.time_flow_end_ns),
         flow.bytes.to_string(),
         flow.packets.to_string(),
-        flow.src_addr.map(|v| v.to_string()).unwrap_or_default(),
-        flow.dst_addr.map(|v| v.to_string()).unwrap_or_default(),
-        flow.src_mac.map(|v| v.to_string()).unwrap_or_default(),
-        flow.dst_mac.map(|v| v.to_string()).unwrap_or_default(),
-        flow.etype.map(|v| v.to_string()).unwrap_or_default(),
-        flow.proto.map(|v| v.to_string()).unwrap_or_default(),
-        flow.src_port.map(|v| v.to_string()).unwrap_or_default(),
-        flow.dst_port.map(|v| v.to_string()).unwrap_or_default(),
-        flow.in_if.map(|v| v.to_string()).unwrap_or_default(),
-        flow.out_if.map(|v| v.to_string()).unwrap_or_default(),
-        flow.ip_tos.map(|v| v.to_string()).unwrap_or_default(),
-        flow.ip_ttl.map(|v| v.to_string()).unwrap_or_default(),
-        flow.tcp_flags.map(|v| v.to_string()).unwrap_or_default(),
-        flow.icmp_type.map(|v| v.to_string()).unwrap_or_default(),
-        flow.icmp_code.map(|v| v.to_string()).unwrap_or_default(),
-        flow.ipv6_flow_label.map(|v| v.to_string()).unwrap_or_default(),
-        flow.fragment_id.map(|v| v.to_string()).unwrap_or_default(),
-        flow.fragment_offset.map(|v| v.to_string()).unwrap_or_default(),
-        flow.src_as.map(|v| v.to_string()).unwrap_or_default(),
-        flow.dst_as.map(|v| v.to_string()).unwrap_or_default(),
-        flow.next_hop.map(|v| v.to_string()).unwrap_or_default(),
-        flow.src_net.map(|v| v.to_string()).unwrap_or_default(),
-        flow.dst_net.map(|v| v.to_string()).unwrap_or_default(),
-        flow.bgp_next_hop.map(|v| v.to_string()).unwrap_or_default(),
-        flow.src_vlan.map(|v| v.to_string()).unwrap_or_default(),
-        flow.dst_vlan.map(|v| v.to_string()).unwrap_or_default(),
-        flow.observation_domain_id.map(|v| v.to_string()).unwrap_or_default(),
+        opt_str(&flow.src_addr),
+        opt_str(&flow.dst_addr),
+        opt_str(&flow.src_mac),
+        opt_str(&flow.dst_mac),
+        opt_str(&flow.etype),
+        opt_str(&flow.proto),
+        opt_str(&flow.src_port),
+        opt_str(&flow.dst_port),
+        opt_str(&flow.in_if),
+        opt_str(&flow.out_if),
+        opt_str(&flow.ip_tos),
+        opt_str(&flow.ip_ttl),
+        opt_str(&flow.tcp_flags),
+        opt_str(&flow.icmp_type),
+        opt_str(&flow.icmp_code),
+        opt_str(&flow.ipv6_flow_label),
+        opt_str(&flow.fragment_id),
+        opt_str(&flow.fragment_offset),
+        opt_str(&flow.src_as),
+        opt_str(&flow.dst_as),
+        opt_str(&flow.next_hop),
+        opt_str(&flow.src_net),
+        opt_str(&flow.dst_net),
+        opt_str(&flow.bgp_next_hop),
+        opt_str(&flow.src_vlan),
+        opt_str(&flow.dst_vlan),
+        opt_str(&flow.observation_domain_id),
     ]
 }
 

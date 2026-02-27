@@ -10,13 +10,14 @@ use rustflow_core::common::common_flow::CommonFlow;
 
 use crate::enrich::config::{EnrichmentConfig, LookupType};
 
-/// Values associated with a prefix entry
+/// Column names that are recognized as prefix/network columns in CSV files
+const PREFIX_COLUMN_NAMES: &[&str] = &["prefix", "network", "cidr"];
+
 #[derive(Debug, Clone)]
 pub struct PrefixData {
     pub fields: HashMap<String, String>,
 }
 
-/// Container for IPv4 and IPv6 prefix tries
 struct PrefixTries {
     ipv4: PrefixMap<Ipv4Net, PrefixData>,
     ipv6: PrefixMap<Ipv6Net, PrefixData>,
@@ -31,7 +32,6 @@ impl PrefixTries {
     }
 }
 
-/// A single prefix-based enrichment lookup table
 pub struct PrefixEnrichment {
     config: EnrichmentConfig,
     tries: Arc<RwLock<PrefixTries>>,
@@ -45,28 +45,28 @@ impl PrefixEnrichment {
         }
     }
 
-    /// Load data from CSV file into new tries and swap atomically
     pub fn load(&self) -> Result<usize, EnrichmentError> {
         let new_tries = Self::load_from_csv(&self.config.source_file)?;
         let count = new_tries.ipv4.len() + new_tries.ipv6.len();
 
-        let mut tries = self.tries.write().map_err(|_| EnrichmentError::LockPoisoned)?;
+        let mut tries = self
+            .tries
+            .write()
+            .map_err(|_| EnrichmentError::LockPoisoned)?;
         *tries = new_tries;
 
         Ok(count)
     }
 
-    /// Parse CSV file and build prefix tries
     fn load_from_csv(path: &Path) -> Result<PrefixTries, EnrichmentError> {
         let mut reader = csv::Reader::from_path(path)?;
         let headers: Vec<String> = reader.headers()?.iter().map(|s| s.to_string()).collect();
 
-        // Find the prefix column (first column or named "prefix"/"network"/"cidr")
         let prefix_col_idx = headers
             .iter()
             .position(|h| {
                 let h_lower = h.to_lowercase();
-                h_lower == "prefix" || h_lower == "network" || h_lower == "cidr"
+                PREFIX_COLUMN_NAMES.contains(&h_lower.as_str())
             })
             .unwrap_or(0);
 
@@ -83,7 +83,6 @@ impl PrefixEnrichment {
                 continue;
             }
 
-            // Build field map for this entry (all columns except prefix)
             let mut fields = HashMap::new();
             for (idx, header) in headers.iter().enumerate() {
                 if idx != prefix_col_idx {
@@ -98,7 +97,6 @@ impl PrefixEnrichment {
 
             let data = PrefixData { fields };
 
-            // Try parsing as IPv4, then IPv6
             if let Ok(ipv4_net) = prefix_str.parse::<Ipv4Net>() {
                 tries.ipv4.insert(ipv4_net, data);
             } else if let Ok(ipv6_net) = prefix_str.parse::<Ipv6Net>() {
@@ -111,23 +109,27 @@ impl PrefixEnrichment {
         Ok(tries)
     }
 
-    /// Perform lookup for an IP address using longest prefix match
     fn lookup(&self, addr: &IpAddr) -> Option<PrefixData> {
         let tries = self.tries.read().ok()?;
 
         match addr {
             IpAddr::V4(v4) => {
                 let host_prefix = Ipv4Net::new(*v4, 32).ok()?;
-                tries.ipv4.get_lpm(&host_prefix).map(|(_, data)| data.clone())
+                tries
+                    .ipv4
+                    .get_lpm(&host_prefix)
+                    .map(|(_, data)| data.clone())
             }
             IpAddr::V6(v6) => {
                 let host_prefix = Ipv6Net::new(*v6, 128).ok()?;
-                tries.ipv6.get_lpm(&host_prefix).map(|(_, data)| data.clone())
+                tries
+                    .ipv6
+                    .get_lpm(&host_prefix)
+                    .map(|(_, data)| data.clone())
             }
         }
     }
 
-    /// Enrich a flow with this lookup table
     pub fn enrich(&self, flow: &CommonFlow) -> HashMap<String, String> {
         let mut result = HashMap::new();
 
@@ -144,7 +146,6 @@ impl PrefixEnrichment {
         result
     }
 
-    /// Start a background reload task if reload_interval is configured
     pub fn start_reload_task(&self) {
         if let Some(interval) = self.config.reload_interval {
             let tries = Arc::clone(&self.tries);
@@ -159,7 +160,7 @@ impl PrefixEnrichment {
                             let count = new_tries.ipv4.len() + new_tries.ipv6.len();
                             if let Ok(mut guard) = tries.write() {
                                 *guard = new_tries;
-                                println!(
+                                eprintln!(
                                     "Reloaded {} prefix entries from {}",
                                     count,
                                     path.display()
@@ -176,7 +177,6 @@ impl PrefixEnrichment {
     }
 }
 
-/// Main enrichment engine supporting multiple enrichments
 pub struct EnrichmentEngine {
     prefix_enrichments: Vec<PrefixEnrichment>,
     output_fields: Vec<String>,
@@ -190,9 +190,7 @@ impl EnrichmentEngine {
         }
     }
 
-    /// Add an enrichment configuration
     pub fn add(&mut self, config: EnrichmentConfig) -> Result<usize, EnrichmentError> {
-        // Collect output field names
         for mapping in &config.field_mappings {
             if !self.output_fields.contains(&mapping.output_field) {
                 self.output_fields.push(mapping.output_field.clone());
@@ -210,12 +208,10 @@ impl EnrichmentEngine {
         }
     }
 
-    /// Get all output field names for CSV headers
     pub fn output_fields(&self) -> &[String] {
         &self.output_fields
     }
 
-    /// Enrich a flow and return all enriched fields
     pub fn enrich(&self, flow: &CommonFlow) -> HashMap<String, String> {
         let mut result = HashMap::new();
         for enrichment in &self.prefix_enrichments {

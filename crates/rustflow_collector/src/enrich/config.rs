@@ -30,7 +30,10 @@ impl LookupKey {
             "dst_addr" => Ok(Self::DstAddr),
             "next_hop" => Ok(Self::NextHop),
             "sampler_address" => Ok(Self::SamplerAddress),
-            _ => Err(format!("Unknown lookup key: '{}'. Valid keys: src_addr, dst_addr, next_hop, sampler_address", s)),
+            _ => Err(format!(
+                "Unknown lookup key: '{}'. Valid keys: src_addr, dst_addr, next_hop, sampler_address",
+                s
+            )),
         }
     }
 
@@ -60,8 +63,6 @@ pub struct EnrichmentConfig {
     pub reload_interval: Option<Duration>,
 }
 
-/// Parse the --enrich argument string into EnrichmentConfig
-/// Format: type=prefix_lookup,source=file.csv,key=dst_addr,match=longest,fields=col1:out1;col2:out2,reload=10s
 pub fn parse_enrich_arg(arg: &str) -> Result<EnrichmentConfig, String> {
     let mut lookup_type = None;
     let mut source_file = None;
@@ -79,7 +80,12 @@ pub fn parse_enrich_arg(arg: &str) -> Result<EnrichmentConfig, String> {
             "type" => {
                 lookup_type = Some(match value.trim() {
                     "prefix_lookup" => LookupType::PrefixLookup,
-                    other => return Err(format!("Unknown type: '{}'. Valid types: prefix_lookup", other)),
+                    other => {
+                        return Err(format!(
+                            "Unknown type: '{}'. Valid types: prefix_lookup",
+                            other
+                        ));
+                    }
                 });
             }
             "source" => {
@@ -91,7 +97,12 @@ pub fn parse_enrich_arg(arg: &str) -> Result<EnrichmentConfig, String> {
             "match" => {
                 match_strategy = match value.trim() {
                     "longest" => MatchStrategy::Longest,
-                    other => return Err(format!("Unknown match strategy: '{}'. Valid strategies: longest", other)),
+                    other => {
+                        return Err(format!(
+                            "Unknown match strategy: '{}'. Valid strategies: longest",
+                            other
+                        ));
+                    }
                 };
             }
             "fields" => {
@@ -100,9 +111,12 @@ pub fn parse_enrich_arg(arg: &str) -> Result<EnrichmentConfig, String> {
                     if field_spec.is_empty() {
                         continue;
                     }
-                    let (src, dst) = field_spec
-                        .split_once(':')
-                        .ok_or_else(|| format!("Invalid field mapping, expected source:output: '{}'", field_spec))?;
+                    let (src, dst) = field_spec.split_once(':').ok_or_else(|| {
+                        format!(
+                            "Invalid field mapping, expected source:output: '{}'",
+                            field_spec
+                        )
+                    })?;
                     field_mappings.push(FieldMapping {
                         source_column: src.trim().to_string(),
                         output_field: dst.trim().to_string(),
@@ -151,7 +165,8 @@ mod tests {
 
     #[test]
     fn test_parse_with_reload() {
-        let arg = "type=prefix_lookup,source=test.csv,key=src_addr,fields=region:src_region,reload=30s";
+        let arg =
+            "type=prefix_lookup,source=test.csv,key=src_addr,fields=region:src_region,reload=30s";
         let config = parse_enrich_arg(arg).unwrap();
         assert!(matches!(config.lookup_key, LookupKey::SrcAddr));
         assert_eq!(config.reload_interval, Some(Duration::from_secs(30)));
