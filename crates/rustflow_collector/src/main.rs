@@ -1,3 +1,4 @@
+mod enrich;
 mod metrics;
 mod output;
 
@@ -6,6 +7,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use clap::{Parser, ValueEnum};
+use enrich::{EnrichmentEngine, parse_enrich_arg};
 use output::OutputWriter;
 use pcap_file::pcap::PcapReader;
 use rustc_hash::FxHashMap;
@@ -53,6 +55,10 @@ struct Cli {
     #[arg(short, long)]
     output: Option<String>,
 
+    /// Host address for Prometheus metrics HTTP server
+    #[arg(long, default_value = "0.0.0.0")]
+    metrics_host: String,
+
     /// Port for Prometheus metrics HTTP server
     #[arg(long, default_value = "9090")]
     metrics_port: u16,
@@ -64,6 +70,12 @@ struct Cli {
     /// Template cache timeout in seconds
     #[arg(long, default_value = "600")]
     template_timeout: u64,
+
+    /// Flow enrichment configuration (can be specified multiple times)
+    /// Format: type=prefix_lookup,source=file.csv,key=dst_addr,match=longest,
+    /// fields=col:output;col2:output2,reload=10s
+    #[arg(long = "enrich")]
+    enrich: Vec<String>,
 }
 
 #[derive(Clone, ValueEnum)]
@@ -94,6 +106,7 @@ fn read_netflow_pcap(
     ie_registry: &IERegistry,
     timeout: std::time::Duration,
     output: &Arc<OutputWriter>,
+    enrichment: &Arc<EnrichmentEngine>,
 ) {
     let file = std::fs::File::open(file_path).expect("Failed to open pcap file");
     let mut reader = PcapReader::new(file).expect("Failed to create pcap reader");
@@ -123,6 +136,7 @@ fn read_netflow_pcap(
                         None,
                         &src.to_string(),
                         output,
+                        enrichment,
                     );
                 }
             }
@@ -142,10 +156,11 @@ fn read_netflow_socket(
     timeout: std::time::Duration,
     metrics: &Arc<metrics::Metrics>,
     output: &Arc<OutputWriter>,
+    enrichment: &Arc<EnrichmentEngine>,
 ) {
     let addr: SocketAddr = format!("{}:{}", host, port).parse().unwrap();
     let socket = UdpSocket::bind(addr).expect("Failed to bind to socket");
-    println!("Listening for NetFlow data on {}", addr);
+    eprintln!("Listening for NetFlow data on {}", addr);
 
     let mut buf = [0u8; 65535];
     let mut v5_parser = NetFlowV5Parser::default();
@@ -184,6 +199,7 @@ fn read_netflow_socket(
                     Some(&*metrics),
                     &src_ip,
                     output,
+                    enrichment,
                 );
 
                 metrics
@@ -216,6 +232,7 @@ fn parse_netflow(
     metrics: Option<&metrics::Metrics>,
     src_ip: &str,
     output: &OutputWriter,
+    enrichment: &EnrichmentEngine,
 ) {
     if payload.len() < 2 {
         return;
@@ -241,7 +258,8 @@ fn parse_netflow(
                         for record in &parsed.flow_records {
                             let mut common_flow = ctx.convert(record);
                             common_flow.time_received_ns = time_received_ns;
-                            output.write_common_flow(&common_flow);
+                            let enriched = enrichment.enrich(&common_flow);
+                            output.write_enriched_flow(&common_flow, &enriched);
                         }
                     }
                 }
@@ -296,7 +314,8 @@ fn parse_netflow(
                                         };
                                         let mut common_flow = ctx.convert(data_record);
                                         common_flow.time_received_ns = time_received_ns;
-                                        output.write_common_flow(&common_flow);
+                                        let enriched = enrichment.enrich(&common_flow);
+                                        output.write_enriched_flow(&common_flow, &enriched);
                                     }
                                 }
                             }
@@ -355,7 +374,8 @@ fn parse_netflow(
                                         };
                                         let mut common_flow = ctx.convert(data_record);
                                         common_flow.time_received_ns = time_received_ns;
-                                        output.write_common_flow(&common_flow);
+                                        let enriched = enrichment.enrich(&common_flow);
+                                        output.write_enriched_flow(&common_flow, &enriched);
                                     }
                                 }
                             }
@@ -380,7 +400,12 @@ fn parse_netflow(
     }
 }
 
-fn read_sflow_pcap(file_path: &str, format: OutputFormat, output: &Arc<OutputWriter>) {
+fn read_sflow_pcap(
+    file_path: &str,
+    format: OutputFormat,
+    output: &Arc<OutputWriter>,
+    enrichment: &Arc<EnrichmentEngine>,
+) {
     let file = std::fs::File::open(file_path).expect("Failed to open pcap file");
     let mut reader = PcapReader::new(file).expect("Failed to create pcap reader");
     let mut parser = SflowV5Parser::default();
@@ -398,6 +423,7 @@ fn read_sflow_pcap(file_path: &str, format: OutputFormat, output: &Arc<OutputWri
                         None,
                         &src.to_string(),
                         output,
+                        enrichment,
                     );
                 }
             }
@@ -415,10 +441,11 @@ fn read_sflow_socket(
     format: OutputFormat,
     metrics: &Arc<metrics::Metrics>,
     output: &Arc<OutputWriter>,
+    enrichment: &Arc<EnrichmentEngine>,
 ) {
     let addr: SocketAddr = format!("{}:{}", host, port).parse().unwrap();
     let socket = UdpSocket::bind(addr).expect("Failed to bind to socket");
-    println!("Listening for sFlow data on {}", addr);
+    eprintln!("Listening for sFlow data on {}", addr);
 
     let mut buf = [0u8; 65535];
     let mut parser = SflowV5Parser::default();
@@ -447,6 +474,7 @@ fn read_sflow_socket(
                     Some(&*metrics),
                     &src_ip,
                     output,
+                    enrichment,
                 );
             }
             Err(err) => {
@@ -464,6 +492,7 @@ fn parse_sflow(
     metrics: Option<&metrics::Metrics>,
     src_ip: &str,
     output: &OutputWriter,
+    enrichment: &EnrichmentEngine,
 ) {
     if payload.len() < 4 {
         return;
@@ -495,12 +524,14 @@ fn parse_sflow(
                                 Sample::Flow(flow_sample) => {
                                     let mut cf = ctx.convert_flow_sample(flow_sample);
                                     cf.time_received_ns = time_received_ns;
-                                    output.write_common_flow(&cf);
+                                    let enriched = enrichment.enrich(&cf);
+                                    output.write_enriched_flow(&cf, &enriched);
                                 }
                                 Sample::ExpandedFlow(expanded_sample) => {
                                     let mut cf = ctx.convert_expanded_flow_sample(expanded_sample);
                                     cf.time_received_ns = time_received_ns;
-                                    output.write_common_flow(&cf);
+                                    let enriched = enrichment.enrich(&cf);
+                                    output.write_enriched_flow(&cf, &enriched);
                                 }
                                 _ => {}
                             }
@@ -530,7 +561,7 @@ fn main() {
     let mut ie_registry = IERegistry::new_with_iana_elements();
     if let Some(ref path) = cli.ie_mapping {
         match ie_registry.load_from_csv(path) {
-            Ok(count) => println!("Loaded {} custom IE definitions from {}", count, path),
+            Ok(count) => eprintln!("Loaded {} custom IE definitions from {}", count, path),
             Err(e) => {
                 eprintln!("Failed to load IE mappings from {}: {}", path, e);
                 std::process::exit(1);
@@ -538,21 +569,55 @@ fn main() {
         }
     }
 
+    // Parse and build enrichment engine
+    let mut enrichment_engine = EnrichmentEngine::new();
+    for enrich_arg in &cli.enrich {
+        match parse_enrich_arg(enrich_arg) {
+            Ok(config) => {
+                let source = config.source_file.display().to_string();
+                match enrichment_engine.add(config) {
+                    Ok(count) => eprintln!("Loaded {} prefix entries from {}", count, source),
+                    Err(e) => {
+                        eprintln!("Failed to load enrichment from {}: {}", source, e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("Invalid --enrich argument: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+    let enrichment_engine = Arc::new(enrichment_engine);
+
     let output = Arc::new(
-        OutputWriter::new(cli.output.as_deref(), cli.serialization)
-            .expect("Failed to create output writer"),
+        OutputWriter::new(
+            cli.output.as_deref(),
+            cli.serialization,
+            enrichment_engine.output_fields(),
+        )
+        .expect("Failed to create output writer"),
     );
 
     let timeout = std::time::Duration::from_secs(cli.template_timeout);
 
     match (&cli.flow_type, &cli.pcap, &cli.port) {
-        (FlowType::Netflow, Some(path), _) => {
-            read_netflow_pcap(path, cli.format, &ie_registry, timeout, &output)
-        }
+        (FlowType::Netflow, Some(path), _) => read_netflow_pcap(
+            path,
+            cli.format,
+            &ie_registry,
+            timeout,
+            &output,
+            &enrichment_engine,
+        ),
         (FlowType::Netflow, None, Some(port)) => {
             let metrics = Arc::new(metrics::Metrics::new());
-            let _metrics_handle =
-                metrics::start_metrics_server(Arc::clone(&metrics), cli.metrics_port);
+            let _metrics_handle = metrics::start_metrics_server(
+                Arc::clone(&metrics),
+                &cli.metrics_host,
+                cli.metrics_port,
+            );
             read_netflow_socket(
                 &cli.host,
                 *port,
@@ -561,14 +626,27 @@ fn main() {
                 timeout,
                 &metrics,
                 &output,
+                &enrichment_engine,
             )
         }
-        (FlowType::Sflow, Some(path), _) => read_sflow_pcap(path, cli.format, &output),
+        (FlowType::Sflow, Some(path), _) => {
+            read_sflow_pcap(path, cli.format, &output, &enrichment_engine)
+        }
         (FlowType::Sflow, None, Some(port)) => {
             let metrics = Arc::new(metrics::Metrics::new());
-            let _metrics_handle =
-                metrics::start_metrics_server(Arc::clone(&metrics), cli.metrics_port);
-            read_sflow_socket(&cli.host, *port, cli.format, &metrics, &output)
+            let _metrics_handle = metrics::start_metrics_server(
+                Arc::clone(&metrics),
+                &cli.metrics_host,
+                cli.metrics_port,
+            );
+            read_sflow_socket(
+                &cli.host,
+                *port,
+                cli.format,
+                &metrics,
+                &output,
+                &enrichment_engine,
+            )
         }
         (_, None, None) => {
             eprintln!("Error: Either --pcap or --port must be specified");

@@ -118,7 +118,7 @@ impl NetflowV9Parser {
             template_id => {
                 let (input, records) = self.parse_data_records(source_id, template_id, input)?;
 
-                Ok((input, records.into_iter().map(Record::Data).collect()))
+                Ok((input, records))
             }
         }
     }
@@ -128,16 +128,19 @@ impl NetflowV9Parser {
         source_id: u32,
         template_id: u16,
         input: &'a [u8],
-    ) -> IResult<&'a [u8], Vec<DataRecord>> {
+    ) -> IResult<&'a [u8], Vec<Record>> {
         if let Some(template) = self.templates.get(&(source_id, template_id)) {
             let (input, records) = many0(|i| self.parse_data_record(template, i)).parse(input)?;
-            return Ok((input, records));
+            return Ok((input, records.into_iter().map(Record::Data).collect()));
         }
 
         if let Some(template) = self.options_templates.get(&(source_id, template_id)) {
             let (input, records) =
                 many0(|i| self.parse_options_data_record(template, i)).parse(input)?;
-            return Ok((input, records));
+            return Ok((
+                input,
+                records.into_iter().map(Record::OptionsData).collect(),
+            ));
         }
 
         log::warn!(
@@ -274,6 +277,7 @@ pub enum Record {
     Template(TemplateRecord),
     OptionsTemplate(OptionsTemplateRecord),
     Data(DataRecord),
+    OptionsData(DataRecord),
 }
 
 #[derive(Debug, Clone, Serialize)]

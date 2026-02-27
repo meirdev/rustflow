@@ -116,12 +116,16 @@ impl Default for Metrics {
     }
 }
 
-pub fn start_metrics_server(metrics: Arc<Metrics>, port: u16) -> thread::JoinHandle<()> {
-    let addr: SocketAddr = format!("0.0.0.0:{}", port).parse().unwrap();
+pub fn start_metrics_server(
+    metrics: Arc<Metrics>,
+    host: &str,
+    port: u16,
+) -> thread::JoinHandle<()> {
+    let addr: SocketAddr = format!("{}:{}", host, port).parse().unwrap();
 
     thread::spawn(move || {
         let server = Server::http(addr).expect("Failed to start metrics HTTP server");
-        println!("Metrics server listening on http://{}/metrics", addr);
+        eprintln!("Metrics server listening on http://{}/metrics", addr);
 
         for request in server.incoming_requests() {
             let response = if request.url() == "/metrics" {

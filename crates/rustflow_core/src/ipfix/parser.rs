@@ -88,20 +88,33 @@ impl IpfixParser {
         observation_domain_id: u32,
         template_id: u16,
         input: &'a [u8],
-    ) -> IResult<&'a [u8], Vec<DataRecord>> {
+    ) -> IResult<&'a [u8], Vec<Record>> {
         let key = (observation_domain_id, template_id);
 
-        let (fields, scope_count): (&[FieldSpecifier], usize) =
-            if let Some(t) = self.templates.get(&key) {
-                (&t.fields, 0)
-            } else if let Some(t) = self.options_templates.get(&key) {
-                (&t.fields, t.scope_field_count as usize)
-            } else {
-                return Ok((input, vec![]));
-            };
+        if let Some(t) = self.templates.get(&key) {
+            let (input, records) =
+                many0(|i| self.parse_record_from_fields(observation_domain_id, &t.fields, 0, i))
+                    .parse(input)?;
+            return Ok((input, records.into_iter().map(Record::Data).collect()));
+        }
 
-        many0(|i| self.parse_record_from_fields(observation_domain_id, &fields, scope_count, i))
-            .parse(input)
+        if let Some(t) = self.options_templates.get(&key) {
+            let (input, records) = many0(|i| {
+                self.parse_record_from_fields(
+                    observation_domain_id,
+                    &t.fields,
+                    t.scope_field_count as usize,
+                    i,
+                )
+            })
+            .parse(input)?;
+            return Ok((
+                input,
+                records.into_iter().map(Record::OptionsData).collect(),
+            ));
+        }
+
+        Ok((input, vec![]))
     }
 
     fn parse_set<'a>(
@@ -178,7 +191,7 @@ impl IpfixParser {
                     );
                 }
 
-                Ok((remaining, records.into_iter().map(Record::Data).collect()))
+                Ok((remaining, records))
             }
             _ => {
                 log::warn!("Invalid set ID: {}. Skipping.", set_id);
@@ -330,12 +343,20 @@ impl IpfixParser {
             );
         }
 
+        let data_records: Vec<DataRecord> = records
+            .into_iter()
+            .filter_map(|r| match r {
+                Record::Data(dr) | Record::OptionsData(dr) => Some(dr),
+                _ => None,
+            })
+            .collect();
+
         Ok((
             remaining,
             FieldValue::SubTemplateList(SubTemplateList {
                 semantic,
                 template_id,
-                data: records,
+                data: data_records,
             }),
         ))
     }
@@ -374,10 +395,18 @@ impl IpfixParser {
                 );
             }
 
+            let data_records: Vec<DataRecord> = records
+                .into_iter()
+                .filter_map(|r| match r {
+                    Record::Data(dr) | Record::OptionsData(dr) => Some(dr),
+                    _ => None,
+                })
+                .collect();
+
             items.push(SubTemplateMultiItem {
                 template_id,
                 length: item_length,
-                data: records,
+                data: data_records,
             });
             list_data = next_data;
         }
@@ -453,6 +482,7 @@ pub enum Record {
     Template(TemplateRecord),
     OptionsTemplate(OptionsTemplateRecord),
     Data(DataRecord),
+    OptionsData(DataRecord),
 }
 
 #[derive(Debug, Clone, Serialize)]
