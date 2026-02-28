@@ -28,10 +28,14 @@ jobs:
       - name: Build
         run: cargo build --release --target ${{ matrix.BUILD_TARGET }}
 
-      - name: Update binaries to release
+      - name: Update binaries to release (collector)
         uses: softprops/action-gh-release@v2
         if: github.ref_type == 'tag'
         with:
-          files: |
-            target/${{ matrix.BUILD_TARGET }}/release/rustflow_collector
-            target/${{ matrix.BUILD_TARGET }}/release/rustflow_exporter
+          files: target/${{ matrix.BUILD_TARGET }}/release/rustflow_collector
+
+      - name: Update binaries to release (exporter)
+        uses: softprops/action-gh-release@v2
+        if: github.ref_type == 'tag'
+        with:
+          files: target/${{ matrix.BUILD_TARGET }}/release/rustflow_exporter
