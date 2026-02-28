@@ -158,6 +158,9 @@ pub struct CommonFlow {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub observation_domain_id: Option<u32>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template_id: Option<u16>,
 }
 
 impl Default for CommonFlow {
@@ -199,6 +202,7 @@ impl Default for CommonFlow {
             src_vlan: None,
             dst_vlan: None,
             observation_domain_id: None,
+            template_id: None,
         }
     }
 }
@@ -276,6 +280,7 @@ impl NetFlowV5Context<'_> {
             src_vlan: None,
             dst_vlan: None,
             observation_domain_id: None,
+            template_id: None, // NetFlow v5 has no templates
         }
     }
 }
@@ -291,13 +296,14 @@ pub struct NetFlowV9Context<'a> {
 }
 
 impl NetFlowV9Context<'_> {
-    pub fn convert(&self, record: &V9DataRecord) -> CommonFlow {
+    pub fn convert(&self, record: &V9DataRecord, template_id: u16) -> CommonFlow {
         use InformationElement::*;
 
         let mut flow = CommonFlow::new(FlowType::NetflowV9);
         flow.sequence_num = self.header.sequence_number;
         flow.sampler_address = self.sampler_address;
         flow.observation_domain_id = Some(self.header.source_id);
+        flow.template_id = Some(template_id);
 
         if let Some(rate) = self.sampling_rate {
             flow.sampling_rate = Some(rate);
@@ -477,13 +483,14 @@ pub struct IpfixContext<'a> {
 }
 
 impl IpfixContext<'_> {
-    pub fn convert(&self, record: &IpfixDataRecord) -> CommonFlow {
+    pub fn convert(&self, record: &IpfixDataRecord, template_id: u16) -> CommonFlow {
         use InformationElement::*;
 
         let mut flow = CommonFlow::new(FlowType::Ipfix);
         flow.sequence_num = self.header.sequence_number;
         flow.sampler_address = self.sampler_address;
         flow.observation_domain_id = Some(self.header.observation_domain_id);
+        flow.template_id = Some(template_id);
 
         if let Some(rate) = self.sampling_rate {
             flow.sampling_rate = Some(rate);

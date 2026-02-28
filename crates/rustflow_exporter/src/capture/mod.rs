@@ -1,3 +1,7 @@
+// Manual AF_PACKET implementation with PACKET_MMAP (TPACKET_V2).
+// We don't use the `af_packet` crate because it has a musl compilation bug:
+// ioctl request type mismatch (u64 vs i32) that prevents cross-compilation.
+
 use std::ffi::CString;
 use std::net::Ipv4Addr;
 use std::{io, mem, ptr};
@@ -241,6 +245,7 @@ fn get_interface_index(fd: libc::c_int, interface: &str) -> Result<libc::c_int> 
         );
     }
 
+    // ioctl request type differs between glibc (c_ulong) and musl (c_int)
     #[cfg(target_env = "musl")]
     let request = libc::SIOCGIFINDEX as libc::c_int;
     #[cfg(not(target_env = "musl"))]
