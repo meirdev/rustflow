@@ -30,12 +30,12 @@ pub const IPFIX_OPTIONS_TEMPLATE_SET_ID: u16 = 3;
 pub const IPFIX_VALID_TEMPLATE_ID: RangeInclusive<u16> = 256..=65535;
 pub const IPFIX_VARIABLE_LENGTH: u16 = 0xffff;
 
-// 2 (set_id) + 2 (length)
-const SET_HEADER_SIZE: usize = 4;
+/// Set header size: 2 (set_id) + 2 (length)
+pub const SET_HEADER_SIZE: usize = 4;
 
-// 2 (version) + 2 (length) + 4 (export_time) + 4 (sequence_number) + 4
-// (observation_domain_id)
-const IPFIX_HEADER_SIZE: usize = 16;
+/// IPFIX header size: 2 (version) + 2 (length) + 4 (export_time) + 4
+/// (sequence_number) + 4 (observation_domain_id)
+pub const IPFIX_HEADER_SIZE: usize = 16;
 
 // (observation_domain_id, template_id)
 type TemplateKey = (u32, u16);
@@ -474,6 +474,12 @@ pub struct Set {
     pub id: u16,
     pub length: u16,
     pub records: Vec<Record>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SetHeader {
+    pub set_id: u16,
+    pub length: u16,
 }
 
 #[derive(Debug, Clone, Serialize)]

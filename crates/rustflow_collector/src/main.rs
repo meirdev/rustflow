@@ -312,7 +312,7 @@ fn parse_netflow(
                                             sampler_address: Some(src),
                                             sampling_rate: sampling_cache.get(&cache_key),
                                         };
-                                        let mut common_flow = ctx.convert(data_record);
+                                        let mut common_flow = ctx.convert(data_record, flow_set.id);
                                         common_flow.time_received_ns = time_received_ns;
                                         let enriched = enrichment.enrich(&common_flow);
                                         output.write_enriched_flow(&common_flow, &enriched);
@@ -372,7 +372,7 @@ fn parse_netflow(
                                             sampler_address: Some(src),
                                             sampling_rate: sampling_cache.get(&cache_key),
                                         };
-                                        let mut common_flow = ctx.convert(data_record);
+                                        let mut common_flow = ctx.convert(data_record, set.id);
                                         common_flow.time_received_ns = time_received_ns;
                                         let enriched = enrichment.enrich(&common_flow);
                                         output.write_enriched_flow(&common_flow, &enriched);

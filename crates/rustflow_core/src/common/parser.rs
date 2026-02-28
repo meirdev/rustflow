@@ -10,7 +10,7 @@ use nom::{IResult, Parser};
 
 /// Difference between NTP epoch (1900-01-01) and UNIX epoch (1970-01-01) in
 /// seconds
-const NTP_UNIX_EPOCH_DIFF: u64 = 2_208_988_800;
+pub const NTP_UNIX_EPOCH_DIFF: u64 = 2_208_988_800;
 
 pub fn ipv4_addr(input: &[u8]) -> IResult<&[u8], Ipv4Addr> {
     map(be_u32, Ipv4Addr::from).parse(input)
