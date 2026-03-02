@@ -9,12 +9,6 @@ pub enum LookupType {
     PrefixLookup,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum MatchStrategy {
-    #[default]
-    Longest,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LookupKey {
     SrcAddr,
@@ -58,7 +52,6 @@ pub struct EnrichmentConfig {
     pub lookup_type: LookupType,
     pub source_file: PathBuf,
     pub lookup_key: LookupKey,
-    pub match_strategy: MatchStrategy,
     pub field_mappings: Vec<FieldMapping>,
     pub reload_interval: Option<Duration>,
 }
@@ -67,7 +60,6 @@ pub fn parse_enrich_arg(arg: &str) -> Result<EnrichmentConfig, String> {
     let mut lookup_type = None;
     let mut source_file = None;
     let mut lookup_key = None;
-    let mut match_strategy = MatchStrategy::default();
     let mut field_mappings = Vec::new();
     let mut reload_interval = None;
 
@@ -93,17 +85,6 @@ pub fn parse_enrich_arg(arg: &str) -> Result<EnrichmentConfig, String> {
             }
             "key" => {
                 lookup_key = Some(LookupKey::from_str(value.trim())?);
-            }
-            "match" => {
-                match_strategy = match value.trim() {
-                    "longest" => MatchStrategy::Longest,
-                    other => {
-                        return Err(format!(
-                            "Unknown match strategy: '{}'. Valid strategies: longest",
-                            other
-                        ));
-                    }
-                };
             }
             "fields" => {
                 for field_spec in value.split(';') {
@@ -140,7 +121,6 @@ pub fn parse_enrich_arg(arg: &str) -> Result<EnrichmentConfig, String> {
         lookup_type: lookup_type.ok_or("Missing 'type' parameter")?,
         source_file: source_file.ok_or("Missing 'source' parameter")?,
         lookup_key: lookup_key.ok_or("Missing 'key' parameter")?,
-        match_strategy,
         field_mappings,
         reload_interval,
     })
@@ -152,7 +132,7 @@ mod tests {
 
     #[test]
     fn test_parse_basic() {
-        let arg = "type=prefix_lookup,source=test.csv,key=dst_addr,match=longest,fields=account:dst_account";
+        let arg = "type=prefix_lookup,source=test.csv,key=dst_addr,fields=account:dst_account";
         let config = parse_enrich_arg(arg).unwrap();
         assert_eq!(config.lookup_type, LookupType::PrefixLookup);
         assert_eq!(config.source_file, PathBuf::from("test.csv"));

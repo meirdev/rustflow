@@ -72,8 +72,8 @@ struct Cli {
     template_timeout: u64,
 
     /// Flow enrichment configuration (can be specified multiple times)
-    /// Format: type=prefix_lookup,source=file.csv,key=dst_addr,match=longest,
-    /// fields=col:output;col2:output2,reload=10s
+    /// Format: type=prefix_lookup,source=file.csv,key=dst_addr,fields=col:
+    /// output;col2:output2,reload=10s
     #[arg(long = "enrich")]
     enrich: Vec<String>,
 }
