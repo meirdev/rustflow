@@ -130,3 +130,51 @@ rustflow_collector -t netflow -p 9995 --metrics-host 127.0.0.1 --metrics-port 91
 ```
 rustflow_collector --help
 ```
+
+## Exporter Usage
+
+The `rustflow_exporter` binary captures network traffic and exports it as IPFIX to a collector.
+
+### Basic Usage
+
+```bash
+# Capture on eth0 and export to collector at 192.168.1.100:4739
+rustflow_exporter -i eth0 -H 192.168.1.100 -p 4739
+
+# Capture on loopback interface (default)
+rustflow_exporter -H 127.0.0.1 -p 4739
+```
+
+### Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `-i, --interface` | Network interface to capture from | `lo` |
+| `-H, --collector-host` | Collector host address | `127.0.0.1` |
+| `-p, --collector-port` | Collector port | `4739` |
+| `--observation-domain-id` | Observation domain ID | `1` |
+| `--active-timeout` | Active flow timeout in seconds | `60` |
+| `--inactive-timeout` | Inactive flow timeout in seconds | `15` |
+| `--template-refresh-rate` | Template refresh rate in seconds | `300` |
+| `--sampling-packet-interval` | Sampling packet interval (1 = all packets) | `1` |
+| `--promiscuous` | Enable promiscuous mode | disabled |
+
+### Examples
+
+```bash
+# Capture with promiscuous mode and custom timeouts
+rustflow_exporter -i eth0 -H 10.0.0.1 -p 2055 --promiscuous \
+  --active-timeout 120 --inactive-timeout 30
+
+# Sample 1 out of every 100 packets
+rustflow_exporter -i eth0 -H 10.0.0.1 -p 4739 --sampling-packet-interval 100
+
+# Enable debug logging
+RUST_LOG=debug rustflow_exporter -i eth0 -H 10.0.0.1 -p 4739
+```
+
+### All Options
+
+```
+rustflow_exporter --help
+```
