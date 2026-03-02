@@ -152,6 +152,7 @@ fn flow_to_csv_record(flow: &CommonFlow) -> Vec<String> {
         opt_str(&flow.src_vlan),
         opt_str(&flow.dst_vlan),
         opt_str(&flow.observation_domain_id),
+        opt_str(&flow.template_id),
     ]
 }
 
@@ -192,4 +193,5 @@ const COMMON_FLOW_HEADERS: &[&str] = &[
     "src_vlan",
     "dst_vlan",
     "observation_domain_id",
+    "template_id",
 ];
