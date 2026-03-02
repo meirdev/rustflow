@@ -25,6 +25,8 @@ pub fn create_flow_template() -> TemplateRecord {
         field_specifier_from_ie(OctetDeltaCount, 8),
         field_specifier_from_ie(PacketDeltaCount, 8),
         field_specifier_from_ie(TcpControlBits, 2),
+        field_specifier_from_ie(FlowStartMilliseconds, 8),
+        field_specifier_from_ie(FlowEndMilliseconds, 8),
     ];
 
     TemplateRecord::new(FLOW_TEMPLATE_ID, fields)

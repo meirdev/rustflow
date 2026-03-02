@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
-use std::time::{Duration, Instant};
+
+use chrono::{DateTime, TimeDelta, Utc};
 
 use crate::ipfix::data::FlowData;
 
@@ -19,20 +20,20 @@ pub struct Flow {
     pub octet_count: u64,
     pub packet_count: u64,
     pub tcp_flags: u16,
-    pub first_seen: Instant,
-    pub last_seen: Instant,
+    pub flow_start: DateTime<Utc>,
+    pub flow_end: DateTime<Utc>,
 }
 
 impl Flow {
     pub fn new(key: FlowKey) -> Self {
-        let now = Instant::now();
+        let now = Utc::now();
         Self {
             key,
             octet_count: 0,
             packet_count: 0,
             tcp_flags: 0,
-            first_seen: now,
-            last_seen: now,
+            flow_start: now,
+            flow_end: now,
         }
     }
 
@@ -40,7 +41,7 @@ impl Flow {
         self.octet_count += packet_size;
         self.packet_count += 1;
         self.tcp_flags |= tcp_flags;
-        self.last_seen = Instant::now();
+        self.flow_end = Utc::now();
     }
 
     pub fn to_flow_data(&self) -> FlowData {
@@ -53,22 +54,24 @@ impl Flow {
             octet_count: self.octet_count,
             packet_count: self.packet_count,
             tcp_flags: self.tcp_flags,
+            flow_start: self.flow_start,
+            flow_end: self.flow_end,
         }
     }
 }
 
 pub struct FlowCache {
     flows: HashMap<FlowKey, Flow>,
-    active_timeout: Duration,
-    inactive_timeout: Duration,
+    active_timeout: TimeDelta,
+    inactive_timeout: TimeDelta,
 }
 
 impl FlowCache {
     pub fn new(active_timeout: u64, inactive_timeout: u64) -> Self {
         Self {
             flows: HashMap::new(),
-            active_timeout: Duration::from_secs(active_timeout),
-            inactive_timeout: Duration::from_secs(inactive_timeout),
+            active_timeout: TimeDelta::seconds(active_timeout as i64),
+            inactive_timeout: TimeDelta::seconds(inactive_timeout as i64),
         }
     }
 
@@ -80,15 +83,15 @@ impl FlowCache {
     }
 
     pub fn check_expired_flows(&mut self) -> Vec<Flow> {
-        let now = Instant::now();
+        let now = Utc::now();
         let mut expired = Vec::new();
 
         let active_timeout = self.active_timeout;
         let inactive_timeout = self.inactive_timeout;
 
         self.flows.retain(|_, flow| {
-            let age = now.duration_since(flow.first_seen);
-            let idle_time = now.duration_since(flow.last_seen);
+            let age = now - flow.flow_start;
+            let idle_time = now - flow.flow_end;
 
             if age >= active_timeout || idle_time >= inactive_timeout {
                 expired.push(flow.clone());

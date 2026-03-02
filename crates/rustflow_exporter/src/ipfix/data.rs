@@ -1,6 +1,7 @@
 use std::net::Ipv4Addr;
 use std::sync::{Arc, LazyLock};
 
+use chrono::{DateTime, Utc};
 use rustflow_core::common::InformationElement;
 use rustflow_core::ipfix::parser::{DataRecord, FieldValue};
 
@@ -17,6 +18,8 @@ pub struct FlowData {
     pub octet_count: u64,
     pub packet_count: u64,
     pub tcp_flags: u16,
+    pub flow_start: DateTime<Utc>,
+    pub flow_end: DateTime<Utc>,
 }
 
 impl FlowData {
@@ -70,8 +73,20 @@ impl FlowData {
             (
                 None,
                 TcpControlBits.into(),
-                name,
+                name.clone(),
                 FieldValue::Unsigned16(self.tcp_flags),
+            ),
+            (
+                None,
+                FlowStartMilliseconds.into(),
+                name.clone(),
+                FieldValue::DateTimeMilliseconds(self.flow_start),
+            ),
+            (
+                None,
+                FlowEndMilliseconds.into(),
+                name,
+                FieldValue::DateTimeMilliseconds(self.flow_end),
             ),
         ])
     }
