@@ -116,19 +116,27 @@ impl NetflowReader {
 
                     for flow_set in parsed.flow_sets.iter().rev() {
                         for record in flow_set.records.iter().rev() {
-                            if let V9Record::Data(data_record) = record {
-                                if let Some(rate) = extract_v9_sampling_rate(data_record) {
-                                    self.sampling_cache.set(cache_key, rate);
+                            match record {
+                                V9Record::OptionsData(data_record) => {
+                                    if let Some(rate) = extract_v9_sampling_rate(data_record) {
+                                        self.sampling_cache.set(cache_key, rate);
+                                    }
                                 }
+                                V9Record::Data(data_record) => {
+                                    if let Some(rate) = extract_v9_sampling_rate(data_record) {
+                                        self.sampling_cache.set(cache_key, rate);
+                                    }
 
-                                let ctx = NetFlowV9Context {
-                                    header: &parsed.header,
-                                    sampler_address: Some(src),
-                                    sampling_rate: self.sampling_cache.get(&cache_key),
-                                };
-                                let mut flow = ctx.convert(data_record, flow_set.id);
-                                flow.time_received_ns = time_received_ns;
-                                self.pending_flows.push(flow);
+                                    let ctx = NetFlowV9Context {
+                                        header: &parsed.header,
+                                        sampler_address: Some(src),
+                                        sampling_rate: self.sampling_cache.get(&cache_key),
+                                    };
+                                    let mut flow = ctx.convert(data_record, flow_set.id);
+                                    flow.time_received_ns = time_received_ns;
+                                    self.pending_flows.push(flow);
+                                }
+                                _ => {}
                             }
                         }
                     }
@@ -144,19 +152,27 @@ impl NetflowReader {
 
                     for set in parsed.sets.iter().rev() {
                         for record in set.records.iter().rev() {
-                            if let IpfixRecord::Data(data_record) = record {
-                                if let Some(rate) = extract_ipfix_sampling_rate(data_record) {
-                                    self.sampling_cache.set(cache_key, rate);
+                            match record {
+                                IpfixRecord::OptionsData(data_record) => {
+                                    if let Some(rate) = extract_ipfix_sampling_rate(data_record) {
+                                        self.sampling_cache.set(cache_key, rate);
+                                    }
                                 }
+                                IpfixRecord::Data(data_record) => {
+                                    if let Some(rate) = extract_ipfix_sampling_rate(data_record) {
+                                        self.sampling_cache.set(cache_key, rate);
+                                    }
 
-                                let ctx = IpfixContext {
-                                    header: &parsed.header,
-                                    sampler_address: Some(src),
-                                    sampling_rate: self.sampling_cache.get(&cache_key),
-                                };
-                                let mut flow = ctx.convert(data_record, set.id);
-                                flow.time_received_ns = time_received_ns;
-                                self.pending_flows.push(flow);
+                                    let ctx = IpfixContext {
+                                        header: &parsed.header,
+                                        sampler_address: Some(src),
+                                        sampling_rate: self.sampling_cache.get(&cache_key),
+                                    };
+                                    let mut flow = ctx.convert(data_record, set.id);
+                                    flow.time_received_ns = time_received_ns;
+                                    self.pending_flows.push(flow);
+                                }
+                                _ => {}
                             }
                         }
                     }
