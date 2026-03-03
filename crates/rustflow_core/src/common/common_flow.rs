@@ -296,6 +296,17 @@ pub struct NetFlowV9Context<'a> {
 }
 
 impl NetFlowV9Context<'_> {
+    /// Convert uptime-based timestamp to absolute nanoseconds since epoch.
+    ///
+    /// In NetFlow v9, `FlowStartSysUpTime` and `FlowEndSysUpTime` are system
+    /// uptime values in milliseconds. We convert them to absolute time using:
+    /// `absolute_time = unix_seconds - (system_uptime - uptime_value)`
+    fn uptime_to_absolute_ns(&self, uptime_ms: u32) -> Option<i64> {
+        let unix_time_ns = self.header.unix_seconds.timestamp_nanos_opt()?;
+        let offset_ms = self.header.system_uptime as i64 - uptime_ms as i64;
+        Some(unix_time_ns - (offset_ms * 1_000_000))
+    }
+
     pub fn convert(&self, record: &V9DataRecord, template_id: u16) -> CommonFlow {
         use InformationElement::*;
 
@@ -346,10 +357,22 @@ impl NetFlowV9Context<'_> {
                             flow.bgp_next_hop = Some(IpAddr::V4(*addr));
                         }
                     }
-                    FlowStartSysUpTime | FlowStartSeconds | FlowStartMilliseconds => {
+                    FlowStartSysUpTime => {
+                        flow.time_flow_start_ns =
+                            extract_u32(value).and_then(|v| self.uptime_to_absolute_ns(v));
+                    }
+                    FlowEndSysUpTime => {
+                        flow.time_flow_end_ns =
+                            extract_u32(value).and_then(|v| self.uptime_to_absolute_ns(v));
+                    }
+                    FlowStartSeconds
+                    | FlowStartMilliseconds
+                    | FlowStartMicroseconds
+                    | FlowStartNanoseconds => {
                         flow.time_flow_start_ns = extract_datetime_ns(value);
                     }
-                    FlowEndSysUpTime | FlowEndSeconds | FlowEndMilliseconds => {
+                    FlowEndSeconds | FlowEndMilliseconds | FlowEndMicroseconds
+                    | FlowEndNanoseconds => {
                         flow.time_flow_end_ns = extract_datetime_ns(value);
                     }
                     SourceIpv6Address => {
@@ -374,7 +397,7 @@ impl NetFlowV9Context<'_> {
                     }
                     IcmpTypeIpv4 | IcmpTypeIpv6 => flow.icmp_type = extract_u8(value),
                     IcmpCodeIpv4 | IcmpCodeIpv6 => flow.icmp_code = extract_u8(value),
-                    SamplingInterval => {
+                    SamplingInterval | SamplingPacketInterval | SamplerRandomInterval => {
                         if self.sampling_rate.is_none() {
                             flow.sampling_rate = extract_u32(value);
                         }
@@ -414,8 +437,13 @@ impl NetFlowV9Context<'_> {
 
 pub fn extract_v9_sampling_rate(record: &V9DataRecord) -> Option<u32> {
     let sampling_interval_id: u16 = InformationElement::SamplingInterval.into();
+    let sampling_packet_interval_id: u16 = InformationElement::SamplingPacketInterval.into();
+    let sampler_random_interval_id: u16 = InformationElement::SamplerRandomInterval.into();
     for (field_type, _, value) in &record.0 {
-        if *field_type == sampling_interval_id {
+        if *field_type == sampling_interval_id
+            || *field_type == sampling_packet_interval_id
+            || *field_type == sampler_random_interval_id
+        {
             return extract_u32(value);
         }
     }
@@ -483,6 +511,15 @@ pub struct IpfixContext<'a> {
 }
 
 impl IpfixContext<'_> {
+    /// Convert delta microseconds to absolute nanoseconds since epoch.
+    ///
+    /// Delta fields represent time backwards from export_time:
+    /// `absolute_time = export_time - delta_microseconds`
+    fn delta_to_absolute_ns(&self, delta_us: u32) -> Option<i64> {
+        let export_time_ns = self.header.export_time.timestamp_nanos_opt()?;
+        Some(export_time_ns - (delta_us as i64 * 1_000))
+    }
+
     pub fn convert(&self, record: &IpfixDataRecord, template_id: u16) -> CommonFlow {
         use InformationElement::*;
 
@@ -533,11 +570,23 @@ impl IpfixContext<'_> {
                             flow.bgp_next_hop = Some(IpAddr::V4(*addr));
                         }
                     }
-                    FlowStartSysUpTime | FlowStartSeconds | FlowStartMilliseconds => {
+                    FlowStartSeconds
+                    | FlowStartMilliseconds
+                    | FlowStartMicroseconds
+                    | FlowStartNanoseconds => {
                         flow.time_flow_start_ns = ipfix_extract_datetime_ns(value);
                     }
-                    FlowEndSysUpTime | FlowEndSeconds | FlowEndMilliseconds => {
+                    FlowEndSeconds | FlowEndMilliseconds | FlowEndMicroseconds
+                    | FlowEndNanoseconds => {
                         flow.time_flow_end_ns = ipfix_extract_datetime_ns(value);
+                    }
+                    FlowStartDeltaMicroseconds => {
+                        flow.time_flow_start_ns =
+                            ipfix_extract_u32(value).and_then(|v| self.delta_to_absolute_ns(v));
+                    }
+                    FlowEndDeltaMicroseconds => {
+                        flow.time_flow_end_ns =
+                            ipfix_extract_u32(value).and_then(|v| self.delta_to_absolute_ns(v));
                     }
                     SourceIpv6Address => {
                         if let IpfixFieldValue::Ipv6Address(addr) = value {
@@ -561,7 +610,7 @@ impl IpfixContext<'_> {
                     }
                     IcmpTypeIpv4 | IcmpTypeIpv6 => flow.icmp_type = ipfix_extract_u8(value),
                     IcmpCodeIpv4 | IcmpCodeIpv6 => flow.icmp_code = ipfix_extract_u8(value),
-                    SamplingInterval => {
+                    SamplingInterval | SamplingPacketInterval | SamplerRandomInterval => {
                         if self.sampling_rate.is_none() {
                             flow.sampling_rate = ipfix_extract_u32(value);
                         }
@@ -651,8 +700,13 @@ fn ipfix_extract_datetime_ns(value: &IpfixFieldValue) -> Option<i64> {
 
 pub fn extract_ipfix_sampling_rate(record: &IpfixDataRecord) -> Option<u32> {
     let sampling_interval_id: u16 = InformationElement::SamplingInterval.into();
+    let sampling_packet_interval_id: u16 = InformationElement::SamplingPacketInterval.into();
+    let sampler_random_interval_id: u16 = InformationElement::SamplerRandomInterval.into();
     for (_, field_type, _, value) in &record.0 {
-        if *field_type == sampling_interval_id {
+        if *field_type == sampling_interval_id
+            || *field_type == sampling_packet_interval_id
+            || *field_type == sampler_random_interval_id
+        {
             return ipfix_extract_u32(value);
         }
     }
