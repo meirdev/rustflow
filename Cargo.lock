@@ -1063,7 +1063,7 @@ checksum = "3e75f6a532d0fd9f7f13144f392b6ad56a32696bfcd9c78f797f16bbb6f072d6"
 
 [[package]]
 name = "rustflow"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "chrono",
  "log",
@@ -1074,7 +1074,7 @@ dependencies = [
 
 [[package]]
 name = "rustflow_collector"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "chrono",
  "clap",
@@ -1094,7 +1094,7 @@ dependencies = [
 
 [[package]]
 name = "rustflow_core"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "byteorder",
  "bytes",
@@ -1115,7 +1115,7 @@ dependencies = [
 
 [[package]]
 name = "rustflow_exporter"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "chrono",
