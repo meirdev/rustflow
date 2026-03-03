@@ -237,7 +237,8 @@ pub struct NetFlowV9Packet {
 pub struct Header {
     pub version: u16,
     pub count: u16,
-    pub system_uptime: DateTime<Utc>,
+    /// Milliseconds since device boot
+    pub system_uptime: u32,
     pub unix_seconds: DateTime<Utc>,
     pub sequence_number: u32,
     pub source_id: u32,
@@ -246,7 +247,7 @@ pub struct Header {
 fn parse_header(input: &[u8]) -> IResult<&[u8], Header> {
     let (input, version) = verify_version(input, NETFLOW_V9_VERSION)?;
     let (input, count) = be_u16(input)?;
-    let (input, system_uptime) = timestamp_secs(input)?;
+    let (input, system_uptime) = be_u32(input)?;
     let (input, unix_seconds) = timestamp_secs(input)?;
     let (input, sequence_number) = be_u32(input)?;
     let (input, source_id) = be_u32(input)?;
