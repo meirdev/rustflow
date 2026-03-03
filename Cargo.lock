@@ -1067,6 +1067,7 @@ version = "0.3.2"
 dependencies = [
  "chrono",
  "log",
+ "pcap-file",
  "rustc-hash",
  "rustflow_core",
  "tokio",
@@ -1086,6 +1087,7 @@ dependencies = [
  "prefix-trie",
  "prometheus",
  "rustc-hash",
+ "rustflow",
  "rustflow_core",
  "serde",
  "serde_json",

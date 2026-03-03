@@ -35,12 +35,21 @@
 //! # }
 //! ```
 
+mod processor;
 mod reader;
 
 #[cfg(feature = "tokio")]
 mod async_reader;
 
-pub use reader::{NetflowReader, SflowReader};
+mod pcap_reader;
+
+pub use processor::{NetflowPacket, NetflowProcessor, SflowPacket, SflowProcessor};
+pub use reader::{NetflowReadResult, NetflowReader, SflowReadResult, SflowReader};
+
+pub mod pcap {
+    //! Readers for pcap files.
+    pub use crate::pcap_reader::{NetflowPcapReader, SflowPcapReader};
+}
 
 #[cfg(feature = "tokio")]
 pub mod tokio {
