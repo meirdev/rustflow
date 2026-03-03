@@ -302,20 +302,33 @@ fn parse_netflow(
 
                             for flow_set in &parsed.flow_sets {
                                 for record in &flow_set.records {
-                                    if let V9Record::Data(data_record) = record {
-                                        if let Some(rate) = extract_v9_sampling_rate(data_record) {
-                                            sampling_cache.set(cache_key, rate);
+                                    match record {
+                                        V9Record::OptionsData(data_record) => {
+                                            if let Some(rate) =
+                                                extract_v9_sampling_rate(data_record)
+                                            {
+                                                sampling_cache.set(cache_key, rate);
+                                            }
                                         }
+                                        V9Record::Data(data_record) => {
+                                            if let Some(rate) =
+                                                extract_v9_sampling_rate(data_record)
+                                            {
+                                                sampling_cache.set(cache_key, rate);
+                                            }
 
-                                        let ctx = NetFlowV9Context {
-                                            header: &parsed.header,
-                                            sampler_address: Some(src),
-                                            sampling_rate: sampling_cache.get(&cache_key),
-                                        };
-                                        let mut common_flow = ctx.convert(data_record, flow_set.id);
-                                        common_flow.time_received_ns = time_received_ns;
-                                        let enriched = enrichment.enrich(&common_flow);
-                                        output.write_enriched_flow(&common_flow, &enriched);
+                                            let ctx = NetFlowV9Context {
+                                                header: &parsed.header,
+                                                sampler_address: Some(src),
+                                                sampling_rate: sampling_cache.get(&cache_key),
+                                            };
+                                            let mut common_flow =
+                                                ctx.convert(data_record, flow_set.id);
+                                            common_flow.time_received_ns = time_received_ns;
+                                            let enriched = enrichment.enrich(&common_flow);
+                                            output.write_enriched_flow(&common_flow, &enriched);
+                                        }
+                                        _ => {}
                                     }
                                 }
                             }
@@ -361,21 +374,32 @@ fn parse_netflow(
 
                             for set in &parsed.sets {
                                 for record in &set.records {
-                                    if let IpfixRecord::Data(data_record) = record {
-                                        if let Some(rate) = extract_ipfix_sampling_rate(data_record)
-                                        {
-                                            sampling_cache.set(cache_key, rate);
+                                    match record {
+                                        IpfixRecord::OptionsData(data_record) => {
+                                            if let Some(rate) =
+                                                extract_ipfix_sampling_rate(data_record)
+                                            {
+                                                sampling_cache.set(cache_key, rate);
+                                            }
                                         }
+                                        IpfixRecord::Data(data_record) => {
+                                            if let Some(rate) =
+                                                extract_ipfix_sampling_rate(data_record)
+                                            {
+                                                sampling_cache.set(cache_key, rate);
+                                            }
 
-                                        let ctx = IpfixContext {
-                                            header: &parsed.header,
-                                            sampler_address: Some(src),
-                                            sampling_rate: sampling_cache.get(&cache_key),
-                                        };
-                                        let mut common_flow = ctx.convert(data_record, set.id);
-                                        common_flow.time_received_ns = time_received_ns;
-                                        let enriched = enrichment.enrich(&common_flow);
-                                        output.write_enriched_flow(&common_flow, &enriched);
+                                            let ctx = IpfixContext {
+                                                header: &parsed.header,
+                                                sampler_address: Some(src),
+                                                sampling_rate: sampling_cache.get(&cache_key),
+                                            };
+                                            let mut common_flow = ctx.convert(data_record, set.id);
+                                            common_flow.time_received_ns = time_received_ns;
+                                            let enriched = enrichment.enrich(&common_flow);
+                                            output.write_enriched_flow(&common_flow, &enriched);
+                                        }
+                                        _ => {}
                                     }
                                 }
                             }
