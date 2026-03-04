@@ -1,9 +1,18 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::thread;
 
-use prometheus::{CounterVec, Encoder, GaugeVec, Opts, Registry, TextEncoder};
+use prometheus::{Counter, CounterVec, Encoder, GaugeVec, Opts, Registry, TextEncoder};
+use rustc_hash::FxHashMap;
 use tiny_http::{Response, Server};
+
+// Metric label constants
+pub const LABEL_NETFLOW: &str = "netflow";
+pub const LABEL_NETFLOW_V5: &str = "netflow_v5";
+pub const LABEL_NETFLOW_V9: &str = "netflow_v9";
+pub const LABEL_IPFIX: &str = "ipfix";
+pub const LABEL_SFLOW: &str = "sflow";
+pub const LABEL_SFLOW_V5: &str = "sflow_v5";
 
 #[derive(Clone)]
 pub struct Metrics {
@@ -113,6 +122,184 @@ impl Metrics {
 impl Default for Metrics {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Cached counters for a single exporter IP to avoid string allocations.
+struct ExporterCounters {
+    packets_received: Counter,
+    bytes_received: Counter,
+    flows_processed: Counter,
+    parse_errors: Counter,
+}
+
+/// Cached metrics for NetFlow exporters.
+/// Avoids string allocation on every packet by caching Counter objects per IP.
+pub struct NetflowMetricsCache {
+    metrics: Arc<Metrics>,
+    /// Cached counters per (src_ip, version_label)
+    v5_cache: FxHashMap<IpAddr, ExporterCounters>,
+    v9_cache: FxHashMap<IpAddr, ExporterCounters>,
+    ipfix_cache: FxHashMap<IpAddr, ExporterCounters>,
+}
+
+impl NetflowMetricsCache {
+    pub fn new(metrics: Arc<Metrics>) -> Self {
+        Self {
+            metrics,
+            v5_cache: FxHashMap::default(),
+            v9_cache: FxHashMap::default(),
+            ipfix_cache: FxHashMap::default(),
+        }
+    }
+
+    fn get_or_create(&mut self, src: IpAddr, version_label: &'static str) -> &ExporterCounters {
+        let cache = match version_label {
+            LABEL_NETFLOW_V5 => &mut self.v5_cache,
+            LABEL_NETFLOW_V9 => &mut self.v9_cache,
+            LABEL_IPFIX => &mut self.ipfix_cache,
+            _ => &mut self.v5_cache, // fallback
+        };
+
+        cache.entry(src).or_insert_with(|| {
+            let src_str = src.to_string();
+            ExporterCounters {
+                packets_received: self
+                    .metrics
+                    .packets_received_total
+                    .with_label_values(&[LABEL_NETFLOW, &src_str]),
+                bytes_received: self
+                    .metrics
+                    .bytes_received_total
+                    .with_label_values(&[&src_str]),
+                flows_processed: self
+                    .metrics
+                    .flows_processed_total
+                    .with_label_values(&[version_label, &src_str]),
+                parse_errors: self
+                    .metrics
+                    .parse_errors_total
+                    .with_label_values(&[version_label, &src_str]),
+            }
+        })
+    }
+
+    /// Record a successful packet with flows.
+    pub fn record_packet(
+        &mut self,
+        src: IpAddr,
+        version_label: &'static str,
+        bytes: usize,
+        flow_count: usize,
+    ) {
+        let counters = self.get_or_create(src, version_label);
+        counters.packets_received.inc();
+        counters.bytes_received.inc_by(bytes as f64);
+        counters.flows_processed.inc_by(flow_count as f64);
+    }
+
+    /// Record a parse error.
+    pub fn record_parse_error(&mut self, src: IpAddr, version_label: &'static str, bytes: usize) {
+        let counters = self.get_or_create(src, version_label);
+        counters.packets_received.inc();
+        counters.bytes_received.inc_by(bytes as f64);
+        counters.parse_errors.inc();
+    }
+
+    /// Record an unknown version error.
+    pub fn record_unknown_version(&mut self, src: IpAddr, bytes: usize) {
+        // For unknown versions, we still need to allocate for the source IP
+        // but this is rare (only happens for truly unknown protocols)
+        let src_str = src.to_string();
+        self.metrics
+            .packets_received_total
+            .with_label_values(&[LABEL_NETFLOW, &src_str])
+            .inc();
+        self.metrics
+            .bytes_received_total
+            .with_label_values(&[&src_str])
+            .inc_by(bytes as f64);
+        self.metrics
+            .unknown_version_total
+            .with_label_values(&[&src_str])
+            .inc();
+    }
+
+    /// Get reference to underlying metrics for exporter counts.
+    pub fn metrics(&self) -> &Metrics {
+        &self.metrics
+    }
+}
+
+/// Cached metrics for sFlow exporters.
+pub struct SflowMetricsCache {
+    metrics: Arc<Metrics>,
+    cache: FxHashMap<IpAddr, ExporterCounters>,
+}
+
+impl SflowMetricsCache {
+    pub fn new(metrics: Arc<Metrics>) -> Self {
+        Self {
+            metrics,
+            cache: FxHashMap::default(),
+        }
+    }
+
+    fn get_or_create(&mut self, src: IpAddr) -> &ExporterCounters {
+        self.cache.entry(src).or_insert_with(|| {
+            let src_str = src.to_string();
+            ExporterCounters {
+                packets_received: self
+                    .metrics
+                    .packets_received_total
+                    .with_label_values(&[LABEL_SFLOW, &src_str]),
+                bytes_received: self
+                    .metrics
+                    .bytes_received_total
+                    .with_label_values(&[&src_str]),
+                flows_processed: self
+                    .metrics
+                    .flows_processed_total
+                    .with_label_values(&[LABEL_SFLOW_V5, &src_str]),
+                parse_errors: self
+                    .metrics
+                    .parse_errors_total
+                    .with_label_values(&[LABEL_SFLOW_V5, &src_str]),
+            }
+        })
+    }
+
+    /// Record a successful packet with flows.
+    pub fn record_packet(&mut self, src: IpAddr, bytes: usize, flow_count: usize) {
+        let counters = self.get_or_create(src);
+        counters.packets_received.inc();
+        counters.bytes_received.inc_by(bytes as f64);
+        counters.flows_processed.inc_by(flow_count as f64);
+    }
+
+    /// Record a parse error.
+    pub fn record_parse_error(&mut self, src: IpAddr, bytes: usize) {
+        let counters = self.get_or_create(src);
+        counters.packets_received.inc();
+        counters.bytes_received.inc_by(bytes as f64);
+        counters.parse_errors.inc();
+    }
+
+    /// Record an unknown version error.
+    pub fn record_unknown_version(&mut self, src: IpAddr, bytes: usize) {
+        let src_str = src.to_string();
+        self.metrics
+            .packets_received_total
+            .with_label_values(&[LABEL_SFLOW, &src_str])
+            .inc();
+        self.metrics
+            .bytes_received_total
+            .with_label_values(&[&src_str])
+            .inc_by(bytes as f64);
+        self.metrics
+            .unknown_version_total
+            .with_label_values(&[&src_str])
+            .inc();
     }
 }
 
