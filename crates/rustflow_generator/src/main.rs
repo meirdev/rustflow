@@ -6,12 +6,52 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 use clap::Parser;
+use ipnet::Ipv4Net;
 use rand::Rng;
 use rustflow_core::common::InformationElement;
+
+fn random_ip_in_cidr(cidr: &Ipv4Net, rng: &mut impl Rng) -> Ipv4Addr {
+    let network = u32::from(cidr.network());
+    let host_mask = u32::from(cidr.hostmask());
+    if host_mask == 0 {
+        return Ipv4Addr::from(network);
+    }
+    let host_bits = rng.random_range(1..host_mask);
+    Ipv4Addr::from(network | host_bits)
+}
+
+#[derive(Debug, Clone)]
+struct PortRange {
+    start: u16,
+    end: u16,
+}
+
+impl PortRange {
+    fn parse(s: &str) -> Result<Self, String> {
+        let parts: Vec<&str> = s.splitn(2, '-').collect();
+        if parts.len() != 2 {
+            return Err(format!("invalid port range: {s} (expected start-end)"));
+        }
+        let start: u16 = parts[0]
+            .parse()
+            .map_err(|e| format!("invalid start port: {e}"))?;
+        let end: u16 = parts[1]
+            .parse()
+            .map_err(|e| format!("invalid end port: {e}"))?;
+        if start > end {
+            return Err(format!("start port {start} > end port {end}"));
+        }
+        Ok(Self { start, end })
+    }
+
+    fn random_port(&self, rng: &mut impl Rng) -> u16 {
+        rng.random_range(self.start..=self.end)
+    }
+}
 use rustflow_core::ipfix::encoder::Encode;
 use rustflow_core::ipfix::parser::{
-    DataRecord, FieldSpecifier, FieldValue, Header, IpfixPacket, Record, Set,
-    IPFIX_OPTIONS_TEMPLATE_SET_ID, IPFIX_TEMPLATE_SET_ID, IPFIX_VERSION,
+    DataRecord, FieldSpecifier, FieldValue, Header, IPFIX_OPTIONS_TEMPLATE_SET_ID,
+    IPFIX_TEMPLATE_SET_ID, IPFIX_VERSION, IpfixPacket, Record, Set,
 };
 
 const FLOW_TEMPLATE_ID: u16 = 256;
@@ -48,6 +88,26 @@ struct Args {
     /// Template refresh interval in seconds
     #[arg(long, default_value = "30")]
     template_interval: u64,
+
+    /// Source IP CIDR range (e.g. 10.0.0.0/8)
+    #[arg(long, default_value = "10.0.0.0/8")]
+    src_cidr: String,
+
+    /// Destination IP CIDR range (e.g. 192.168.0.0/16)
+    #[arg(long, default_value = "192.168.0.0/16")]
+    dst_cidr: String,
+
+    /// Comma-separated list of protocol numbers (e.g. 6,17 for TCP,UDP)
+    #[arg(long, default_value = "6,17")]
+    protocols: String,
+
+    /// Source port range (e.g. 1024-65535)
+    #[arg(long, default_value = "1024-65535")]
+    src_port_range: String,
+
+    /// Destination port range (e.g. 1-1024)
+    #[arg(long, default_value = "1-1024")]
+    dst_port_range: String,
 }
 
 // Static empty name for DataRecord fields
@@ -109,15 +169,60 @@ fn create_flow_record(
     let name = EMPTY_NAME.clone();
 
     DataRecord(vec![
-        (None, SourceIpv4Address.into(), name.clone(), FieldValue::Ipv4Address(src_ip)),
-        (None, DestinationIpv4Address.into(), name.clone(), FieldValue::Ipv4Address(dst_ip)),
-        (None, ProtocolIdentifier.into(), name.clone(), FieldValue::Unsigned8(protocol)),
-        (None, SourceTransportPort.into(), name.clone(), FieldValue::Unsigned16(src_port)),
-        (None, DestinationTransportPort.into(), name.clone(), FieldValue::Unsigned16(dst_port)),
-        (None, OctetDeltaCount.into(), name.clone(), FieldValue::Unsigned64(octets)),
-        (None, PacketDeltaCount.into(), name.clone(), FieldValue::Unsigned64(packets)),
-        (None, FlowStartMilliseconds.into(), name.clone(), FieldValue::DateTimeMilliseconds(flow_start)),
-        (None, FlowEndMilliseconds.into(), name, FieldValue::DateTimeMilliseconds(flow_end)),
+        (
+            None,
+            SourceIpv4Address.into(),
+            name.clone(),
+            FieldValue::Ipv4Address(src_ip),
+        ),
+        (
+            None,
+            DestinationIpv4Address.into(),
+            name.clone(),
+            FieldValue::Ipv4Address(dst_ip),
+        ),
+        (
+            None,
+            ProtocolIdentifier.into(),
+            name.clone(),
+            FieldValue::Unsigned8(protocol),
+        ),
+        (
+            None,
+            SourceTransportPort.into(),
+            name.clone(),
+            FieldValue::Unsigned16(src_port),
+        ),
+        (
+            None,
+            DestinationTransportPort.into(),
+            name.clone(),
+            FieldValue::Unsigned16(dst_port),
+        ),
+        (
+            None,
+            OctetDeltaCount.into(),
+            name.clone(),
+            FieldValue::Unsigned64(octets),
+        ),
+        (
+            None,
+            PacketDeltaCount.into(),
+            name.clone(),
+            FieldValue::Unsigned64(packets),
+        ),
+        (
+            None,
+            FlowStartMilliseconds.into(),
+            name.clone(),
+            FieldValue::DateTimeMilliseconds(flow_start),
+        ),
+        (
+            None,
+            FlowEndMilliseconds.into(),
+            name,
+            FieldValue::DateTimeMilliseconds(flow_end),
+        ),
     ])
 }
 
@@ -126,8 +231,18 @@ fn create_options_record(observation_domain_id: u32, sampling_interval: u32) -> 
     let name = EMPTY_NAME.clone();
 
     DataRecord(vec![
-        (None, ObservationDomainId.into(), name.clone(), FieldValue::Unsigned32(observation_domain_id)),
-        (None, SamplingPacketInterval.into(), name, FieldValue::Unsigned32(sampling_interval)),
+        (
+            None,
+            ObservationDomainId.into(),
+            name.clone(),
+            FieldValue::Unsigned32(observation_domain_id),
+        ),
+        (
+            None,
+            SamplingPacketInterval.into(),
+            name,
+            FieldValue::Unsigned32(sampling_interval),
+        ),
     ])
 }
 
@@ -137,6 +252,11 @@ struct IpfixGenerator {
     observation_domain_id: u32,
     sequence_number: u32,
     flows_per_packet: u16,
+    src_cidr: Ipv4Net,
+    dst_cidr: Ipv4Net,
+    protocols: Vec<u8>,
+    src_port_range: PortRange,
+    dst_port_range: PortRange,
 }
 
 impl IpfixGenerator {
@@ -144,12 +264,32 @@ impl IpfixGenerator {
         let socket = UdpSocket::bind("0.0.0.0:0")?;
         let target: SocketAddr = format!("{}:{}", args.host, args.port).parse().unwrap();
 
+        let src_cidr: Ipv4Net = args.src_cidr.parse().expect("invalid --src-cidr");
+        let dst_cidr: Ipv4Net = args.dst_cidr.parse().expect("invalid --dst-cidr");
+        let protocols: Vec<u8> = args
+            .protocols
+            .split(',')
+            .map(|s| s.trim().parse::<u8>().expect("invalid protocol number"))
+            .collect();
+        if protocols.is_empty() {
+            panic!("--protocols must contain at least one protocol number");
+        }
+        let src_port_range =
+            PortRange::parse(&args.src_port_range).expect("invalid --src-port-range");
+        let dst_port_range =
+            PortRange::parse(&args.dst_port_range).expect("invalid --dst-port-range");
+
         Ok(Self {
             socket,
             target,
             observation_domain_id: args.observation_domain_id,
             sequence_number: 0,
             flows_per_packet: args.flows_per_packet,
+            src_cidr,
+            dst_cidr,
+            protocols,
+            src_port_range,
+            dst_port_range,
         })
     }
 
@@ -213,29 +353,21 @@ impl IpfixGenerator {
 
         let records: Vec<Record> = (0..self.flows_per_packet)
             .map(|_| {
-                let src_ip = Ipv4Addr::new(
-                    10,
-                    rng.random_range(0..255),
-                    rng.random_range(0..255),
-                    rng.random_range(1..255),
-                );
-                let dst_ip = Ipv4Addr::new(
-                    192,
-                    168,
-                    rng.random_range(0..255),
-                    rng.random_range(1..255),
-                );
-                let protocol: u8 = if rng.random_bool(0.7) { 6 } else { 17 };
-                let src_port: u16 = rng.random_range(1024..65535);
-                let dst_port: u16 = rng.random_range(1..1024);
+                let src_ip = random_ip_in_cidr(&self.src_cidr, &mut rng);
+                let dst_ip = random_ip_in_cidr(&self.dst_cidr, &mut rng);
+                let protocol = self.protocols[rng.random_range(0..self.protocols.len())];
+                let src_port = self.src_port_range.random_port(&mut rng);
+                let dst_port = self.dst_port_range.random_port(&mut rng);
                 let octets: u64 = rng.random_range(64..65536);
                 let packets: u64 = rng.random_range(1..100);
 
-                let flow_start = now - chrono::Duration::milliseconds(rng.random_range(1000..60000));
+                let flow_start =
+                    now - chrono::Duration::milliseconds(rng.random_range(1000..60000));
                 let flow_end = now - chrono::Duration::milliseconds(rng.random_range(0..1000));
 
                 Record::Data(create_flow_record(
-                    src_ip, dst_ip, protocol, src_port, dst_port, octets, packets, flow_start, flow_end,
+                    src_ip, dst_ip, protocol, src_port, dst_port, octets, packets, flow_start,
+                    flow_end,
                 ))
             })
             .collect();
@@ -255,7 +387,9 @@ impl IpfixGenerator {
             }],
         };
 
-        self.sequence_number = self.sequence_number.wrapping_add(self.flows_per_packet as u32);
+        self.sequence_number = self
+            .sequence_number
+            .wrapping_add(self.flows_per_packet as u32);
         self.send_packet(&packet)
     }
 }
@@ -282,6 +416,11 @@ fn main() -> std::io::Result<()> {
             args.count.to_string()
         }
     );
+    eprintln!("  Source CIDR: {}", args.src_cidr);
+    eprintln!("  Destination CIDR: {}", args.dst_cidr);
+    eprintln!("  Protocols: {}", args.protocols);
+    eprintln!("  Source port range: {}", args.src_port_range);
+    eprintln!("  Destination port range: {}", args.dst_port_range);
     eprintln!();
 
     let mut generator = IpfixGenerator::new(&args)?;
