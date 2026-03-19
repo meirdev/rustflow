@@ -1,6 +1,6 @@
 [package]
 name = "rustflow_collector"
-version = "0.4.0"
+version.workspace = true
 edition = "2024"
 
 [dependencies]
@@ -19,3 +19,5 @@ serde = "1.0"
 prefix-trie = "0.8.1"
 ipnet = "2"
 duration-str = "0.11"
+maxminddb = "0.27"
+ipnetwork = "0.21"

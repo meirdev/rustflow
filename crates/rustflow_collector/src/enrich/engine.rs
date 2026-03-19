@@ -5,10 +5,11 @@ use std::sync::{Arc, RwLock};
 use std::thread;
 
 use ipnet::{Ipv4Net, Ipv6Net};
+use maxminddb::PathElement;
 use prefix_trie::PrefixMap;
 use rustflow_core::common::common_flow::CommonFlow;
 
-use crate::enrich::config::{EnrichmentConfig, LookupType};
+use crate::enrich::config::{EnrichmentConfig, FieldMapping, LookupType};
 
 /// Column names that are recognized as prefix/network columns in CSV files
 const PREFIX_COLUMN_NAMES: &[&str] = &["prefix", "network", "cidr"];
@@ -46,7 +47,8 @@ impl PrefixEnrichment {
     }
 
     pub fn load(&self) -> Result<usize, EnrichmentError> {
-        let new_tries = Self::load_from_csv(&self.config.source_file)?;
+        let new_tries =
+            Self::load_from_file(&self.config.source_file, &self.config.field_mappings)?;
         let count = new_tries.ipv4.len() + new_tries.ipv6.len();
 
         let mut tries = self
@@ -56,6 +58,20 @@ impl PrefixEnrichment {
         *tries = new_tries;
 
         Ok(count)
+    }
+
+    fn load_from_file(
+        path: &Path,
+        field_mappings: &[FieldMapping],
+    ) -> Result<PrefixTries, EnrichmentError> {
+        match path.extension().and_then(|e| e.to_str()) {
+            Some("mmdb") => Self::load_from_mmdb(path, field_mappings),
+            Some("csv") => Self::load_from_csv(path),
+            Some(ext) => Err(EnrichmentError::UnsupportedFormat(ext.to_string())),
+            None => Err(EnrichmentError::UnsupportedFormat(
+                "no extension".to_string(),
+            )),
+        }
     }
 
     fn load_from_csv(path: &Path) -> Result<PrefixTries, EnrichmentError> {
@@ -109,6 +125,62 @@ impl PrefixEnrichment {
         Ok(tries)
     }
 
+    fn load_from_mmdb(
+        path: &Path,
+        field_mappings: &[FieldMapping],
+    ) -> Result<PrefixTries, EnrichmentError> {
+        let reader = maxminddb::Reader::open_readfile(path)?;
+        let mut tries = PrefixTries::new();
+
+        let paths: Vec<(&FieldMapping, Vec<PathElement<'_>>)> = field_mappings
+            .iter()
+            .map(|m| {
+                let path = m.source_column.split('.').map(PathElement::Key).collect();
+                (m, path)
+            })
+            .collect();
+
+        for result in reader.networks(Default::default())? {
+            let lookup = result?;
+            if !lookup.has_data() {
+                continue;
+            }
+
+            let mut fields = HashMap::new();
+            for (mapping, path) in &paths {
+                if let Ok(Some(value)) = lookup.decode_path::<String>(path) {
+                    if !value.is_empty() {
+                        fields.insert(mapping.source_column.clone(), value);
+                    }
+                }
+            }
+
+            if fields.is_empty() {
+                continue;
+            }
+
+            let data = PrefixData { fields };
+            let network = lookup.network()?;
+
+            match network {
+                ipnetwork::IpNetwork::V4(v4) => {
+                    let net = Ipv4Net::new(v4.ip(), v4.prefix()).map_err(|e| {
+                        EnrichmentError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+                    })?;
+                    tries.ipv4.insert(net, data);
+                }
+                ipnetwork::IpNetwork::V6(v6) => {
+                    let net = Ipv6Net::new(v6.ip(), v6.prefix()).map_err(|e| {
+                        EnrichmentError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+                    })?;
+                    tries.ipv6.insert(net, data);
+                }
+            }
+        }
+
+        Ok(tries)
+    }
+
     fn lookup(&self, addr: &IpAddr) -> Option<PrefixData> {
         let tries = self.tries.read().ok()?;
 
@@ -150,12 +222,13 @@ impl PrefixEnrichment {
         if let Some(interval) = self.config.reload_interval {
             let tries = Arc::clone(&self.tries);
             let path = self.config.source_file.clone();
+            let field_mappings = self.config.field_mappings.clone();
 
             thread::spawn(move || {
                 loop {
                     thread::sleep(interval);
 
-                    match Self::load_from_csv(&path) {
+                    match Self::load_from_file(&path, &field_mappings) {
                         Ok(new_tries) => {
                             let count = new_tries.ipv4.len() + new_tries.ipv6.len();
                             if let Ok(mut guard) = tries.write() {
@@ -231,6 +304,8 @@ impl Default for EnrichmentEngine {
 pub enum EnrichmentError {
     Csv(csv::Error),
     Io(std::io::Error),
+    MaxmindDb(maxminddb::MaxMindDbError),
+    UnsupportedFormat(String),
     MissingPrefix,
     LockPoisoned,
 }
@@ -240,6 +315,14 @@ impl std::fmt::Display for EnrichmentError {
         match self {
             Self::Csv(e) => write!(f, "CSV error: {}", e),
             Self::Io(e) => write!(f, "IO error: {}", e),
+            Self::MaxmindDb(e) => write!(f, "MaxMind DB error: {}", e),
+            Self::UnsupportedFormat(ext) => {
+                write!(
+                    f,
+                    "Unsupported file format: '{}'. Supported: csv, mmdb",
+                    ext
+                )
+            }
             Self::MissingPrefix => write!(f, "Missing prefix column in CSV"),
             Self::LockPoisoned => write!(f, "Lock poisoned"),
         }
@@ -257,5 +340,11 @@ impl From<csv::Error> for EnrichmentError {
 impl From<std::io::Error> for EnrichmentError {
     fn from(e: std::io::Error) -> Self {
         Self::Io(e)
+    }
+}
+
+impl From<maxminddb::MaxMindDbError> for EnrichmentError {
+    fn from(e: maxminddb::MaxMindDbError) -> Self {
+        Self::MaxmindDb(e)
     }
 }

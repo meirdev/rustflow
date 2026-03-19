@@ -611,6 +611,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d98f6fed1fde3f8c21bc40a1abb88dd75e67924f9cffc3ef95607bad8017f8e2"
 
 [[package]]
+name = "ipnetwork"
+version = "0.21.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf370abdafd54d13e54a620e8c3e1145f28e46cc9d704bc6d94414559df41763"
+
+[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -690,6 +696,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baee0bbc17ce759db233beb01648088061bf678383130602a298e6998eedb2d8"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "maxminddb"
+version = "0.27.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76371bd37ce742f8954daabd0fde7f1594ee43ac2200e20c003ba5c3d65e2192"
+dependencies = [
+ "ipnetwork",
+ "log",
+ "memchr",
+ "serde",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -1110,7 +1129,7 @@ checksum = "3e75f6a532d0fd9f7f13144f392b6ad56a32696bfcd9c78f797f16bbb6f072d6"
 
 [[package]]
 name = "rustflow"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "chrono",
  "log",
@@ -1122,7 +1141,7 @@ dependencies = [
 
 [[package]]
 name = "rustflow_collector"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "chrono",
  "clap",
@@ -1130,6 +1149,8 @@ dependencies = [
  "csv",
  "duration-str",
  "ipnet",
+ "ipnetwork",
+ "maxminddb",
  "pcap-file",
  "prefix-trie",
  "prometheus",
@@ -1143,7 +1164,7 @@ dependencies = [
 
 [[package]]
 name = "rustflow_core"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "byteorder",
  "bytes",
@@ -1164,7 +1185,7 @@ dependencies = [
 
 [[package]]
 name = "rustflow_exporter"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1179,7 +1200,7 @@ dependencies = [
 
 [[package]]
 name = "rustflow_generator"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "chrono",
  "clap",
