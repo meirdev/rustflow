@@ -39,3 +39,9 @@ jobs:
         if: github.ref_type == 'tag'
         with:
           files: target/${{ matrix.BUILD_TARGET }}/release/rustflow_exporter
+
+      - name: Update binaries to release (generator)
+        uses: softprops/action-gh-release@v2
+        if: github.ref_type == 'tag'
+        with:
+          files: target/${{ matrix.BUILD_TARGET }}/release/rustflow_generator
