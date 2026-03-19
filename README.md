@@ -77,17 +77,21 @@ rustflow_collector -t netflow -p 9995 -f common -o flows.json
 
 ### Flow Enrichment
 
-Enrich flows with additional data from CSV lookup tables using prefix matching:
+Enrich flows with additional data using prefix matching. Supports CSV files and MaxMind DB (`.mmdb`) files:
 
 ```bash
-# Enrich destination addresses with ASN and organization info from asn.csv
+# Enrich destination addresses with ASN and organization info from a CSV file
 rustflow_collector -t netflow -p 9995 -f common \
   --enrich "type=prefix_lookup,source=asn.csv,key=dst_addr,fields=asn:dst_asn;org:dst_org"
+
+# Enrich with GeoIP data from a MaxMind DB file (use dotted paths for nested fields)
+rustflow_collector -t netflow -p 9995 -f common \
+  --enrich "type=prefix_lookup,source=GeoLite2-City.mmdb,key=src_addr,fields=country.iso_code:src_country;city.names.en:src_city"
 
 # Multiple enrichments with auto-reload
 rustflow_collector -t netflow -p 9995 -f common \
   --enrich "type=prefix_lookup,source=asn.csv,key=dst_addr,fields=asn:dst_asn;org:dst_org,reload=30s" \
-  --enrich "type=prefix_lookup,source=country.csv,key=dst_addr,fields=country_code:dst_country_code;country_name:dst_country_name,reload=30s"
+  --enrich "type=prefix_lookup,source=GeoLite2-Country.mmdb,key=dst_addr,fields=country.iso_code:dst_country,reload=1h"
 ```
 
 **Enrichment CSV format:**
@@ -98,14 +102,16 @@ prefix,asn,org
 1.0.16.0/24,2519,VECTANT ARTERIA Networks Corporation
 ```
 
+**MaxMind DB fields:** use dotted paths to navigate the record tree (e.g., `country.iso_code`, `city.names.en`, `location.latitude`). The source file format is detected by extension (`.mmdb` or `.csv`).
+
 **Enrichment parameters:**
 
 | Parameter | Description |
 |-----------|-------------|
 | `type` | Lookup type (`prefix_lookup`) |
-| `source` | Path to CSV file |
+| `source` | Path to CSV or MaxMind DB (`.mmdb`) file |
 | `key` | Flow field to match (`src_addr`, `dst_addr`, `next_hop`, `sampler_address`) |
-| `fields` | Field mappings as `csv_column:output_name` separated by `;` |
+| `fields` | Field mappings as `source:output_name` separated by `;`. For CSV, source is the column name. For MMDB, source is a dotted path (e.g., `country.iso_code`) |
 | `reload` | Optional auto-reload interval (e.g., `10s`, `1m`, `1h`) |
 
 ### Custom IE Mappings
