@@ -106,13 +106,13 @@ prefix,asn,org
 
 **Enrichment parameters:**
 
-| Parameter | Description |
-|-----------|-------------|
-| `type` | Lookup type (`prefix_lookup`) |
-| `source` | Path to CSV or MaxMind DB (`.mmdb`) file |
-| `key` | Flow field to match (`src_addr`, `dst_addr`, `next_hop`, `sampler_address`) |
-| `fields` | Field mappings as `source:output_name` separated by `;`. For CSV, source is the column name. For MMDB, source is a dotted path (e.g., `country.iso_code`) |
-| `reload` | Optional auto-reload interval (e.g., `10s`, `1m`, `1h`) |
+| Parameter | Description                                                                                                                                               |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `type`    | Lookup type (`prefix_lookup`)                                                                                                                             |
+| `source`  | Path to CSV or MaxMind DB (`.mmdb`) file                                                                                                                  |
+| `key`     | Flow field to match (`src_addr`, `dst_addr`, `next_hop`, `sampler_address`)                                                                               |
+| `fields`  | Field mappings as `source:output_name` separated by `;`. For CSV, source is the column name. For MMDB, source is a dotted path (e.g., `country.iso_code`) |
+| `reload`  | Optional auto-reload interval (e.g., `10s`, `1m`, `1h`)                                                                                                   |
 
 ### Custom IE Mappings
 
@@ -153,17 +153,17 @@ rustflow_exporter -H 127.0.0.1 -p 4739
 
 ### Options
 
-| Option | Description | Default |
-|--------|-------------|---------|
-| `-i, --interface` | Network interface to capture from | `lo` |
-| `-H, --collector-host` | Collector host address | `127.0.0.1` |
-| `-p, --collector-port` | Collector port | `4739` |
-| `--observation-domain-id` | Observation domain ID | `1` |
-| `--active-timeout` | Active flow timeout in seconds | `60` |
-| `--inactive-timeout` | Inactive flow timeout in seconds | `15` |
-| `--template-refresh-rate` | Template refresh rate in seconds | `300` |
-| `--sampling-packet-interval` | Sampling packet interval (1 = all packets) | `1` |
-| `--promiscuous` | Enable promiscuous mode | disabled |
+| Option                       | Description                                | Default     |
+| ---------------------------- | ------------------------------------------ | ----------- |
+| `-i, --interface`            | Network interface to capture from          | `lo`        |
+| `-H, --collector-host`       | Collector host address                     | `127.0.0.1` |
+| `-p, --collector-port`       | Collector port                             | `4739`      |
+| `--observation-domain-id`    | Observation domain ID                      | `1`         |
+| `--active-timeout`           | Active flow timeout in seconds             | `60`        |
+| `--inactive-timeout`         | Inactive flow timeout in seconds           | `15`        |
+| `--template-refresh-rate`    | Template refresh rate in seconds           | `300`       |
+| `--sampling-packet-interval` | Sampling packet interval (1 = all packets) | `1`         |
+| `--promiscuous`              | Enable promiscuous mode                    | disabled    |
 
 ### Examples
 
@@ -183,4 +183,63 @@ RUST_LOG=debug rustflow_exporter -i eth0 -H 10.0.0.1 -p 4739
 
 ```
 rustflow_exporter --help
+```
+
+## Generator Usage
+
+The `rustflow_generator` binary generates synthetic IPFIX flow data for testing collectors under load.
+
+### Basic Usage
+
+```bash
+# Send to a specific collector
+rustflow_generator -H 192.168.1.100 -p 9995
+
+# Generate at 5000 packets per second with 20 flows per packet
+rustflow_generator -H 10.0.0.1 -p 4739 -r 5000 -f 20
+
+# Send exactly 1000 packets then stop
+rustflow_generator -H 10.0.0.1 -p 4739 -n 1000
+```
+
+### Customizing Generated Flows
+
+```bash
+# Specify source and destination CIDR ranges
+rustflow_generator -H 10.0.0.1 -p 4739 \
+  --src_cidr 172.16.0.0/12 --dst_cidr 10.0.0.0/8
+
+# Generate only TCP flows on well-known destination ports
+rustflow_generator -H 10.0.0.1 -p 4739 \
+  --protocols 6 --dst_port_range 80-443
+
+# Generate TCP and UDP flows with custom source port range
+rustflow_generator -H 10.0.0.1 -p 4739 \
+  --protocols 6,17 --src_port_range 49152-65535
+
+# Unlimited rate (as fast as possible)
+rustflow_generator -H 10.0.0.1 -p 4739 -r 0
+```
+
+### Options
+
+| Option                    | Description                                      | Default          |
+| ------------------------- | ------------------------------------------------ | ---------------- |
+| `-H, --host`              | Collector host address                           | `127.0.0.1`      |
+| `-p, --port`              | Collector port                                   | `4739`           |
+| `-r, --rate`              | Packets per second (0 = unlimited)               | `1000`           |
+| `-f, --flows_per_packet`  | Number of flow records per packet                | `10`             |
+| `-n, --count`             | Total packets to send (0 = infinite)             | `0`              |
+| `--observation_domain_id` | Observation domain ID                            | `1`              |
+| `--template_interval`     | Template refresh interval in seconds             | `30`             |
+| `--src_cidr`              | Source IP address range (CIDR)                   | `10.0.0.0/8`     |
+| `--dst_cidr`              | Destination IP address range (CIDR)              | `192.168.0.0/16` |
+| `--protocols`             | Comma-separated protocol numbers (6=TCP, 17=UDP) | `6,17`           |
+| `--src_port_range`        | Source port range                                | `1024-65535`     |
+| `--dst_port_range`        | Destination port range                           | `1-1024`         |
+
+### All Options
+
+```
+rustflow_generator --help
 ```
