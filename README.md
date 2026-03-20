@@ -230,13 +230,13 @@ rustflow_generator -H 10.0.0.1 -p 4739 -r 0
 | `-r, --rate`              | Packets per second (0 = unlimited)               | `1000`           |
 | `-f, --flows_per_packet`  | Number of flow records per packet                | `10`             |
 | `-n, --count`             | Total packets to send (0 = infinite)             | `0`              |
-| `--observation_domain_id` | Observation domain ID                            | `1`              |
-| `--template_interval`     | Template refresh interval in seconds             | `30`             |
-| `--src_cidr`              | Source IP address range (CIDR)                   | `10.0.0.0/8`     |
-| `--dst_cidr`              | Destination IP address range (CIDR)              | `192.168.0.0/16` |
+| `--observation-domain-id` | Observation domain ID                            | `1`              |
+| `--template-interval`     | Template refresh interval in seconds             | `30`             |
+| `--src-cidr`              | Source IP address range (CIDR)                   | `10.0.0.0/8`     |
+| `--dst-cidr`              | Destination IP address range (CIDR)              | `192.168.0.0/16` |
 | `--protocols`             | Comma-separated protocol numbers (6=TCP, 17=UDP) | `6,17`           |
-| `--src_port_range`        | Source port range                                | `1024-65535`     |
-| `--dst_port_range`        | Destination port range                           | `1-1024`         |
+| `--src-port-range`        | Source port range                                | `1024-65535`     |
+| `--dst-port-range`        | Destination port range                           | `1-1024`         |
 
 ### All Options
 
