@@ -2,6 +2,8 @@
 name = "rustflow_core"
 version.workspace = true
 edition = "2024"
+description = "Core types and parsers for NetFlow, IPFIX, and sFlow protocols"
+license = "BSD-3-Clause"
 
 [dependencies]
 bytes = "1"
