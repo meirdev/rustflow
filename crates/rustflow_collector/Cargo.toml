@@ -4,7 +4,7 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
-rustflow = { path = "../rustflow", package = "rustflow-lib" }
+rustflow = { path = "../rustflow", package = "rustflow_lib" }
 rustflow_core = { path = "../rustflow_core" }
 clap = { version = "4.5.60", features = ["derive"] }
 crossbeam = { version = "0.8.4", features = ["crossbeam-channel"] }

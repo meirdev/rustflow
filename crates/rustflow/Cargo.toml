@@ -1,5 +1,5 @@
 [package]
-name = "rustflow-lib"
+name = "rustflow_lib"
 version.workspace = true
 edition = "2024"
 description = "High-performance flow collector library for NetFlow, IPFIX, and sFlow"
@@ -10,7 +10,7 @@ default = []
 tokio = ["dep:tokio"]
 
 [dependencies]
-rustflow_core = { path = "../rustflow_core", version = "0.5.0" }
+rustflow_core = { path = "../rustflow_core", version = "0.6.0" }
 chrono = "0.4"
 log = "0.4"
 rustc-hash = "2.1"
