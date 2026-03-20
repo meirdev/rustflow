@@ -1,5 +1,5 @@
 [package]
-name = "rustflow"
+name = "rustflow-lib"
 version.workspace = true
 edition = "2024"
 description = "High-performance flow collector library for NetFlow, IPFIX, and sFlow"

@@ -23,8 +23,8 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-      - name: Publish rustflow
-        run: cargo publish -p rustflow
+      - name: Publish rustflow-lib
+        run: cargo publish -p rustflow-lib
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
