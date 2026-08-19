@@ -4,9 +4,8 @@ mod output;
 mod parquet_sink;
 
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 
 use chrono::Utc;
 use clap::{Parser, ValueEnum};
