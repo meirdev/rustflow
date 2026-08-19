@@ -610,8 +610,6 @@ fn main() {
     // buffer.
     OutputWriter::spawn_flusher(&output);
 
-    // Finalize the output on Ctrl-C / SIGTERM: a parquet file is unreadable
-    // until its footer is written.
     {
         let output = Arc::clone(&output);
         if let Err(e) = ctrlc::set_handler(move || {
