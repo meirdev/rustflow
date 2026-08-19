@@ -1,5 +1,12 @@
 # RustFlow
 
+<div align="center">
+  |<img src="logo-white-bg.png" width="500" />
+</div>
+
+&nbsp;
+&nbsp;
+
 **RustFlow** is a high-performance, modern flow collector written in Rust.
 
 ## Comparison
