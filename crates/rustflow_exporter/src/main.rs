@@ -16,7 +16,7 @@ use flow::FlowCache;
 use log::{error, info, warn};
 
 #[derive(Parser, Debug, Clone)]
-#[command(name = "rustflow_exporter")]
+#[command(name = "rustflow_exporter", version)]
 #[command(about = "IPFIX exporter for network flow data", long_about = None)]
 pub struct Args {
     /// Network interface to capture from
