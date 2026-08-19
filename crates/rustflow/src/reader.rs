@@ -46,6 +46,17 @@ pub enum SflowReadResult {
     Timeout,
 }
 
+/// Transient `recv` outcomes that mean "no datagram this time, try again":
+/// a read timeout / non-blocking miss, or a syscall interrupted by a signal
+/// (EINTR, e.g. SIGTERM arriving during shutdown). None of these is a
+/// socket error worth reporting.
+fn is_retryable(e: &io::Error) -> bool {
+    matches!(
+        e.kind(),
+        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::Interrupted
+    )
+}
+
 /// A reader for NetFlow (v5, v9) and IPFIX data.
 pub struct NetflowReader {
     socket: UdpSocket,
@@ -104,10 +115,7 @@ impl NetflowReader {
         // Read from socket
         let (len, src_addr) = match self.socket.recv_from(&mut self.buf) {
             Ok(result) => result,
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                return Ok(NetflowReadResult::Timeout);
-            }
-            Err(e) if e.kind() == io::ErrorKind::TimedOut => return Ok(NetflowReadResult::Timeout),
+            Err(e) if is_retryable(&e) => return Ok(NetflowReadResult::Timeout),
             Err(e) => return Err(e),
         };
 
@@ -138,8 +146,7 @@ impl NetflowReader {
         // Read from socket
         let (len, src_addr) = match self.socket.recv_from(&mut self.buf) {
             Ok(result) => result,
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(None),
-            Err(e) if e.kind() == io::ErrorKind::TimedOut => return Ok(None),
+            Err(e) if is_retryable(&e) => return Ok(None),
             Err(e) => return Err(e),
         };
 
@@ -215,8 +222,7 @@ impl SflowReader {
         // Read from socket
         let (len, src_addr) = match self.socket.recv_from(&mut self.buf) {
             Ok(result) => result,
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(SflowReadResult::Timeout),
-            Err(e) if e.kind() == io::ErrorKind::TimedOut => return Ok(SflowReadResult::Timeout),
+            Err(e) if is_retryable(&e) => return Ok(SflowReadResult::Timeout),
             Err(e) => return Err(e),
         };
 
@@ -252,8 +258,7 @@ impl SflowReader {
         // Read from socket
         let (len, _src_addr) = match self.socket.recv_from(&mut self.buf) {
             Ok(result) => result,
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(None),
-            Err(e) if e.kind() == io::ErrorKind::TimedOut => return Ok(None),
+            Err(e) if is_retryable(&e) => return Ok(None),
             Err(e) => return Err(e),
         };
 
