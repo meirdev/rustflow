@@ -72,16 +72,6 @@ rustup target add x86_64-unknown-linux-musl
 cargo build --release --target x86_64-unknown-linux-musl
 ```
 
-### As a library
-
-The parser and reader crates are on crates.io for embedding in your own programs:
-
-```toml
-[dependencies]
-rustflow_lib = "0.7"    # readers, processors, pcap helpers
-rustflow_core = "0.7"   # protocol parsers and the common flow model
-```
-
 ## Docs
 
 Links to relevant RFCs and specifications for flow protocols.
