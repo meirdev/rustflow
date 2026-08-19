@@ -1,6 +1,7 @@
 mod enrich;
 mod metrics;
 mod output;
+mod parquet_sink;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -8,7 +9,7 @@ use std::sync::Arc;
 use chrono::Utc;
 use clap::{Parser, ValueEnum};
 use enrich::{EnrichmentEngine, parse_enrich_arg};
-use output::OutputWriter;
+use output::{MAX_PARTITION_LEVEL, OutputOptions, OutputWriter};
 use rustflow::pcap::{NetflowPcapReader, SflowPcapReader};
 use rustflow::{
     IERegistry, NetflowPacket, NetflowProcessor, NetflowReadResult, NetflowReader, SflowPacket,
@@ -43,13 +44,38 @@ struct Cli {
     #[arg(short, long, value_enum, default_value = "raw")]
     format: OutputFormat,
 
-    /// Serialization format for output
-    #[arg(short, long, value_enum, default_value = "json")]
+    /// Serialization format for output (parquet is Snappy-compressed and
+    /// requires `--format common` and `--output`)
+    #[arg(short, long, value_enum, default_value = "ndjson")]
     serialization: SerializationFormat,
 
-    /// Output file path (stdout if not specified)
+    /// Output path (stdout if not specified). Without `--interval` this is a
+    /// single file; with `--interval` it is the root directory of the
+    /// rotated output tree.
     #[arg(short, long)]
     output: Option<String>,
+
+    /// Start a new output file every interval (e.g. `10m`, `1h`).
+    /// Requires `--output`, which then names a directory instead of a file.
+    #[arg(short = 'i', long, value_name = "DURATION", requires = "output")]
+    interval: Option<String>,
+
+    /// Directory partitioning of the output tree: 0 = flat, 1 = `%Y/%m/%d`,
+    /// 2 = `%Y/%m/%d/%H`, 3 = `%Y/%m/%d/%H` plus a 5 minute bucket.
+    /// Requires `--interval`.
+    #[arg(
+        short = 'l',
+        long,
+        default_value = "0",
+        value_parser = clap::value_parser!(u8).range(0..=MAX_PARTITION_LEVEL as i64),
+        requires = "interval"
+    )]
+    level: u8,
+
+    /// File name prefix inside the output tree, e.g. `flows` produces
+    /// `flows-20240102T150500Z.parquet`. Requires `--interval`.
+    #[arg(long, default_value = "flows", requires = "interval")]
+    prefix: String,
 
     /// Host address for Prometheus metrics HTTP server
     #[arg(long, default_value = "0.0.0.0")]
@@ -88,8 +114,11 @@ pub enum OutputFormat {
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum SerializationFormat {
-    Json,
+    /// Newline-delimited JSON, one object per line
+    Ndjson,
     Csv,
+    /// Snappy-compressed Apache Parquet
+    Parquet,
 }
 
 fn read_netflow_pcap(
@@ -429,8 +458,22 @@ fn read_sflow_socket(
     }
 }
 
+/// Reject serialization/format combinations that cannot be produced.
+fn validate_cli(cli: &Cli) {
+    if cli.serialization != SerializationFormat::Ndjson && cli.format != OutputFormat::Common {
+        eprintln!("Error: --serialization csv/parquet requires --format common");
+        std::process::exit(1);
+    }
+    if cli.serialization == SerializationFormat::Parquet && cli.output.is_none() {
+        eprintln!("Error: --serialization parquet requires --output <FILE>");
+        std::process::exit(1);
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
+
+    validate_cli(&cli);
 
     let mut ie_registry = IERegistry::new_with_iana_elements();
     if let Some(ref path) = cli.ie_mapping {
@@ -465,14 +508,36 @@ fn main() {
     }
     let enrichment_engine = Arc::new(enrichment_engine);
 
+    let interval = cli.interval.as_deref().map(|value| {
+        duration_str::parse(value.trim()).unwrap_or_else(|e| {
+            eprintln!("Invalid --interval value '{}': {}", value, e);
+            std::process::exit(1);
+        })
+    });
+
     let output = Arc::new(
-        OutputWriter::new(
-            cli.output.as_deref(),
-            cli.serialization,
-            enrichment_engine.output_fields(),
-        )
+        OutputWriter::new(OutputOptions {
+            path: cli.output.as_deref(),
+            serialization: cli.serialization,
+            enriched_fields: enrichment_engine.output_fields(),
+            interval,
+            level: cli.level,
+            prefix: &cli.prefix,
+        })
         .expect("Failed to create output writer"),
     );
+
+    // Finalize the output on Ctrl-C / SIGTERM: a parquet file is unreadable
+    // until its footer is written.
+    {
+        let output = Arc::clone(&output);
+        if let Err(e) = ctrlc::set_handler(move || {
+            output.finish();
+            std::process::exit(0);
+        }) {
+            eprintln!("Failed to install shutdown handler: {}", e);
+        }
+    }
 
     let timeout = std::time::Duration::from_secs(cli.template_timeout);
 
