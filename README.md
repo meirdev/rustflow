@@ -31,6 +31,57 @@
 - NetFlow v5
 - sFlow v5
 
+## Installation
+
+### Prebuilt binaries (Linux x86_64)
+
+Every release ships statically linked (musl) binaries with no runtime
+dependencies, on the [releases page](https://github.com/meirdev/rustflow/releases):
+`rustflow_collector`, `rustflow_exporter`, and `rustflow_generator`.
+
+```bash
+VERSION=0.7.0
+curl -fsSL -o rustflow_collector \
+  "https://github.com/meirdev/rustflow/releases/download/v${VERSION}/rustflow_collector"
+chmod +x rustflow_collector
+sudo install -m 755 rustflow_collector /usr/local/bin/
+
+rustflow_collector --version
+```
+
+Replace `rustflow_collector` with `rustflow_exporter` or `rustflow_generator` for the
+other tools.
+
+### From source
+
+Requires a recent stable [Rust toolchain](https://rustup.rs); there are no system
+library dependencies (pcap files are parsed in pure Rust, and the exporter uses raw
+sockets directly).
+
+```bash
+git clone https://github.com/meirdev/rustflow.git
+cd rustflow
+cargo build --release
+# binaries are in target/release/
+```
+
+For a fully static Linux binary (the same as the release artifacts):
+
+```bash
+rustup target add x86_64-unknown-linux-musl
+cargo build --release --target x86_64-unknown-linux-musl
+```
+
+### As a library
+
+The parser and reader crates are on crates.io for embedding in your own programs:
+
+```toml
+[dependencies]
+rustflow_lib = "0.7"    # readers, processors, pcap helpers
+rustflow_core = "0.7"   # protocol parsers and the common flow model
+```
+
 ## Docs
 
 Links to relevant RFCs and specifications for flow protocols.
@@ -191,6 +242,45 @@ rustflow_collector -t netflow -p 9995 --metrics-host 127.0.0.1 --metrics-port 91
 ```
 rustflow_collector --help
 ```
+
+### Running as a Service (systemd)
+
+A hardened unit file and an environment template are in
+[`contrib/systemd/`](contrib/systemd/). The collector runs as an unprivileged
+`rustflow` user, writes to `/var/lib/rustflow`, and gets 30 seconds on stop to
+drain and finalize its output file.
+
+```bash
+# Binary (see Installation), service user, and config
+sudo install -m 755 rustflow_collector /usr/local/bin/
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin rustflow
+sudo install -d -m 755 /etc/rustflow
+sudo install -m 644 contrib/systemd/collector.env /etc/rustflow/collector.env
+sudo install -m 644 contrib/systemd/rustflow-collector.service /etc/systemd/system/
+
+# Edit the arguments (port, format, output tree, enrichment...)
+sudoedit /etc/rustflow/collector.env
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now rustflow-collector
+systemctl status rustflow-collector
+journalctl -u rustflow-collector -f
+```
+
+After changing `/etc/rustflow/collector.env`, `sudo systemctl restart rustflow-collector`
+picks up the new arguments.
+
+For high flow rates, let the kernel queue bursts instead of dropping them
+(`net.core.rmem_default` is what the collector's socket gets):
+
+```bash
+# /etc/sysctl.d/90-rustflow.conf
+net.core.rmem_max = 33554432
+net.core.rmem_default = 33554432
+```
+
+Ports below 1024 need either a port ≥ 1024 (recommended, e.g. 9995 / 6343) or
+`AmbientCapabilities=CAP_NET_BIND_SERVICE` added to the unit's `[Service]` section.
 
 ## Exporter Usage
 
