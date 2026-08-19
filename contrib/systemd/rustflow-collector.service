@@ -1,0 +1,54 @@
+[Unit]
+Description=RustFlow NetFlow/IPFIX/sFlow collector
+Documentation=https://github.com/meirdev/rustflow
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rustflow
+Group=rustflow
+
+# Arguments live in /etc/rustflow/collector.env so this unit can stay
+# untouched across upgrades. See contrib/systemd/collector.env for a template.
+EnvironmentFile=/etc/rustflow/collector.env
+ExecStart=/usr/local/bin/rustflow_collector $RUSTFLOW_ARGS
+
+# Graceful shutdown: on SIGTERM the collector stops reading, writes out every
+# flow it has already decoded, and finalizes the output file (a Parquet file
+# is unreadable without its footer). Give it time to drain before SIGKILL.
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=30
+
+Restart=on-failure
+RestartSec=2s
+
+# Flow collectors saturate the UDP receive path; let the kernel queue deep
+# bursts rather than drop them. Pair with net.core.rmem_max in sysctl.
+LimitNOFILE=65536
+
+# Output directory (created and owned by the service user).
+StateDirectory=rustflow
+StateDirectoryMode=0750
+
+# Sandboxing. The collector needs only the network and its state directory.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+
+[Install]
+WantedBy=multi-user.target
