@@ -5,7 +5,7 @@
 //! ## Quick Start (Sync)
 //!
 //! ```no_run
-//! use rustflow::{NetflowReader, SflowReader};
+//! use rustflow_lib::{NetflowReader, SflowReader};
 //!
 //! // Read NetFlow/IPFIX data
 //! let reader = NetflowReader::bind("0.0.0.0:9995").unwrap();
@@ -25,7 +25,7 @@
 //! ```no_run
 //! # #[cfg(feature = "tokio")]
 //! # async fn example() {
-//! use rustflow::tokio::{NetflowReader, SflowReader};
+//! use rustflow_lib::tokio::{NetflowReader, SflowReader};
 //!
 //! let mut reader = NetflowReader::bind("0.0.0.0:9995").await.unwrap();
 //! loop {

@@ -7,7 +7,9 @@
 &nbsp;
 &nbsp;
 
-**RustFlow** is a high-performance, modern flow collector written in Rust.
+<div align="center">
+  <strong>RustFlow</strong> is a high-performance, modern flow collector written in Rust.
+</div>
 
 ## Comparison
 
@@ -69,7 +71,7 @@ rustflow_collector -t netflow --pcap capture.pcap
 
 ### Output Formats
 
-By default, the collector outputs raw protocol data as JSON. Use `-f common` to normalize flows to a common format:
+By default, the collector outputs raw protocol data as NDJSON (newline-delimited JSON, one object per line). Use `-f common` to normalize flows to a common format:
 
 ```bash
 # Output normalized common flow format
@@ -78,9 +80,49 @@ rustflow_collector -t netflow -p 9995 -f common
 # Output as CSV (requires common format)
 rustflow_collector -t netflow -p 9995 -f common -s csv
 
-# Write to file instead of stdout
-rustflow_collector -t netflow -p 9995 -f common -o flows.json
+# Output as Snappy-compressed Parquet (requires common format and -o)
+rustflow_collector -t netflow -p 9995 -f common -s parquet -o flows.parquet
+
+# Write to a single file instead of stdout
+rustflow_collector -t netflow -p 9995 -f common -o flows.ndjson
 ```
+
+| Serialization (`-s`) | Description                                                                |
+| -------------------- | -------------------------------------------------------------------------- |
+| `ndjson` (default)   | Newline-delimited JSON, one object per line. Works with `raw` and `common` |
+| `csv`                | CSV with a header row. Requires `-f common`                                |
+| `parquet`            | Apache Parquet with Snappy compression. Requires `-f common` and `-o`      |
+| `discard`            | Decode and count flows (metrics only), write nothing. For load testing     |
+
+**Parquet column types:** flow fields keep their native widths (`UInt8`/`UInt16`/`UInt32`/`UInt64`), the `time_*_ns` fields are written as `TIMESTAMP(NANOS, UTC)`, and IP and MAC addresses are written as fixed-size binary — 16 bytes for addresses (IPv4 is stored in its IPv4-mapped IPv6 form) and 6 bytes for MACs. Enrichment fields are appended as string columns.
+
+### Output File Rotation
+
+`--output` is a **single file** on its own. Add `--interval` and it becomes the **root directory** of a rotated tree, with one file per interval written into it:
+
+```bash
+# One file, never rotated
+rustflow_collector -t netflow -p 9995 -f common -o flows.ndjson
+
+# A new file every hour, all of them directly under ./flows
+rustflow_collector -t netflow -p 9995 -f common -s parquet -o flows -i 1h
+
+# A new file every 5 minutes, partitioned by day/hour/5-minute bucket
+rustflow_collector -t netflow -p 9995 -f common -s parquet -o /data/flows -i 5m -l 3
+```
+
+Use `--level` (`-l`) to choose how deeply the output directory is partitioned by the interval's start time:
+
+| Level         | Layout                    | Example                                           |
+| ------------- | ------------------------- | ------------------------------------------------- |
+| `0` (default) | `<output>/`               | `flows/flows-20240102T150500Z.parquet`            |
+| `1`           | `<output>/%Y/%m/%d/`      | `flows/2024/01/02/flows-...parquet`               |
+| `2`           | `<output>/%Y/%m/%d/%H/`   | `flows/2024/01/02/15/flows-...parquet`            |
+| `3`           | `<output>/%Y/%m/%d/%H/%M` | `flows/2024/01/02/15/05/flows-...parquet` (5 min) |
+
+File names are `<prefix>-<interval start>.<ext>`, where the prefix defaults to `flows` (set it with `--prefix` so several collectors can share one output tree) and the extension follows `--serialization` (`.ndjson`, `.csv` or `.parquet`). Missing directories are created as needed.
+
+Interval windows are aligned to the epoch, so `-i 1h` rotates at the top of every hour. Rotation happens when the first flow of a new window arrives, so idle windows produce no files. `--level` and `--prefix` require `--interval`, since without it there is only one file.
 
 ### Flow Enrichment
 
@@ -128,6 +170,12 @@ Load custom Information Element definitions for IPFIX/NetFlow v9:
 ```bash
 rustflow_collector -t netflow -p 9995 --ie-mapping custom_ies.csv
 ```
+
+### Shutdown
+
+On `SIGINT`/`SIGTERM` the collector stops reading the socket, writes out every
+flow it has already decoded, finalizes the output file (Parquet needs its footer
+to be readable), and exits. A second signal forces an immediate exit.
 
 ### Prometheus Metrics
 

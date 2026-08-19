@@ -1,19 +1,22 @@
 mod enrich;
 mod metrics;
 mod output;
+mod parquet_sink;
 
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
 
 use chrono::Utc;
 use clap::{Parser, ValueEnum};
 use enrich::{EnrichmentEngine, parse_enrich_arg};
-use output::OutputWriter;
+use output::{MAX_PARTITION_LEVEL, OutputOptions, OutputWriter};
 use rustflow::pcap::{NetflowPcapReader, SflowPcapReader};
 use rustflow::{
     IERegistry, NetflowPacket, NetflowProcessor, NetflowReadResult, NetflowReader, SflowPacket,
     SflowProcessor, SflowReadResult, SflowReader,
 };
+use rustflow_core::common::common_flow::CommonFlow;
 use rustflow_core::ipfix::parser::IPFIX_VERSION;
 use rustflow_core::netflow_v5::parser::NETFLOW_V5_VERSION;
 use rustflow_core::netflow_v9::parser::NETFLOW_V9_VERSION;
@@ -43,13 +46,38 @@ struct Cli {
     #[arg(short, long, value_enum, default_value = "raw")]
     format: OutputFormat,
 
-    /// Serialization format for output
-    #[arg(short, long, value_enum, default_value = "json")]
+    /// Serialization format for output (parquet is Snappy-compressed and
+    /// requires `--format common` and `--output`)
+    #[arg(short, long, value_enum, default_value = "ndjson")]
     serialization: SerializationFormat,
 
-    /// Output file path (stdout if not specified)
+    /// Output path (stdout if not specified). Without `--interval` this is a
+    /// single file; with `--interval` it is the root directory of the
+    /// rotated output tree.
     #[arg(short, long)]
     output: Option<String>,
+
+    /// Start a new output file every interval (e.g. `10m`, `1h`).
+    /// Requires `--output`, which then names a directory instead of a file.
+    #[arg(short = 'i', long, value_name = "DURATION", requires = "output")]
+    interval: Option<String>,
+
+    /// Directory partitioning of the output tree: 0 = flat, 1 = `%Y/%m/%d`,
+    /// 2 = `%Y/%m/%d/%H`, 3 = `%Y/%m/%d/%H` plus a 5 minute bucket.
+    /// Requires `--interval`.
+    #[arg(
+        short = 'l',
+        long,
+        default_value = "0",
+        value_parser = clap::value_parser!(u8).range(0..=MAX_PARTITION_LEVEL as i64),
+        requires = "interval"
+    )]
+    level: u8,
+
+    /// File name prefix inside the output tree, e.g. `flows` produces
+    /// `flows-20240102T150500Z.parquet`. Requires `--interval`.
+    #[arg(long, default_value = "flows", requires = "interval")]
+    prefix: String,
 
     /// Host address for Prometheus metrics HTTP server
     #[arg(long, default_value = "0.0.0.0")]
@@ -88,8 +116,13 @@ pub enum OutputFormat {
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum SerializationFormat {
-    Json,
+    /// Newline-delimited JSON, one object per line
+    Ndjson,
     Csv,
+    /// Snappy-compressed Apache Parquet
+    Parquet,
+    /// Decode and count flows but write no output (for load testing)
+    Discard,
 }
 
 fn read_netflow_pcap(
@@ -219,6 +252,97 @@ fn netflow_flow_count(packet: &NetflowPacket) -> usize {
     }
 }
 
+/// Flows accumulated per channel send. Per-packet sends (mutex + condvar
+/// per packet) measurably dominate the pipeline's overhead; chunking
+/// amortizes them ~25x at 10 flows/packet.
+const CHUNK_FLOWS: usize = 256;
+
+/// Idle flush: without traffic, a partial chunk waits at most this long.
+const CHUNK_FLUSH_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// Depth of the ingest -> encoder channel, in chunks (~256 flows each).
+/// Deep enough to absorb encoder stalls (row-group flushes, file rotation)
+/// without dropping, yet bounded by design: when the encoder truly falls
+/// behind, ingest blocks, the socket buffer fills, and the kernel drops
+/// (visibly in its counters) — memory can never grow without limit.
+/// Worst case ~260k buffered flows, on the order of 100 MB.
+const PIPELINE_DEPTH: usize = 1024;
+
+/// Set by the signal handler; the ingest loops poll it (their socket read
+/// timeout bounds the latency) and exit so the pipeline drains in order.
+static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+
+/// The ingest thread's end of the pipeline: batches decoded flows into
+/// chunks and hands them to the encoder thread over a bounded channel.
+/// Dropping the sender closes the channel; the encoder then drains every
+/// queued chunk, finalizes the output, and `join` returns — so nothing
+/// decoded before shutdown is lost.
+struct Encoder {
+    tx: Option<mpsc::SyncSender<Vec<CommonFlow>>>,
+    handle: Option<std::thread::JoinHandle<()>>,
+    chunk: Vec<CommonFlow>,
+}
+
+impl Encoder {
+    /// Spawn the encoder thread: it owns enrichment + serialization + writing,
+    /// so the ingest thread only decodes.
+    fn spawn(output: Arc<OutputWriter>, enrichment: Arc<EnrichmentEngine>) -> Self {
+        let (tx, rx) = mpsc::sync_channel::<Vec<CommonFlow>>(PIPELINE_DEPTH);
+        let handle = std::thread::spawn(move || {
+            while let Ok(flows) = rx.recv() {
+                for flow in &flows {
+                    let enriched = enrichment.enrich(flow);
+                    output.write_enriched_flow(flow, &enriched);
+                }
+            }
+            // Channel closed (ingest ended): flush buffered output and, for
+            // parquet, write the footer.
+            output.finish();
+        });
+        Self {
+            tx: Some(tx),
+            handle: Some(handle),
+            chunk: Vec::with_capacity(CHUNK_FLOWS),
+        }
+    }
+
+    /// Queue decoded flows; sends to the encoder once a chunk is full.
+    fn push(&mut self, flows: impl IntoIterator<Item = CommonFlow>) {
+        self.chunk.extend(flows);
+        if self.chunk.len() >= CHUNK_FLOWS {
+            self.flush();
+        }
+    }
+
+    /// Send whatever is buffered, even a partial chunk (idle / shutdown).
+    fn flush(&mut self) {
+        if self.chunk.is_empty() {
+            return;
+        }
+        let full = std::mem::replace(&mut self.chunk, Vec::with_capacity(CHUNK_FLOWS));
+        if let Some(tx) = &self.tx
+            && tx.send(full).is_err()
+        {
+            // The receiver is gone only if the encoder thread panicked.
+            // Continuing would silently discard every flow from here on.
+            eprintln!("Encoder thread has died; exiting");
+            std::process::exit(1);
+        }
+    }
+
+    /// Flush, close the channel, and wait for the encoder to write
+    /// everything out.
+    fn drain(mut self) {
+        self.flush();
+        self.tx.take();
+        if let Some(handle) = self.handle.take()
+            && handle.join().is_err()
+        {
+            eprintln!("Encoder thread panicked; output may be incomplete");
+        }
+    }
+}
+
 fn read_netflow_socket(
     host: &str,
     port: u16,
@@ -233,7 +357,9 @@ fn read_netflow_socket(
     let mut reader = NetflowReader::bind(addr)
         .expect("Failed to bind to socket")
         .with_ie_registry(ie_registry.clone())
-        .with_template_timeout(timeout);
+        .with_template_timeout(timeout)
+        .with_read_timeout(Some(CHUNK_FLUSH_TIMEOUT))
+        .expect("Failed to set read timeout");
 
     eprintln!(
         "Listening for NetFlow data on {}",
@@ -242,7 +368,14 @@ fn read_netflow_socket(
 
     let mut metrics_cache = metrics::NetflowMetricsCache::new(metrics);
 
-    loop {
+    // Common format runs as a two-stage pipeline: this thread decodes,
+    // the encoder thread converts to the destination format and writes.
+    let mut encoder = match format {
+        OutputFormat::Common => Some(Encoder::spawn(Arc::clone(output), Arc::clone(enrichment))),
+        OutputFormat::Raw => None,
+    };
+
+    while !SHUTDOWN.load(Ordering::Relaxed) {
         match reader.read_raw() {
             Ok(NetflowReadResult::Packet { len, src, packet }) => {
                 let version_label = netflow_version_label(&packet);
@@ -250,20 +383,15 @@ fn read_netflow_socket(
 
                 metrics_cache.record_packet(src, version_label, len, flow_count);
 
-                match format {
-                    OutputFormat::Raw => {
-                        write_netflow_packet_raw(&packet, output);
-                    }
-                    OutputFormat::Common => {
+                match &mut encoder {
+                    None => write_netflow_packet_raw(&packet, output),
+                    Some(encoder) => {
                         let time_received_ns = Some(Utc::now().timestamp_nanos_opt().unwrap_or(0));
                         let flows =
                             reader
                                 .processor()
                                 .convert_to_flows(src, &packet, time_received_ns);
-                        for flow in flows {
-                            let enriched = enrichment.enrich(&flow);
-                            output.write_enriched_flow(&flow, &enriched);
-                        }
+                        encoder.push(flows);
                     }
                 }
 
@@ -289,12 +417,20 @@ fn read_netflow_socket(
                 }
             }
             Ok(NetflowReadResult::Timeout) => {
-                // No data available - continue
+                // Idle: hand any partial chunk to the encoder.
+                if let Some(encoder) = &mut encoder {
+                    encoder.flush();
+                }
             }
             Err(err) => {
                 eprintln!("Error receiving data: {:#?}", err);
             }
         }
+    }
+
+    // Shutdown: wait for the encoder to write everything that was decoded.
+    if let Some(encoder) = encoder {
+        encoder.drain();
     }
 }
 
@@ -381,7 +517,10 @@ fn read_sflow_socket(
     enrichment: &Arc<EnrichmentEngine>,
 ) {
     let addr: SocketAddr = format!("{}:{}", host, port).parse().unwrap();
-    let mut reader = SflowReader::bind(addr).expect("Failed to bind to socket");
+    let mut reader = SflowReader::bind(addr)
+        .expect("Failed to bind to socket")
+        .with_read_timeout(Some(CHUNK_FLUSH_TIMEOUT))
+        .expect("Failed to set read timeout");
 
     eprintln!(
         "Listening for sFlow data on {}",
@@ -390,23 +529,25 @@ fn read_sflow_socket(
 
     let mut metrics_cache = metrics::SflowMetricsCache::new(metrics);
 
-    loop {
+    // Common format runs as a two-stage pipeline: this thread decodes,
+    // the encoder thread converts to the destination format and writes.
+    let mut encoder = match format {
+        OutputFormat::Common => Some(Encoder::spawn(Arc::clone(output), Arc::clone(enrichment))),
+        OutputFormat::Raw => None,
+    };
+
+    while !SHUTDOWN.load(Ordering::Relaxed) {
         match reader.read_raw() {
             Ok(SflowReadResult::Packet { len, src, packet }) => {
                 let flow_count = sflow_flow_count(&packet);
                 metrics_cache.record_packet(src, len, flow_count);
 
-                match format {
-                    OutputFormat::Raw => {
-                        write_sflow_packet_raw(&packet, output);
-                    }
-                    OutputFormat::Common => {
+                match &mut encoder {
+                    None => write_sflow_packet_raw(&packet, output),
+                    Some(encoder) => {
                         let time_received_ns = Some(Utc::now().timestamp_nanos_opt().unwrap_or(0));
                         let flows = SflowProcessor::convert_to_flows(&packet, time_received_ns);
-                        for flow in flows {
-                            let enriched = enrichment.enrich(&flow);
-                            output.write_enriched_flow(&flow, &enriched);
-                        }
+                        encoder.push(flows);
                     }
                 }
             }
@@ -420,17 +561,43 @@ fn read_sflow_socket(
                 }
             }
             Ok(SflowReadResult::Timeout) => {
-                // No data available - continue
+                // Idle: hand any partial chunk to the encoder.
+                if let Some(encoder) = &mut encoder {
+                    encoder.flush();
+                }
             }
             Err(err) => {
                 eprintln!("Error receiving data: {:#?}", err);
             }
         }
     }
+
+    // Shutdown: wait for the encoder to write everything that was decoded.
+    if let Some(encoder) = encoder {
+        encoder.drain();
+    }
+}
+
+/// Reject serialization/format combinations that cannot be produced.
+fn validate_cli(cli: &Cli) {
+    if matches!(
+        cli.serialization,
+        SerializationFormat::Csv | SerializationFormat::Parquet
+    ) && cli.format != OutputFormat::Common
+    {
+        eprintln!("Error: --serialization csv/parquet requires --format common");
+        std::process::exit(1);
+    }
+    if cli.serialization == SerializationFormat::Parquet && cli.output.is_none() {
+        eprintln!("Error: --serialization parquet requires --output <FILE>");
+        std::process::exit(1);
+    }
 }
 
 fn main() {
     let cli = Cli::parse();
+
+    validate_cli(&cli);
 
     let mut ie_registry = IERegistry::new_with_iana_elements();
     if let Some(ref path) = cli.ie_mapping {
@@ -465,14 +632,43 @@ fn main() {
     }
     let enrichment_engine = Arc::new(enrichment_engine);
 
+    let interval = cli.interval.as_deref().map(|value| {
+        duration_str::parse(value.trim()).unwrap_or_else(|e| {
+            eprintln!("Invalid --interval value '{}': {}", value, e);
+            std::process::exit(1);
+        })
+    });
+
     let output = Arc::new(
-        OutputWriter::new(
-            cli.output.as_deref(),
-            cli.serialization,
-            enrichment_engine.output_fields(),
-        )
+        OutputWriter::new(OutputOptions {
+            path: cli.output.as_deref(),
+            serialization: cli.serialization,
+            enriched_fields: enrichment_engine.output_fields(),
+            interval,
+            level: cli.level,
+            prefix: &cli.prefix,
+        })
         .expect("Failed to create output writer"),
     );
+
+    // Records are buffered rather than flushed one at a time, so a background
+    // thread keeps the output moving when flows arrive too slowly to fill the
+    // buffer.
+    OutputWriter::spawn_flusher(&output);
+
+    // Graceful shutdown on Ctrl-C / SIGTERM: flag the ingest loop to stop,
+    // which drains the pipeline and finalizes the output (a parquet file is
+    // unreadable until its footer is written). A second signal forces exit,
+    // so a stuck drain can never trap the operator.
+    if let Err(e) = ctrlc::set_handler(move || {
+        if SHUTDOWN.swap(true, Ordering::SeqCst) {
+            eprintln!("Forced exit");
+            std::process::exit(1);
+        }
+        eprintln!("Shutting down, draining output...");
+    }) {
+        eprintln!("Failed to install shutdown handler: {}", e);
+    }
 
     let timeout = std::time::Duration::from_secs(cli.template_timeout);
 
@@ -527,4 +723,9 @@ fn main() {
             std::process::exit(1);
         }
     }
+
+    // Socket modes return here after a graceful shutdown; pcap modes when the
+    // file is exhausted. Idempotent: the encoder thread already finished the
+    // output in the pipelined paths.
+    output.finish();
 }

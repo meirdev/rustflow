@@ -21,3 +21,8 @@ ipnet = "2"
 duration-str = "0.11"
 maxminddb = "0.27"
 ipnetwork = "0.21"
+parquet = { version = "59.2.0", default-features = false, features = ["arrow", "snap"] }
+arrow-array = "59.2.0"
+arrow-schema = "59.2.0"
+ctrlc = { version = "3.5.2", features = ["termination"] }
+macaddr = "1"
