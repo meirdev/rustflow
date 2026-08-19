@@ -40,7 +40,7 @@ dependencies, on the [releases page](https://github.com/meirdev/rustflow/release
 `rustflow_collector`, `rustflow_exporter`, and `rustflow_generator`.
 
 ```bash
-VERSION=0.7.0
+VERSION=0.7.1
 curl -fsSL -o rustflow_collector \
   "https://github.com/meirdev/rustflow/releases/download/v${VERSION}/rustflow_collector"
 chmod +x rustflow_collector

@@ -10,7 +10,7 @@ default = []
 tokio = ["dep:tokio"]
 
 [dependencies]
-rustflow_core = { path = "../rustflow_core", version = "0.7.0" }
+rustflow_core = { path = "../rustflow_core", version = "0.7.1" }
 chrono = "0.4"
 log = "0.4"
 rustc-hash = "2.1"
