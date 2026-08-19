@@ -3,11 +3,12 @@ use std::net::IpAddr;
 use std::sync::Arc;
 
 use arrow_array::builder::{
-    FixedSizeBinaryBuilder, StringBuilder, TimestampNanosecondBuilder, UInt8Builder,
-    UInt16Builder, UInt32Builder, UInt64Builder,
+    FixedSizeBinaryBuilder, StringBuilder, TimestampNanosecondBuilder, UInt8Builder, UInt16Builder,
+    UInt32Builder, UInt64Builder,
 };
 use arrow_array::{ArrayRef, RecordBatch};
 use arrow_schema::{DataType, Field, Schema, TimeUnit};
+use macaddr::MacAddr6;
 use parquet::arrow::ArrowWriter;
 use parquet::basic::Compression;
 use parquet::errors::ParquetError;
@@ -66,6 +67,13 @@ impl ParquetSink {
         flow: &CommonFlow,
         enriched: &std::collections::HashMap<String, String>,
     ) -> Result<(), ParquetError> {
+        // Buffering rows into a finished sink would silently drop them at the
+        // next flush; fail loudly instead.
+        if self.writer.is_none() {
+            return Err(ParquetError::General(
+                "write after finish: parquet sink is closed".to_string(),
+            ));
+        }
         let b = &mut self.builders;
         b.flow_type.append_value(match flow.flow_type {
             FlowType::NetflowV5 => "NETFLOW_V5",
@@ -76,21 +84,15 @@ impl ParquetSink {
         b.time_received_ns.append_option(flow.time_received_ns);
         b.sequence_num.append_value(flow.sequence_num);
         b.sampling_rate.append_option(flow.sampling_rate);
-        append_ip(&mut b.sampler_address, &flow.sampler_address)?;
+        append_ip(&mut b.sampler_address, &flow.sampler_address);
         b.time_flow_start_ns.append_option(flow.time_flow_start_ns);
         b.time_flow_end_ns.append_option(flow.time_flow_end_ns);
         b.bytes.append_value(flow.bytes);
         b.packets.append_value(flow.packets);
-        append_ip(&mut b.src_addr, &flow.src_addr)?;
-        append_ip(&mut b.dst_addr, &flow.dst_addr)?;
-        match &flow.src_mac {
-            Some(m) => b.src_mac.append_value(m.into_array())?,
-            None => b.src_mac.append_null(),
-        }
-        match &flow.dst_mac {
-            Some(m) => b.dst_mac.append_value(m.into_array())?,
-            None => b.dst_mac.append_null(),
-        }
+        append_ip(&mut b.src_addr, &flow.src_addr);
+        append_ip(&mut b.dst_addr, &flow.dst_addr);
+        append_mac(&mut b.src_mac, &flow.src_mac);
+        append_mac(&mut b.dst_mac, &flow.dst_mac);
         b.etype.append_option(flow.etype);
         b.proto.append_option(flow.proto);
         b.src_port.append_option(flow.src_port);
@@ -107,10 +109,10 @@ impl ParquetSink {
         b.fragment_offset.append_option(flow.fragment_offset);
         b.src_as.append_option(flow.src_as);
         b.dst_as.append_option(flow.dst_as);
-        append_ip(&mut b.next_hop, &flow.next_hop)?;
+        append_ip(&mut b.next_hop, &flow.next_hop);
         b.src_net.append_option(flow.src_net);
         b.dst_net.append_option(flow.dst_net);
-        append_ip(&mut b.bgp_next_hop, &flow.bgp_next_hop)?;
+        append_ip(&mut b.bgp_next_hop, &flow.bgp_next_hop);
         b.src_vlan.append_option(flow.src_vlan);
         b.dst_vlan.append_option(flow.dst_vlan);
         b.observation_domain_id
@@ -142,14 +144,15 @@ impl ParquetSink {
         }
         let columns = self.builders.finish();
         self.rows = 0;
-        let batch = RecordBatch::try_new(Arc::clone(&self.schema), columns)
-            .map_err(ParquetError::from)?;
-        if let Some(writer) = self.writer.as_mut() {
-            writer.write(&batch)?;
+        let batch =
+            RecordBatch::try_new(Arc::clone(&self.schema), columns).map_err(ParquetError::from)?;
+        match self.writer.as_mut() {
+            Some(writer) => writer.write(&batch),
+            None => Err(ParquetError::General(
+                "flush after finish: parquet sink is closed".to_string(),
+            )),
         }
-        Ok(())
     }
-
 }
 
 impl Drop for ParquetSink {
@@ -169,15 +172,27 @@ fn ip_octets(addr: IpAddr) -> [u8; IP_ADDR_LEN as usize] {
     }
 }
 
-fn append_ip(
-    builder: &mut FixedSizeBinaryBuilder,
-    value: &Option<IpAddr>,
-) -> Result<(), ParquetError> {
+// The fixed-size appends below can only fail on a width mismatch, and the
+// inputs are `[u8; 16]` / `[u8; 6]` by construction. They are infallible in
+// practice, and must be treated so: a mid-row error would leave the column
+// builders at unequal lengths and poison the whole batch.
+
+fn append_ip(builder: &mut FixedSizeBinaryBuilder, value: &Option<IpAddr>) {
     match value {
-        Some(addr) => builder.append_value(ip_octets(*addr))?,
+        Some(addr) => builder
+            .append_value(ip_octets(*addr))
+            .expect("IP column is 16 bytes wide"),
         None => builder.append_null(),
     }
-    Ok(())
+}
+
+fn append_mac(builder: &mut FixedSizeBinaryBuilder, value: &Option<MacAddr6>) {
+    match value {
+        Some(mac) => builder
+            .append_value(mac.into_array())
+            .expect("MAC column is 6 bytes wide"),
+        None => builder.append_null(),
+    }
 }
 
 /// One Arrow builder per output column, in schema order.
@@ -376,7 +391,6 @@ mod tests {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
     use arrow_array::{Array, FixedSizeBinaryArray, StringArray, UInt16Array};
-    use macaddr::MacAddr6;
     use rustflow_core::common::common_flow::FlowType;
 
     use super::*;

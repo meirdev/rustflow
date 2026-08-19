@@ -92,6 +92,7 @@ rustflow_collector -t netflow -p 9995 -f common -o flows.ndjson
 | `ndjson` (default)   | Newline-delimited JSON, one object per line. Works with `raw` and `common` |
 | `csv`                | CSV with a header row. Requires `-f common`                                |
 | `parquet`            | Apache Parquet with Snappy compression. Requires `-f common` and `-o`      |
+| `discard`            | Decode and count flows (metrics only), write nothing. For load testing     |
 
 **Parquet column types:** flow fields keep their native widths (`UInt8`/`UInt16`/`UInt32`/`UInt64`), the `time_*_ns` fields are written as `TIMESTAMP(NANOS, UTC)`, and IP and MAC addresses are written as fixed-size binary — 16 bytes for addresses (IPv4 is stored in its IPv4-mapped IPv6 form) and 6 bytes for MACs. Enrichment fields are appended as string columns.
 
@@ -169,6 +170,12 @@ Load custom Information Element definitions for IPFIX/NetFlow v9:
 ```bash
 rustflow_collector -t netflow -p 9995 --ie-mapping custom_ies.csv
 ```
+
+### Shutdown
+
+On `SIGINT`/`SIGTERM` the collector stops reading the socket, writes out every
+flow it has already decoded, finalizes the output file (Parquet needs its footer
+to be readable), and exits. A second signal forces an immediate exit.
 
 ### Prometheus Metrics
 

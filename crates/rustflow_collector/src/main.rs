@@ -5,10 +5,10 @@ mod parquet_sink;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 
 use chrono::Utc;
-use rustflow_core::common::common_flow::CommonFlow;
 use clap::{Parser, ValueEnum};
 use enrich::{EnrichmentEngine, parse_enrich_arg};
 use output::{MAX_PARTITION_LEVEL, OutputOptions, OutputWriter};
@@ -17,6 +17,7 @@ use rustflow::{
     IERegistry, NetflowPacket, NetflowProcessor, NetflowReadResult, NetflowReader, SflowPacket,
     SflowProcessor, SflowReadResult, SflowReader,
 };
+use rustflow_core::common::common_flow::CommonFlow;
 use rustflow_core::ipfix::parser::IPFIX_VERSION;
 use rustflow_core::netflow_v5::parser::NETFLOW_V5_VERSION;
 use rustflow_core::netflow_v9::parser::NETFLOW_V9_VERSION;
@@ -268,25 +269,79 @@ const CHUNK_FLUSH_TIMEOUT: std::time::Duration = std::time::Duration::from_milli
 /// Worst case ~260k buffered flows, on the order of 100 MB.
 const PIPELINE_DEPTH: usize = 1024;
 
-/// Spawn the encoder thread: it owns enrichment + serialization + writing,
-/// so the ingest thread only decodes. Chunks of flows arrive over a bounded
-/// channel.
-fn spawn_encoder(
-    output: Arc<OutputWriter>,
-    enrichment: Arc<EnrichmentEngine>,
-) -> mpsc::SyncSender<Vec<CommonFlow>> {
-    let (tx, rx) = mpsc::sync_channel::<Vec<CommonFlow>>(PIPELINE_DEPTH);
-    std::thread::spawn(move || {
-        while let Ok(flows) = rx.recv() {
-            for flow in &flows {
-                let enriched = enrichment.enrich(flow);
-                output.write_enriched_flow(flow, &enriched);
+/// Set by the signal handler; the ingest loops poll it (their socket read
+/// timeout bounds the latency) and exit so the pipeline drains in order.
+static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+
+/// The ingest thread's end of the pipeline: batches decoded flows into
+/// chunks and hands them to the encoder thread over a bounded channel.
+/// Dropping the sender closes the channel; the encoder then drains every
+/// queued chunk, finalizes the output, and `join` returns — so nothing
+/// decoded before shutdown is lost.
+struct Encoder {
+    tx: Option<mpsc::SyncSender<Vec<CommonFlow>>>,
+    handle: Option<std::thread::JoinHandle<()>>,
+    chunk: Vec<CommonFlow>,
+}
+
+impl Encoder {
+    /// Spawn the encoder thread: it owns enrichment + serialization + writing,
+    /// so the ingest thread only decodes.
+    fn spawn(output: Arc<OutputWriter>, enrichment: Arc<EnrichmentEngine>) -> Self {
+        let (tx, rx) = mpsc::sync_channel::<Vec<CommonFlow>>(PIPELINE_DEPTH);
+        let handle = std::thread::spawn(move || {
+            while let Ok(flows) = rx.recv() {
+                for flow in &flows {
+                    let enriched = enrichment.enrich(flow);
+                    output.write_enriched_flow(flow, &enriched);
+                }
             }
+            // Channel closed (ingest ended): flush buffered output and, for
+            // parquet, write the footer.
+            output.finish();
+        });
+        Self {
+            tx: Some(tx),
+            handle: Some(handle),
+            chunk: Vec::with_capacity(CHUNK_FLOWS),
         }
-        // Channel closed (ingest ended): flush buffered output.
-        output.finish();
-    });
-    tx
+    }
+
+    /// Queue decoded flows; sends to the encoder once a chunk is full.
+    fn push(&mut self, flows: impl IntoIterator<Item = CommonFlow>) {
+        self.chunk.extend(flows);
+        if self.chunk.len() >= CHUNK_FLOWS {
+            self.flush();
+        }
+    }
+
+    /// Send whatever is buffered, even a partial chunk (idle / shutdown).
+    fn flush(&mut self) {
+        if self.chunk.is_empty() {
+            return;
+        }
+        let full = std::mem::replace(&mut self.chunk, Vec::with_capacity(CHUNK_FLOWS));
+        if let Some(tx) = &self.tx
+            && tx.send(full).is_err()
+        {
+            // The receiver is gone only if the encoder thread panicked.
+            // Continuing would silently discard every flow from here on.
+            eprintln!("Encoder thread has died; exiting");
+            std::process::exit(1);
+        }
+    }
+
+    /// Flush, close the channel, and wait for the encoder to write
+    /// everything out.
+    fn drain(mut self) {
+        self.flush();
+        self.tx.take();
+        if let Some(handle) = self.handle.take()
+            && handle.join().is_err()
+        {
+            eprintln!("Encoder thread panicked; output may be incomplete");
+        }
+    }
 }
 
 fn read_netflow_socket(
@@ -316,13 +371,12 @@ fn read_netflow_socket(
 
     // Common format runs as a two-stage pipeline: this thread decodes,
     // the encoder thread converts to the destination format and writes.
-    let encoder = match format {
-        OutputFormat::Common => Some(spawn_encoder(Arc::clone(output), Arc::clone(enrichment))),
+    let mut encoder = match format {
+        OutputFormat::Common => Some(Encoder::spawn(Arc::clone(output), Arc::clone(enrichment))),
         OutputFormat::Raw => None,
     };
-    let mut chunk: Vec<CommonFlow> = Vec::with_capacity(CHUNK_FLOWS);
 
-    loop {
+    while !SHUTDOWN.load(Ordering::Relaxed) {
         match reader.read_raw() {
             Ok(NetflowReadResult::Packet { len, src, packet }) => {
                 let version_label = netflow_version_label(&packet);
@@ -330,22 +384,15 @@ fn read_netflow_socket(
 
                 metrics_cache.record_packet(src, version_label, len, flow_count);
 
-                match format {
-                    OutputFormat::Raw => {
-                        write_netflow_packet_raw(&packet, output);
-                    }
-                    OutputFormat::Common => {
+                match &mut encoder {
+                    None => write_netflow_packet_raw(&packet, output),
+                    Some(encoder) => {
                         let time_received_ns = Some(Utc::now().timestamp_nanos_opt().unwrap_or(0));
                         let flows =
                             reader
                                 .processor()
                                 .convert_to_flows(src, &packet, time_received_ns);
-                        chunk.extend(flows);
-                        if chunk.len() >= CHUNK_FLOWS {
-                            let full =
-                                std::mem::replace(&mut chunk, Vec::with_capacity(CHUNK_FLOWS));
-                            encoder.as_ref().unwrap().send(full).ok();
-                        }
+                        encoder.push(flows);
                     }
                 }
 
@@ -372,15 +419,19 @@ fn read_netflow_socket(
             }
             Ok(NetflowReadResult::Timeout) => {
                 // Idle: hand any partial chunk to the encoder.
-                if !chunk.is_empty() {
-                    let partial = std::mem::replace(&mut chunk, Vec::with_capacity(CHUNK_FLOWS));
-                    encoder.as_ref().unwrap().send(partial).ok();
+                if let Some(encoder) = &mut encoder {
+                    encoder.flush();
                 }
             }
             Err(err) => {
                 eprintln!("Error receiving data: {:#?}", err);
             }
         }
+    }
+
+    // Shutdown: wait for the encoder to write everything that was decoded.
+    if let Some(encoder) = encoder {
+        encoder.drain();
     }
 }
 
@@ -481,31 +532,23 @@ fn read_sflow_socket(
 
     // Common format runs as a two-stage pipeline: this thread decodes,
     // the encoder thread converts to the destination format and writes.
-    let encoder = match format {
-        OutputFormat::Common => Some(spawn_encoder(Arc::clone(output), Arc::clone(enrichment))),
+    let mut encoder = match format {
+        OutputFormat::Common => Some(Encoder::spawn(Arc::clone(output), Arc::clone(enrichment))),
         OutputFormat::Raw => None,
     };
-    let mut chunk: Vec<CommonFlow> = Vec::with_capacity(CHUNK_FLOWS);
 
-    loop {
+    while !SHUTDOWN.load(Ordering::Relaxed) {
         match reader.read_raw() {
             Ok(SflowReadResult::Packet { len, src, packet }) => {
                 let flow_count = sflow_flow_count(&packet);
                 metrics_cache.record_packet(src, len, flow_count);
 
-                match format {
-                    OutputFormat::Raw => {
-                        write_sflow_packet_raw(&packet, output);
-                    }
-                    OutputFormat::Common => {
+                match &mut encoder {
+                    None => write_sflow_packet_raw(&packet, output),
+                    Some(encoder) => {
                         let time_received_ns = Some(Utc::now().timestamp_nanos_opt().unwrap_or(0));
                         let flows = SflowProcessor::convert_to_flows(&packet, time_received_ns);
-                        chunk.extend(flows);
-                        if chunk.len() >= CHUNK_FLOWS {
-                            let full =
-                                std::mem::replace(&mut chunk, Vec::with_capacity(CHUNK_FLOWS));
-                            encoder.as_ref().unwrap().send(full).ok();
-                        }
+                        encoder.push(flows);
                     }
                 }
             }
@@ -520,15 +563,19 @@ fn read_sflow_socket(
             }
             Ok(SflowReadResult::Timeout) => {
                 // Idle: hand any partial chunk to the encoder.
-                if !chunk.is_empty() {
-                    let partial = std::mem::replace(&mut chunk, Vec::with_capacity(CHUNK_FLOWS));
-                    encoder.as_ref().unwrap().send(partial).ok();
+                if let Some(encoder) = &mut encoder {
+                    encoder.flush();
                 }
             }
             Err(err) => {
                 eprintln!("Error receiving data: {:#?}", err);
             }
         }
+    }
+
+    // Shutdown: wait for the encoder to write everything that was decoded.
+    if let Some(encoder) = encoder {
+        encoder.drain();
     }
 }
 
@@ -610,14 +657,18 @@ fn main() {
     // buffer.
     OutputWriter::spawn_flusher(&output);
 
-    {
-        let output = Arc::clone(&output);
-        if let Err(e) = ctrlc::set_handler(move || {
-            output.finish();
-            std::process::exit(0);
-        }) {
-            eprintln!("Failed to install shutdown handler: {}", e);
+    // Graceful shutdown on Ctrl-C / SIGTERM: flag the ingest loop to stop,
+    // which drains the pipeline and finalizes the output (a parquet file is
+    // unreadable until its footer is written). A second signal forces exit,
+    // so a stuck drain can never trap the operator.
+    if let Err(e) = ctrlc::set_handler(move || {
+        if SHUTDOWN.swap(true, Ordering::SeqCst) {
+            eprintln!("Forced exit");
+            std::process::exit(1);
         }
+        eprintln!("Shutting down, draining output...");
+    }) {
+        eprintln!("Failed to install shutdown handler: {}", e);
     }
 
     let timeout = std::time::Duration::from_secs(cli.template_timeout);
@@ -673,4 +724,9 @@ fn main() {
             std::process::exit(1);
         }
     }
+
+    // Socket modes return here after a graceful shutdown; pcap modes when the
+    // file is exhausted. Idempotent: the encoder thread already finished the
+    // output in the pipelined paths.
+    output.finish();
 }
