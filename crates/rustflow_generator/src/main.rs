@@ -442,9 +442,9 @@ fn main() -> std::io::Result<()> {
     let start_time = Instant::now();
     let mut last_report = Instant::now();
 
-    loop {
-        let loop_start = Instant::now();
+    let mut next_deadline = Instant::now();
 
+    loop {
         if last_template.elapsed() >= template_interval {
             generator.send_templates()?;
             generator.send_options()?;
@@ -471,9 +471,23 @@ fn main() -> std::io::Result<()> {
         }
 
         if args.rate > 0 {
-            let elapsed = loop_start.elapsed();
-            if elapsed < packet_interval {
-                std::thread::sleep(packet_interval - elapsed);
+            // Absolute-deadline pacing: thread::sleep overshoots by tens of
+            // microseconds, which caps a naive per-packet sleep at ~10k pps.
+            // Scheduling against an absolute deadline self-corrects (a late
+            // packet shortens the next wait), and the final stretch before
+            // the deadline is busy-spun for precision.
+            next_deadline += packet_interval;
+            loop {
+                let now = Instant::now();
+                if now >= next_deadline {
+                    break;
+                }
+                let remaining = next_deadline - now;
+                if remaining > Duration::from_micros(200) {
+                    std::thread::sleep(remaining - Duration::from_micros(150));
+                } else {
+                    std::hint::spin_loop();
+                }
             }
         }
     }

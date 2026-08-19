@@ -5,8 +5,10 @@ mod parquet_sink;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::mpsc;
 
 use chrono::Utc;
+use rustflow_core::common::common_flow::CommonFlow;
 use clap::{Parser, ValueEnum};
 use enrich::{EnrichmentEngine, parse_enrich_arg};
 use output::{MAX_PARTITION_LEVEL, OutputOptions, OutputWriter};
@@ -119,6 +121,8 @@ pub enum SerializationFormat {
     Csv,
     /// Snappy-compressed Apache Parquet
     Parquet,
+    /// Decode and count flows but write no output (for load testing)
+    Discard,
 }
 
 fn read_netflow_pcap(
@@ -248,6 +252,43 @@ fn netflow_flow_count(packet: &NetflowPacket) -> usize {
     }
 }
 
+/// Flows accumulated per channel send. Per-packet sends (mutex + condvar
+/// per packet) measurably dominate the pipeline's overhead; chunking
+/// amortizes them ~25x at 10 flows/packet.
+const CHUNK_FLOWS: usize = 256;
+
+/// Idle flush: without traffic, a partial chunk waits at most this long.
+const CHUNK_FLUSH_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// Depth of the ingest -> encoder channel, in chunks (~256 flows each).
+/// Deep enough to absorb encoder stalls (row-group flushes, file rotation)
+/// without dropping, yet bounded by design: when the encoder truly falls
+/// behind, ingest blocks, the socket buffer fills, and the kernel drops
+/// (visibly in its counters) — memory can never grow without limit.
+/// Worst case ~260k buffered flows, on the order of 100 MB.
+const PIPELINE_DEPTH: usize = 1024;
+
+/// Spawn the encoder thread: it owns enrichment + serialization + writing,
+/// so the ingest thread only decodes. Chunks of flows arrive over a bounded
+/// channel.
+fn spawn_encoder(
+    output: Arc<OutputWriter>,
+    enrichment: Arc<EnrichmentEngine>,
+) -> mpsc::SyncSender<Vec<CommonFlow>> {
+    let (tx, rx) = mpsc::sync_channel::<Vec<CommonFlow>>(PIPELINE_DEPTH);
+    std::thread::spawn(move || {
+        while let Ok(flows) = rx.recv() {
+            for flow in &flows {
+                let enriched = enrichment.enrich(flow);
+                output.write_enriched_flow(flow, &enriched);
+            }
+        }
+        // Channel closed (ingest ended): flush buffered output.
+        output.finish();
+    });
+    tx
+}
+
 fn read_netflow_socket(
     host: &str,
     port: u16,
@@ -262,7 +303,9 @@ fn read_netflow_socket(
     let mut reader = NetflowReader::bind(addr)
         .expect("Failed to bind to socket")
         .with_ie_registry(ie_registry.clone())
-        .with_template_timeout(timeout);
+        .with_template_timeout(timeout)
+        .with_read_timeout(Some(CHUNK_FLUSH_TIMEOUT))
+        .expect("Failed to set read timeout");
 
     eprintln!(
         "Listening for NetFlow data on {}",
@@ -270,6 +313,14 @@ fn read_netflow_socket(
     );
 
     let mut metrics_cache = metrics::NetflowMetricsCache::new(metrics);
+
+    // Common format runs as a two-stage pipeline: this thread decodes,
+    // the encoder thread converts to the destination format and writes.
+    let encoder = match format {
+        OutputFormat::Common => Some(spawn_encoder(Arc::clone(output), Arc::clone(enrichment))),
+        OutputFormat::Raw => None,
+    };
+    let mut chunk: Vec<CommonFlow> = Vec::with_capacity(CHUNK_FLOWS);
 
     loop {
         match reader.read_raw() {
@@ -289,9 +340,11 @@ fn read_netflow_socket(
                             reader
                                 .processor()
                                 .convert_to_flows(src, &packet, time_received_ns);
-                        for flow in flows {
-                            let enriched = enrichment.enrich(&flow);
-                            output.write_enriched_flow(&flow, &enriched);
+                        chunk.extend(flows);
+                        if chunk.len() >= CHUNK_FLOWS {
+                            let full =
+                                std::mem::replace(&mut chunk, Vec::with_capacity(CHUNK_FLOWS));
+                            encoder.as_ref().unwrap().send(full).ok();
                         }
                     }
                 }
@@ -318,7 +371,11 @@ fn read_netflow_socket(
                 }
             }
             Ok(NetflowReadResult::Timeout) => {
-                // No data available - continue
+                // Idle: hand any partial chunk to the encoder.
+                if !chunk.is_empty() {
+                    let partial = std::mem::replace(&mut chunk, Vec::with_capacity(CHUNK_FLOWS));
+                    encoder.as_ref().unwrap().send(partial).ok();
+                }
             }
             Err(err) => {
                 eprintln!("Error receiving data: {:#?}", err);
@@ -410,7 +467,10 @@ fn read_sflow_socket(
     enrichment: &Arc<EnrichmentEngine>,
 ) {
     let addr: SocketAddr = format!("{}:{}", host, port).parse().unwrap();
-    let mut reader = SflowReader::bind(addr).expect("Failed to bind to socket");
+    let mut reader = SflowReader::bind(addr)
+        .expect("Failed to bind to socket")
+        .with_read_timeout(Some(CHUNK_FLUSH_TIMEOUT))
+        .expect("Failed to set read timeout");
 
     eprintln!(
         "Listening for sFlow data on {}",
@@ -418,6 +478,14 @@ fn read_sflow_socket(
     );
 
     let mut metrics_cache = metrics::SflowMetricsCache::new(metrics);
+
+    // Common format runs as a two-stage pipeline: this thread decodes,
+    // the encoder thread converts to the destination format and writes.
+    let encoder = match format {
+        OutputFormat::Common => Some(spawn_encoder(Arc::clone(output), Arc::clone(enrichment))),
+        OutputFormat::Raw => None,
+    };
+    let mut chunk: Vec<CommonFlow> = Vec::with_capacity(CHUNK_FLOWS);
 
     loop {
         match reader.read_raw() {
@@ -432,9 +500,11 @@ fn read_sflow_socket(
                     OutputFormat::Common => {
                         let time_received_ns = Some(Utc::now().timestamp_nanos_opt().unwrap_or(0));
                         let flows = SflowProcessor::convert_to_flows(&packet, time_received_ns);
-                        for flow in flows {
-                            let enriched = enrichment.enrich(&flow);
-                            output.write_enriched_flow(&flow, &enriched);
+                        chunk.extend(flows);
+                        if chunk.len() >= CHUNK_FLOWS {
+                            let full =
+                                std::mem::replace(&mut chunk, Vec::with_capacity(CHUNK_FLOWS));
+                            encoder.as_ref().unwrap().send(full).ok();
                         }
                     }
                 }
@@ -449,7 +519,11 @@ fn read_sflow_socket(
                 }
             }
             Ok(SflowReadResult::Timeout) => {
-                // No data available - continue
+                // Idle: hand any partial chunk to the encoder.
+                if !chunk.is_empty() {
+                    let partial = std::mem::replace(&mut chunk, Vec::with_capacity(CHUNK_FLOWS));
+                    encoder.as_ref().unwrap().send(partial).ok();
+                }
             }
             Err(err) => {
                 eprintln!("Error receiving data: {:#?}", err);
@@ -460,7 +534,11 @@ fn read_sflow_socket(
 
 /// Reject serialization/format combinations that cannot be produced.
 fn validate_cli(cli: &Cli) {
-    if cli.serialization != SerializationFormat::Ndjson && cli.format != OutputFormat::Common {
+    if matches!(
+        cli.serialization,
+        SerializationFormat::Csv | SerializationFormat::Parquet
+    ) && cli.format != OutputFormat::Common
+    {
         eprintln!("Error: --serialization csv/parquet requires --format common");
         std::process::exit(1);
     }

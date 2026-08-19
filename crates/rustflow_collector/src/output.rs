@@ -18,6 +18,7 @@ enum WriterKind {
     Ndjson(BufWriter<Box<dyn Write + Send>>),
     Csv(CsvWriter<Box<dyn Write + Send>>),
     Parquet(ParquetSink),
+    Discard,
 }
 
 impl WriterKind {
@@ -31,7 +32,7 @@ impl WriterKind {
             WriterKind::Csv(w) => {
                 w.flush().ok();
             }
-            WriterKind::Parquet(_) => {}
+            WriterKind::Parquet(_) | WriterKind::Discard => {}
         }
     }
 
@@ -49,6 +50,7 @@ impl WriterKind {
                     eprintln!("Failed to finalize parquet file: {}", e);
                 }
             }
+            WriterKind::Discard => {}
         }
     }
 }
@@ -183,6 +185,9 @@ impl OutputWriter {
     }
 
     pub fn write_enriched_flow(&self, flow: &CommonFlow, enriched: &HashMap<String, String>) {
+        if self.serialization == SerializationFormat::Discard {
+            return;
+        }
         let mut state = self.state.lock().unwrap();
         self.rotate_if_due(&mut state);
 
@@ -215,11 +220,15 @@ impl OutputWriter {
                     eprintln!("Failed to write parquet record: {}", e);
                 }
             }
+            WriterKind::Discard => {}
         }
         state.dirty = true;
     }
 
     pub fn write_raw<T: Serialize>(&self, record: &T) {
+        if self.serialization == SerializationFormat::Discard {
+            return;
+        }
         let mut state = self.state.lock().unwrap();
         self.rotate_if_due(&mut state);
 
@@ -232,6 +241,7 @@ impl OutputWriter {
             WriterKind::Csv(_) | WriterKind::Parquet(_) => {
                 unreachable!("write_raw only supports the ndjson serialization format");
             }
+            WriterKind::Discard => {}
         }
         state.dirty = true;
     }
@@ -494,6 +504,7 @@ fn create_writer(
         SerializationFormat::Parquet => WriterKind::Parquet(
             ParquetSink::new(output, enriched_fields).map_err(io::Error::other)?,
         ),
+        SerializationFormat::Discard => WriterKind::Discard,
     };
 
     Ok((writer, rotate_at))
@@ -553,6 +564,7 @@ fn file_extension(serialization: SerializationFormat) -> &'static str {
         SerializationFormat::Ndjson => "ndjson",
         SerializationFormat::Csv => "csv",
         SerializationFormat::Parquet => "parquet",
+        SerializationFormat::Discard => "discard",
     }
 }
 
