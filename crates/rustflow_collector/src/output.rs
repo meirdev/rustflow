@@ -1,9 +1,9 @@
 use std::collections::HashMap;
-use std::fmt::Display;
+use std::fmt::Write as _;
 use std::fs::OpenOptions;
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use chrono::{DateTime, Timelike, Utc};
@@ -21,6 +21,20 @@ enum WriterKind {
 }
 
 impl WriterKind {
+    /// Flush buffered data without ending the file. Parquet batches its own
+    /// rows and has nothing to flush until a row group is complete.
+    fn flush(&mut self) {
+        match self {
+            WriterKind::Ndjson(w) => {
+                w.flush().ok();
+            }
+            WriterKind::Csv(w) => {
+                w.flush().ok();
+            }
+            WriterKind::Parquet(_) => {}
+        }
+    }
+
     /// Flush buffered data and, for Parquet, write the file footer.
     fn finish(&mut self) {
         match self {
@@ -45,6 +59,14 @@ pub const MAX_PARTITION_LEVEL: u8 = 3;
 /// Directory resolution, in minutes, of the deepest partitioning level.
 const LEVEL_3_MINUTES: u32 = 5;
 
+/// Buffer size for the text writers. Records are not flushed individually, so
+/// this is what bounds how often the collector calls into the kernel.
+const WRITE_BUFFER_BYTES: usize = 256 * 1024;
+
+/// How often the background thread flushes buffered output. This bounds how
+/// stale a line can be when flows trickle in too slowly to fill the buffer.
+const FLUSH_INTERVAL: Duration = Duration::from_millis(250);
+
 enum Destination {
     Stdout,
     /// A single file that is never rotated.
@@ -63,6 +85,13 @@ struct State {
     /// Unix timestamp at which the current file must be rotated, if an
     /// interval is configured.
     rotate_at: Option<i64>,
+    /// Set when a record has been written but not yet flushed, so the
+    /// background flusher can skip the syscall while the collector is idle.
+    dirty: bool,
+    /// Reusable buffer for serializing one NDJSON line.
+    line: Vec<u8>,
+    /// Reusable CSV field buffers, kept to hold onto their allocations.
+    fields: Vec<String>,
 }
 
 /// How and where flows are written.
@@ -127,7 +156,13 @@ impl OutputWriter {
         )?;
 
         Ok(Self {
-            state: Mutex::new(State { writer, rotate_at }),
+            state: Mutex::new(State {
+                writer,
+                rotate_at,
+                dirty: false,
+                line: Vec::with_capacity(1024),
+                fields: Vec::new(),
+            }),
             destination,
             serialization,
             enriched_fields: enriched_fields.to_vec(),
@@ -135,38 +170,45 @@ impl OutputWriter {
         })
     }
 
+    /// Start the background thread that flushes buffered output every
+    /// [`FLUSH_INTERVAL`].
+    ///
+    /// The thread holds a [`Weak`] reference so that dropping the last
+    /// [`Arc<OutputWriter>`] still runs `Drop` and finalizes the file — an
+    /// owning reference here would keep a Parquet footer from ever being
+    /// written when reading a pcap.
+    pub fn spawn_flusher(writer: &Arc<Self>) {
+        let weak = Arc::downgrade(writer);
+        std::thread::spawn(move || flush_loop(weak));
+    }
+
     pub fn write_enriched_flow(&self, flow: &CommonFlow, enriched: &HashMap<String, String>) {
         let mut state = self.state.lock().unwrap();
         self.rotate_if_due(&mut state);
 
-        match &mut state.writer {
+        let State {
+            writer,
+            line,
+            fields,
+            ..
+        } = &mut *state;
+
+        match writer {
             WriterKind::Ndjson(w) => {
-                // Combine flow and enriched fields into a single JSON object
-                if let Ok(mut flow_value) = serde_json::to_value(flow) {
-                    if let serde_json::Value::Object(ref mut map) = flow_value {
-                        for (key, value) in enriched {
-                            map.insert(key.clone(), serde_json::Value::String(value.clone()));
-                        }
+                if self.enriched_fields.is_empty() {
+                    // Serialize straight into the output buffer: no
+                    // intermediate `Value` tree and no temporary String.
+                    if serde_json::to_writer(&mut *w, flow).is_ok() {
+                        w.write_all(b"\n").ok();
                     }
-                    if let Ok(json) = serde_json::to_string(&flow_value) {
-                        writeln!(w, "{}", json).ok();
-                        w.flush().ok();
-                    }
+                } else {
+                    write_enriched_json_line(line, flow, &self.enriched_fields, enriched);
+                    w.write_all(line).ok();
                 }
             }
             WriterKind::Csv(w) => {
-                // Serialize flow first, then append enriched fields
-                // We need to serialize the flow to CSV record format
-                let flow_record = flow_to_csv_record(flow);
-                let mut record = flow_record;
-
-                // Append enriched fields in order
-                for field_name in &self.enriched_fields {
-                    record.push(enriched.get(field_name).cloned().unwrap_or_default());
-                }
-
-                w.write_record(&record).ok();
-                w.flush().ok();
+                write_csv_record(fields, flow, &self.enriched_fields, enriched);
+                w.write_record(fields.iter()).ok();
             }
             WriterKind::Parquet(w) => {
                 if let Err(e) = w.write(flow, enriched) {
@@ -174,23 +216,24 @@ impl OutputWriter {
                 }
             }
         }
+        state.dirty = true;
     }
 
     pub fn write_raw<T: Serialize>(&self, record: &T) {
         let mut state = self.state.lock().unwrap();
         self.rotate_if_due(&mut state);
 
-        if let Ok(json) = serde_json::to_string(record) {
-            match &mut state.writer {
-                WriterKind::Ndjson(w) => {
-                    writeln!(w, "{}", json).ok();
-                    w.flush().ok();
-                }
-                WriterKind::Csv(_) | WriterKind::Parquet(_) => {
-                    unreachable!("write_raw only supports the ndjson serialization format");
+        match &mut state.writer {
+            WriterKind::Ndjson(w) => {
+                if serde_json::to_writer(&mut *w, record).is_ok() {
+                    w.write_all(b"\n").ok();
                 }
             }
+            WriterKind::Csv(_) | WriterKind::Parquet(_) => {
+                unreachable!("write_raw only supports the ndjson serialization format");
+            }
         }
+        state.dirty = true;
     }
 
     /// Flush buffered data and finalize the current file.
@@ -200,6 +243,18 @@ impl OutputWriter {
     pub fn finish(&self) {
         if let Ok(mut state) = self.state.lock() {
             state.writer.finish();
+            state.dirty = false;
+        }
+    }
+
+    /// Flush whatever is buffered, if anything has been written since the last
+    /// flush. Called by the background flusher.
+    fn flush_if_dirty(&self) {
+        if let Ok(mut state) = self.state.lock()
+            && state.dirty
+        {
+            state.writer.flush();
+            state.dirty = false;
         }
     }
 
@@ -240,6 +295,138 @@ impl Drop for OutputWriter {
     fn drop(&mut self) {
         self.finish();
     }
+}
+
+/// Flush buffered output periodically until the writer is dropped.
+fn flush_loop(writer: Weak<OutputWriter>) {
+    loop {
+        std::thread::sleep(FLUSH_INTERVAL);
+        match writer.upgrade() {
+            Some(writer) => writer.flush_if_dirty(),
+            // The collector is shutting down and has already finalized.
+            None => return,
+        }
+    }
+}
+
+/// Serialize one flow plus its enrichment fields as a single JSON object,
+/// followed by a newline, into `line`.
+///
+/// Serde has no public way to splice extra keys into a struct's output, so the
+/// flow is serialized first and the enrichment fields are appended before the
+/// closing brace. Keys and values still go through `serde_json` so escaping is
+/// handled properly.
+fn write_enriched_json_line(
+    line: &mut Vec<u8>,
+    flow: &CommonFlow,
+    enriched_fields: &[String],
+    enriched: &HashMap<String, String>,
+) {
+    line.clear();
+    if serde_json::to_writer(&mut *line, flow).is_err() {
+        return;
+    }
+
+    // Reopen the object to append the enrichment fields.
+    debug_assert_eq!(line.last(), Some(&b'}'));
+    line.pop();
+
+    for name in enriched_fields {
+        let Some(value) = enriched.get(name) else {
+            continue;
+        };
+        line.push(b',');
+        serde_json::to_writer(&mut *line, name).ok();
+        line.push(b':');
+        serde_json::to_writer(&mut *line, value).ok();
+    }
+
+    line.push(b'}');
+    line.push(b'\n');
+}
+
+/// Render one flow plus its enrichment fields into `fields`, reusing each
+/// field's existing allocation.
+fn write_csv_record(
+    fields: &mut Vec<String>,
+    flow: &CommonFlow,
+    enriched_fields: &[String],
+    enriched: &HashMap<String, String>,
+) {
+    let needed = COMMON_FLOW_HEADERS.len() + enriched_fields.len();
+    if fields.len() < needed {
+        fields.resize_with(needed, String::new);
+    }
+    for field in fields.iter_mut() {
+        field.clear();
+    }
+
+    let mut i = 0;
+    /// Write a required field.
+    macro_rules! put {
+        ($value:expr) => {{
+            write!(fields[i], "{}", $value).ok();
+            i += 1;
+        }};
+    }
+    /// Write an optional field; `None` leaves the field empty.
+    macro_rules! put_opt {
+        ($value:expr) => {{
+            if let Some(value) = &$value {
+                write!(fields[i], "{}", value).ok();
+            }
+            i += 1;
+        }};
+    }
+
+    put!(flow.flow_type);
+    put_opt!(flow.time_received_ns);
+    put!(flow.sequence_num);
+    put_opt!(flow.sampling_rate);
+    put_opt!(flow.sampler_address);
+    put_opt!(flow.time_flow_start_ns);
+    put_opt!(flow.time_flow_end_ns);
+    put!(flow.bytes);
+    put!(flow.packets);
+    put_opt!(flow.src_addr);
+    put_opt!(flow.dst_addr);
+    put_opt!(flow.src_mac);
+    put_opt!(flow.dst_mac);
+    put_opt!(flow.etype);
+    put_opt!(flow.proto);
+    put_opt!(flow.src_port);
+    put_opt!(flow.dst_port);
+    put_opt!(flow.in_if);
+    put_opt!(flow.out_if);
+    put_opt!(flow.ip_tos);
+    put_opt!(flow.ip_ttl);
+    put_opt!(flow.tcp_flags);
+    put_opt!(flow.icmp_type);
+    put_opt!(flow.icmp_code);
+    put_opt!(flow.ipv6_flow_label);
+    put_opt!(flow.fragment_id);
+    put_opt!(flow.fragment_offset);
+    put_opt!(flow.src_as);
+    put_opt!(flow.dst_as);
+    put_opt!(flow.next_hop);
+    put_opt!(flow.src_net);
+    put_opt!(flow.dst_net);
+    put_opt!(flow.bgp_next_hop);
+    put_opt!(flow.src_vlan);
+    put_opt!(flow.dst_vlan);
+    put_opt!(flow.observation_domain_id);
+    put_opt!(flow.template_id);
+
+    debug_assert_eq!(i, COMMON_FLOW_HEADERS.len());
+
+    for name in enriched_fields {
+        if let Some(value) = enriched.get(name) {
+            fields[i].push_str(value);
+        }
+        i += 1;
+    }
+
+    fields.truncate(needed);
 }
 
 /// Open the sink for the window containing `now` and return it together with
@@ -289,9 +476,13 @@ fn create_writer(
     };
 
     let writer = match serialization {
-        SerializationFormat::Ndjson => WriterKind::Ndjson(BufWriter::new(output)),
+        SerializationFormat::Ndjson => {
+            WriterKind::Ndjson(BufWriter::with_capacity(WRITE_BUFFER_BYTES, output))
+        }
         SerializationFormat::Csv => {
-            let mut w = CsvWriter::from_writer(output);
+            let mut w = csv::WriterBuilder::new()
+                .buffer_capacity(WRITE_BUFFER_BYTES)
+                .from_writer(output);
             // Write headers: common flow fields + enriched fields
             let mut headers: Vec<&str> = COMMON_FLOW_HEADERS.to_vec();
             for field in enriched_fields {
@@ -365,55 +556,6 @@ fn file_extension(serialization: SerializationFormat) -> &'static str {
     }
 }
 
-fn opt_str<T: Display>(value: &Option<T>) -> String {
-    match value {
-        Some(v) => v.to_string(),
-        None => String::new(),
-    }
-}
-
-fn flow_to_csv_record(flow: &CommonFlow) -> Vec<String> {
-    vec![
-        flow.flow_type.to_string(),
-        opt_str(&flow.time_received_ns),
-        flow.sequence_num.to_string(),
-        opt_str(&flow.sampling_rate),
-        opt_str(&flow.sampler_address),
-        opt_str(&flow.time_flow_start_ns),
-        opt_str(&flow.time_flow_end_ns),
-        flow.bytes.to_string(),
-        flow.packets.to_string(),
-        opt_str(&flow.src_addr),
-        opt_str(&flow.dst_addr),
-        opt_str(&flow.src_mac),
-        opt_str(&flow.dst_mac),
-        opt_str(&flow.etype),
-        opt_str(&flow.proto),
-        opt_str(&flow.src_port),
-        opt_str(&flow.dst_port),
-        opt_str(&flow.in_if),
-        opt_str(&flow.out_if),
-        opt_str(&flow.ip_tos),
-        opt_str(&flow.ip_ttl),
-        opt_str(&flow.tcp_flags),
-        opt_str(&flow.icmp_type),
-        opt_str(&flow.icmp_code),
-        opt_str(&flow.ipv6_flow_label),
-        opt_str(&flow.fragment_id),
-        opt_str(&flow.fragment_offset),
-        opt_str(&flow.src_as),
-        opt_str(&flow.dst_as),
-        opt_str(&flow.next_hop),
-        opt_str(&flow.src_net),
-        opt_str(&flow.dst_net),
-        opt_str(&flow.bgp_next_hop),
-        opt_str(&flow.src_vlan),
-        opt_str(&flow.dst_vlan),
-        opt_str(&flow.observation_domain_id),
-        opt_str(&flow.template_id),
-    ]
-}
-
 const COMMON_FLOW_HEADERS: &[&str] = &[
     "flow_type",
     "time_received_ns",
@@ -464,6 +606,88 @@ mod tests {
 
     /// 2024-01-02T15:07:00Z
     const SAMPLE: i64 = 1_704_208_020;
+
+    fn sample_flow() -> CommonFlow {
+        use std::net::{IpAddr, Ipv4Addr};
+
+        use rustflow_core::common::common_flow::FlowType;
+        let mut flow = CommonFlow::new(FlowType::Ipfix);
+        flow.src_addr = Some(IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3)));
+        flow.src_port = Some(443);
+        flow.bytes = 1234;
+        // dst_addr and most other fields stay None
+        flow
+    }
+
+    #[test]
+    fn enriched_json_line_is_valid_json_with_the_extra_keys() {
+        let fields = vec!["src_asn".to_string(), "src_org".to_string()];
+        let mut enriched = HashMap::new();
+        enriched.insert("src_asn".to_string(), "13335".to_string());
+        // a value that must be escaped, and would corrupt the object if spliced raw
+        enriched.insert("src_org".to_string(), "Cloud \"Net\", Inc.\\x".to_string());
+
+        let mut line = Vec::new();
+        write_enriched_json_line(&mut line, &sample_flow(), &fields, &enriched);
+
+        assert_eq!(line.last(), Some(&b'\n'));
+        let value: serde_json::Value = serde_json::from_slice(&line).expect("valid JSON");
+        assert_eq!(value["src_asn"], "13335");
+        assert_eq!(value["src_org"], "Cloud \"Net\", Inc.\\x");
+        assert_eq!(value["src_port"], 443);
+        assert_eq!(value["flow_type"], "IPFIX");
+    }
+
+    #[test]
+    fn enriched_json_line_omits_absent_fields_and_reuses_the_buffer() {
+        let fields = vec!["src_asn".to_string()];
+        let mut line = Vec::new();
+
+        write_enriched_json_line(&mut line, &sample_flow(), &fields, &HashMap::new());
+        let value: serde_json::Value = serde_json::from_slice(&line).unwrap();
+        assert!(value.get("src_asn").is_none());
+
+        // writing again must not append to the previous line
+        let mut enriched = HashMap::new();
+        enriched.insert("src_asn".to_string(), "64512".to_string());
+        write_enriched_json_line(&mut line, &sample_flow(), &fields, &enriched);
+        let value: serde_json::Value = serde_json::from_slice(&line).unwrap();
+        assert_eq!(value["src_asn"], "64512");
+    }
+
+    #[test]
+    fn csv_record_matches_the_header_width() {
+        let fields = vec!["src_asn".to_string(), "src_org".to_string()];
+        let mut enriched = HashMap::new();
+        enriched.insert("src_asn".to_string(), "13335".to_string());
+
+        let mut buf = Vec::new();
+        write_csv_record(&mut buf, &sample_flow(), &fields, &enriched);
+
+        assert_eq!(buf.len(), COMMON_FLOW_HEADERS.len() + fields.len());
+        assert_eq!(buf[0], "IPFIX");
+        assert_eq!(buf[7], "1234");
+        // an absent optional field stays empty
+        assert_eq!(buf[10], "");
+        assert_eq!(buf[COMMON_FLOW_HEADERS.len()], "13335");
+        // an enrichment field with no value stays empty
+        assert_eq!(buf[COMMON_FLOW_HEADERS.len() + 1], "");
+    }
+
+    #[test]
+    fn csv_record_does_not_leak_values_between_flows() {
+        let fields: Vec<String> = Vec::new();
+        let mut buf = Vec::new();
+        let mut flow = sample_flow();
+        write_csv_record(&mut buf, &flow, &fields, &HashMap::new());
+        assert_eq!(buf[9], "10.1.2.3");
+
+        flow.src_addr = None;
+        flow.bytes = 7;
+        write_csv_record(&mut buf, &flow, &fields, &HashMap::new());
+        assert_eq!(buf[9], "", "stale value from the previous record");
+        assert_eq!(buf[7], "7");
+    }
 
     #[test]
     fn partition_level_0_writes_flat_into_the_root() {

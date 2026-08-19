@@ -95,6 +95,10 @@ rustflow_collector -t netflow -p 9995 -f common -o flows.ndjson
 
 Parquet records are buffered into row groups and the file footer is only written when the file is closed, so a Parquet file becomes readable once it is rotated or the collector is shut down with `SIGINT`/`SIGTERM`.
 
+**Output buffering:** records go into a 256 KB buffer rather than being flushed one at a time, and a background thread flushes anything pending every 250 ms. A line is therefore visible within 250 ms of being written even when flows trickle in slowly, and rotation, shutdown (`SIGINT`/`SIGTERM`) and reaching the end of a `--pcap` file always flush.
+
+**NDJSON key order** follows the flow's field order (`flow_type`, `time_received_ns`, `sequence_num`, ...) rather than being sorted alphabetically. The JSON is unchanged semantically; only the byte layout of each line differs.
+
 ### Output File Rotation
 
 `--output` is a **single file** on its own. Add `--interval` and it becomes the **root directory** of a rotated tree, with one file per interval written into it:

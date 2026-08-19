@@ -527,6 +527,11 @@ fn main() {
         .expect("Failed to create output writer"),
     );
 
+    // Records are buffered rather than flushed one at a time, so a background
+    // thread keeps the output moving when flows arrive too slowly to fill the
+    // buffer.
+    OutputWriter::spawn_flusher(&output);
+
     // Finalize the output on Ctrl-C / SIGTERM: a parquet file is unreadable
     // until its footer is written.
     {
