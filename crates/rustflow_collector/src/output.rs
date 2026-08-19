@@ -84,6 +84,9 @@ enum Destination {
 
 struct State {
     writer: WriterKind,
+    /// Files in a rotated tree are written under a temporary name and moved
+    /// to their final name only once complete.
+    pending_rename: Option<(PathBuf, PathBuf)>,
     /// Unix timestamp at which the current file must be rotated, if an
     /// interval is configured.
     rotate_at: Option<i64>,
@@ -149,7 +152,7 @@ impl OutputWriter {
             Destination::File(_) | Destination::Stdout => None,
         };
 
-        let (writer, rotate_at) = create_writer(
+        let (writer, rotate_at, pending_rename) = create_writer(
             &destination,
             serialization,
             enriched_fields,
@@ -160,6 +163,7 @@ impl OutputWriter {
         Ok(Self {
             state: Mutex::new(State {
                 writer,
+                pending_rename,
                 rotate_at,
                 dirty: false,
                 line: Vec::with_capacity(1024),
@@ -253,6 +257,7 @@ impl OutputWriter {
     pub fn finish(&self) {
         if let Ok(mut state) = self.state.lock() {
             state.writer.finish();
+            commit_file(state.pending_rename.take());
             state.dirty = false;
         }
     }
@@ -287,9 +292,12 @@ impl OutputWriter {
             self.interval_secs,
             now,
         ) {
-            Ok((writer, next_rotate_at)) => {
+            Ok((writer, next_rotate_at, next_pending)) => {
                 let mut previous = std::mem::replace(&mut state.writer, writer);
                 previous.finish();
+                // Only once the footer is on disk does the file get its
+                // final, glob-visible name.
+                commit_file(std::mem::replace(&mut state.pending_rename, next_pending));
                 state.rotate_at = next_rotate_at;
             }
             Err(e) => {
@@ -447,7 +455,7 @@ fn create_writer(
     enriched_fields: &[String],
     interval_secs: Option<i64>,
     now: DateTime<Utc>,
-) -> io::Result<(WriterKind, Option<i64>)> {
+) -> io::Result<(WriterKind, Option<i64>, Option<(PathBuf, PathBuf)>)> {
     let (path, rotate_at) = match destination {
         Destination::Stdout => (None, None),
         Destination::File(path) => (Some(path.clone()), None),
@@ -469,7 +477,18 @@ fn create_writer(
         }
     };
 
-    let output: Box<dyn Write + Send> = match &path {
+    let pending_rename = match (&destination, &path) {
+        (Destination::Directory { .. }, Some(final_path)) => {
+            Some((temp_path(final_path), final_path.clone()))
+        }
+        _ => None,
+    };
+    let open_path = pending_rename
+        .as_ref()
+        .map(|(tmp, _)| tmp.clone())
+        .or_else(|| path.clone());
+
+    let output: Box<dyn Write + Send> = match &open_path {
         Some(path) => {
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
@@ -507,7 +526,33 @@ fn create_writer(
         SerializationFormat::Discard => WriterKind::Discard,
     };
 
-    Ok((writer, rotate_at))
+    Ok((writer, rotate_at, pending_rename))
+}
+
+/// Temporary name for an in-progress file: `flows-X.parquet` is written as
+/// `.flows-X.parquet.tmp` in the same directory (same filesystem, so the
+/// final rename is atomic), hidden from `*.parquet` globs by both the dot
+/// prefix and the extension.
+fn temp_path(final_path: &Path) -> PathBuf {
+    let name = final_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "output".to_string());
+    final_path.with_file_name(format!(".{}.tmp", name))
+}
+
+/// Move a finished temporary file to its final name.
+fn commit_file(pending: Option<(PathBuf, PathBuf)>) {
+    if let Some((tmp, final_path)) = pending
+        && let Err(e) = std::fs::rename(&tmp, &final_path)
+    {
+        eprintln!(
+            "Failed to move {} to {}: {}",
+            tmp.display(),
+            final_path.display(),
+            e
+        );
+    }
 }
 
 /// Build the path of the file holding the interval window starting at
