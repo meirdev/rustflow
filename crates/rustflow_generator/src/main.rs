@@ -58,7 +58,7 @@ const FLOW_TEMPLATE_ID: u16 = 256;
 const OPTIONS_TEMPLATE_ID: u16 = 257;
 
 #[derive(Parser, Debug)]
-#[command(name = "rustflow_generator")]
+#[command(name = "rustflow_generator", version)]
 #[command(about = "IPFIX flow generator for testing")]
 struct Args {
     /// Collector host address

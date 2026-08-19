@@ -22,7 +22,7 @@ use rustflow_core::netflow_v5::parser::NETFLOW_V5_VERSION;
 use rustflow_core::netflow_v9::parser::NETFLOW_V9_VERSION;
 
 #[derive(Parser)]
-#[command(name = "rustflow_collector")]
+#[command(name = "rustflow_collector", version)]
 #[command(about = "A flow data collector supporting NetFlow and sFlow protocols")]
 struct Cli {
     /// Flow protocol type to collect
