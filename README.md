@@ -7,7 +7,9 @@
 &nbsp;
 &nbsp;
 
-**RustFlow** is a high-performance, modern flow collector written in Rust.
+<div align="center">
+  <strong>RustFlow</strong> is a high-performance, modern flow collector written in Rust.
+</div>
 
 ## Comparison
 
@@ -85,19 +87,13 @@ rustflow_collector -t netflow -p 9995 -f common -s parquet -o flows.parquet
 rustflow_collector -t netflow -p 9995 -f common -o flows.ndjson
 ```
 
-| Serialization (`-s`) | Description                                                             |
-| -------------------- | ----------------------------------------------------------------------- |
+| Serialization (`-s`) | Description                                                                |
+| -------------------- | -------------------------------------------------------------------------- |
 | `ndjson` (default)   | Newline-delimited JSON, one object per line. Works with `raw` and `common` |
-| `csv`                | CSV with a header row. Requires `-f common`                             |
-| `parquet`            | Apache Parquet with Snappy compression. Requires `-f common` and `-o`   |
+| `csv`                | CSV with a header row. Requires `-f common`                                |
+| `parquet`            | Apache Parquet with Snappy compression. Requires `-f common` and `-o`      |
 
 **Parquet column types:** flow fields keep their native widths (`UInt8`/`UInt16`/`UInt32`/`UInt64`), the `time_*_ns` fields are written as `TIMESTAMP(NANOS, UTC)`, and IP and MAC addresses are written as fixed-size binary — 16 bytes for addresses (IPv4 is stored in its IPv4-mapped IPv6 form) and 6 bytes for MACs. Enrichment fields are appended as string columns.
-
-Parquet records are buffered into row groups and the file footer is only written when the file is closed, so a Parquet file becomes readable once it is rotated or the collector is shut down with `SIGINT`/`SIGTERM`.
-
-**Output buffering:** records go into a 256 KB buffer rather than being flushed one at a time, and a background thread flushes anything pending every 250 ms. A line is therefore visible within 250 ms of being written even when flows trickle in slowly, and rotation, shutdown (`SIGINT`/`SIGTERM`) and reaching the end of a `--pcap` file always flush.
-
-**NDJSON key order** follows the flow's field order (`flow_type`, `time_received_ns`, `sequence_num`, ...) rather than being sorted alphabetically. The JSON is unchanged semantically; only the byte layout of each line differs.
 
 ### Output File Rotation
 
@@ -116,12 +112,12 @@ rustflow_collector -t netflow -p 9995 -f common -s parquet -o /data/flows -i 5m 
 
 Use `--level` (`-l`) to choose how deeply the output directory is partitioned by the interval's start time:
 
-| Level         | Layout                    | Example                                             |
-| ------------- | ------------------------- | --------------------------------------------------- |
-| `0` (default) | `<output>/`               | `flows/flows-20240102T150500Z.parquet`              |
-| `1`           | `<output>/%Y/%m/%d/`      | `flows/2024/01/02/flows-...parquet`                 |
-| `2`           | `<output>/%Y/%m/%d/%H/`   | `flows/2024/01/02/15/flows-...parquet`              |
-| `3`           | `<output>/%Y/%m/%d/%H/%M` | `flows/2024/01/02/15/05/flows-...parquet` (5 min)   |
+| Level         | Layout                    | Example                                           |
+| ------------- | ------------------------- | ------------------------------------------------- |
+| `0` (default) | `<output>/`               | `flows/flows-20240102T150500Z.parquet`            |
+| `1`           | `<output>/%Y/%m/%d/`      | `flows/2024/01/02/flows-...parquet`               |
+| `2`           | `<output>/%Y/%m/%d/%H/`   | `flows/2024/01/02/15/flows-...parquet`            |
+| `3`           | `<output>/%Y/%m/%d/%H/%M` | `flows/2024/01/02/15/05/flows-...parquet` (5 min) |
 
 File names are `<prefix>-<interval start>.<ext>`, where the prefix defaults to `flows` (set it with `--prefix` so several collectors can share one output tree) and the extension follows `--serialization` (`.ndjson`, `.csv` or `.parquet`). Missing directories are created as needed.
 
