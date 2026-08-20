@@ -153,8 +153,6 @@ rustflow collect -t netflow -p 9995 -f common -o flows.ndjson
 | `parquet`            | Apache Parquet with Snappy compression. Requires `-f common` and `-o`      |
 | `discard`            | Decode and count flows (metrics only), write nothing. For load testing     |
 
-**Parquet column types:** flow fields keep their native widths (`UInt8`/`UInt16`/`UInt32`/`UInt64`), the `time_*_ns` fields are written as `TIMESTAMP(NANOS, UTC)`, and IP and MAC addresses are written as fixed-size binary — 16 bytes for addresses (IPv4 is stored in its IPv4-mapped IPv6 form) and 6 bytes for MACs. Enrichment fields are appended as string columns.
-
 ### Output File Rotation
 
 `--output` is a **single file** on its own. Add `--interval` and it becomes the **root directory** of a rotated tree, with one file per interval written into it:

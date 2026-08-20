@@ -1,14 +1,13 @@
+use std::fmt::{self, Write as _};
 use std::io::Write;
-use std::net::IpAddr;
 use std::sync::Arc;
 
 use arrow_array::builder::{
-    FixedSizeBinaryBuilder, StringBuilder, TimestampNanosecondBuilder, UInt8Builder, UInt16Builder,
-    UInt32Builder, UInt64Builder,
+    StringBuilder, TimestampNanosecondBuilder, UInt8Builder, UInt16Builder, UInt32Builder,
+    UInt64Builder,
 };
 use arrow_array::{ArrayRef, RecordBatch};
 use arrow_schema::{DataType, Field, Schema, TimeUnit};
-use macaddr::MacAddr6;
 use parquet::arrow::ArrowWriter;
 use parquet::basic::Compression;
 use parquet::errors::ParquetError;
@@ -19,13 +18,6 @@ use rustflow_core::common::common_flow::{CommonFlow, FlowType};
 /// Large enough to amortize the per-batch column-writer setup across all
 /// ~40 columns.
 const BATCH_ROWS: usize = 32768;
-
-/// Width of an IP address column: IPv4 addresses are stored as IPv4-mapped
-/// IPv6 so both families share one fixed-size column.
-const IP_ADDR_LEN: i32 = 16;
-
-/// Width of a MAC address column.
-const MAC_ADDR_LEN: i32 = 6;
 
 /// Writes common flows to a Snappy-compressed Parquet file.
 ///
@@ -84,15 +76,15 @@ impl ParquetSink {
         b.time_received_ns.append_option(flow.time_received_ns);
         b.sequence_num.append_value(flow.sequence_num);
         b.sampling_rate.append_option(flow.sampling_rate);
-        append_ip(&mut b.sampler_address, &flow.sampler_address);
+        append_display(&mut b.sampler_address, &flow.sampler_address);
         b.time_flow_start_ns.append_option(flow.time_flow_start_ns);
         b.time_flow_end_ns.append_option(flow.time_flow_end_ns);
         b.bytes.append_value(flow.bytes);
         b.packets.append_value(flow.packets);
-        append_ip(&mut b.src_addr, &flow.src_addr);
-        append_ip(&mut b.dst_addr, &flow.dst_addr);
-        append_mac(&mut b.src_mac, &flow.src_mac);
-        append_mac(&mut b.dst_mac, &flow.dst_mac);
+        append_display(&mut b.src_addr, &flow.src_addr);
+        append_display(&mut b.dst_addr, &flow.dst_addr);
+        append_display(&mut b.src_mac, &flow.src_mac);
+        append_display(&mut b.dst_mac, &flow.dst_mac);
         b.etype.append_option(flow.etype);
         b.proto.append_option(flow.proto);
         b.src_port.append_option(flow.src_port);
@@ -109,10 +101,10 @@ impl ParquetSink {
         b.fragment_offset.append_option(flow.fragment_offset);
         b.src_as.append_option(flow.src_as);
         b.dst_as.append_option(flow.dst_as);
-        append_ip(&mut b.next_hop, &flow.next_hop);
+        append_display(&mut b.next_hop, &flow.next_hop);
         b.src_net.append_option(flow.src_net);
         b.dst_net.append_option(flow.dst_net);
-        append_ip(&mut b.bgp_next_hop, &flow.bgp_next_hop);
+        append_display(&mut b.bgp_next_hop, &flow.bgp_next_hop);
         b.src_vlan.append_option(flow.src_vlan);
         b.dst_vlan.append_option(flow.dst_vlan);
         b.observation_domain_id
@@ -163,53 +155,32 @@ impl Drop for ParquetSink {
     }
 }
 
-/// Fixed-width byte representation of an address: IPv4 is widened to its
-/// IPv4-mapped IPv6 form so every address occupies 16 bytes.
-fn ip_octets(addr: IpAddr) -> [u8; IP_ADDR_LEN as usize] {
-    match addr {
-        IpAddr::V4(v4) => v4.to_ipv6_mapped().octets(),
-        IpAddr::V6(v6) => v6.octets(),
-    }
-}
-
-// The fixed-size appends below can only fail on a width mismatch, and the
-// inputs are `[u8; 16]` / `[u8; 6]` by construction. They are infallible in
-// practice, and must be treated so: a mid-row error would leave the column
-// builders at unequal lengths and poison the whole batch.
-
-fn append_ip(builder: &mut FixedSizeBinaryBuilder, value: &Option<IpAddr>) {
+/// Append a value's `Display` form to a string column without allocating an
+/// intermediate `String`.
+fn append_display<T: fmt::Display>(builder: &mut StringBuilder, value: &Option<T>) {
     match value {
-        Some(addr) => builder
-            .append_value(ip_octets(*addr))
-            .expect("IP column is 16 bytes wide"),
+        Some(value) => {
+            write!(builder, "{}", value).expect("writing to a string builder cannot fail");
+            builder.append_value("");
+        }
         None => builder.append_null(),
     }
 }
 
-fn append_mac(builder: &mut FixedSizeBinaryBuilder, value: &Option<MacAddr6>) {
-    match value {
-        Some(mac) => builder
-            .append_value(mac.into_array())
-            .expect("MAC column is 6 bytes wide"),
-        None => builder.append_null(),
-    }
-}
-
-/// One Arrow builder per output column, in schema order.
 struct FlowBuilders {
     flow_type: StringBuilder,
     time_received_ns: TimestampNanosecondBuilder,
     sequence_num: UInt32Builder,
     sampling_rate: UInt32Builder,
-    sampler_address: FixedSizeBinaryBuilder,
+    sampler_address: StringBuilder,
     time_flow_start_ns: TimestampNanosecondBuilder,
     time_flow_end_ns: TimestampNanosecondBuilder,
     bytes: UInt64Builder,
     packets: UInt64Builder,
-    src_addr: FixedSizeBinaryBuilder,
-    dst_addr: FixedSizeBinaryBuilder,
-    src_mac: FixedSizeBinaryBuilder,
-    dst_mac: FixedSizeBinaryBuilder,
+    src_addr: StringBuilder,
+    dst_addr: StringBuilder,
+    src_mac: StringBuilder,
+    dst_mac: StringBuilder,
     etype: UInt16Builder,
     proto: UInt8Builder,
     src_port: UInt16Builder,
@@ -226,10 +197,10 @@ struct FlowBuilders {
     fragment_offset: UInt16Builder,
     src_as: UInt32Builder,
     dst_as: UInt32Builder,
-    next_hop: FixedSizeBinaryBuilder,
+    next_hop: StringBuilder,
     src_net: UInt8Builder,
     dst_net: UInt8Builder,
-    bgp_next_hop: FixedSizeBinaryBuilder,
+    bgp_next_hop: StringBuilder,
     src_vlan: UInt16Builder,
     dst_vlan: UInt16Builder,
     observation_domain_id: UInt32Builder,
@@ -245,15 +216,15 @@ impl FlowBuilders {
             time_received_ns: timestamp(),
             sequence_num: UInt32Builder::new(),
             sampling_rate: UInt32Builder::new(),
-            sampler_address: FixedSizeBinaryBuilder::new(IP_ADDR_LEN),
+            sampler_address: StringBuilder::new(),
             time_flow_start_ns: timestamp(),
             time_flow_end_ns: timestamp(),
             bytes: UInt64Builder::new(),
             packets: UInt64Builder::new(),
-            src_addr: FixedSizeBinaryBuilder::new(IP_ADDR_LEN),
-            dst_addr: FixedSizeBinaryBuilder::new(IP_ADDR_LEN),
-            src_mac: FixedSizeBinaryBuilder::new(MAC_ADDR_LEN),
-            dst_mac: FixedSizeBinaryBuilder::new(MAC_ADDR_LEN),
+            src_addr: StringBuilder::new(),
+            dst_addr: StringBuilder::new(),
+            src_mac: StringBuilder::new(),
+            dst_mac: StringBuilder::new(),
             etype: UInt16Builder::new(),
             proto: UInt8Builder::new(),
             src_port: UInt16Builder::new(),
@@ -270,10 +241,10 @@ impl FlowBuilders {
             fragment_offset: UInt16Builder::new(),
             src_as: UInt32Builder::new(),
             dst_as: UInt32Builder::new(),
-            next_hop: FixedSizeBinaryBuilder::new(IP_ADDR_LEN),
+            next_hop: StringBuilder::new(),
             src_net: UInt8Builder::new(),
             dst_net: UInt8Builder::new(),
-            bgp_next_hop: FixedSizeBinaryBuilder::new(IP_ADDR_LEN),
+            bgp_next_hop: StringBuilder::new(),
             src_vlan: UInt16Builder::new(),
             dst_vlan: UInt16Builder::new(),
             observation_domain_id: UInt32Builder::new(),
@@ -282,7 +253,6 @@ impl FlowBuilders {
         }
     }
 
-    /// Drain every builder into column arrays, in schema order.
     fn finish(&mut self) -> Vec<ArrayRef> {
         let mut columns: Vec<ArrayRef> = vec![
             Arc::new(self.flow_type.finish()),
@@ -338,19 +308,15 @@ fn build_schema(enriched_fields: &[String]) -> Schema {
         Field::new("time_received_ns", timestamp(), true),
         Field::new("sequence_num", DataType::UInt32, false),
         Field::new("sampling_rate", DataType::UInt32, true),
-        Field::new(
-            "sampler_address",
-            DataType::FixedSizeBinary(IP_ADDR_LEN),
-            true,
-        ),
+        Field::new("sampler_address", DataType::Utf8, true),
         Field::new("time_flow_start_ns", timestamp(), true),
         Field::new("time_flow_end_ns", timestamp(), true),
         Field::new("bytes", DataType::UInt64, false),
         Field::new("packets", DataType::UInt64, false),
-        Field::new("src_addr", DataType::FixedSizeBinary(IP_ADDR_LEN), true),
-        Field::new("dst_addr", DataType::FixedSizeBinary(IP_ADDR_LEN), true),
-        Field::new("src_mac", DataType::FixedSizeBinary(MAC_ADDR_LEN), true),
-        Field::new("dst_mac", DataType::FixedSizeBinary(MAC_ADDR_LEN), true),
+        Field::new("src_addr", DataType::Utf8, true),
+        Field::new("dst_addr", DataType::Utf8, true),
+        Field::new("src_mac", DataType::Utf8, true),
+        Field::new("dst_mac", DataType::Utf8, true),
         Field::new("etype", DataType::UInt16, true),
         Field::new("proto", DataType::UInt8, true),
         Field::new("src_port", DataType::UInt16, true),
@@ -367,10 +333,10 @@ fn build_schema(enriched_fields: &[String]) -> Schema {
         Field::new("fragment_offset", DataType::UInt16, true),
         Field::new("src_as", DataType::UInt32, true),
         Field::new("dst_as", DataType::UInt32, true),
-        Field::new("next_hop", DataType::FixedSizeBinary(IP_ADDR_LEN), true),
+        Field::new("next_hop", DataType::Utf8, true),
         Field::new("src_net", DataType::UInt8, true),
         Field::new("dst_net", DataType::UInt8, true),
-        Field::new("bgp_next_hop", DataType::FixedSizeBinary(IP_ADDR_LEN), true),
+        Field::new("bgp_next_hop", DataType::Utf8, true),
         Field::new("src_vlan", DataType::UInt16, true),
         Field::new("dst_vlan", DataType::UInt16, true),
         Field::new("observation_domain_id", DataType::UInt32, true),
@@ -388,9 +354,10 @@ fn build_schema(enriched_fields: &[String]) -> Schema {
 mod tests {
     use std::collections::HashMap;
     use std::fs::File;
-    use std::net::{Ipv4Addr, Ipv6Addr};
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-    use arrow_array::{Array, FixedSizeBinaryArray, StringArray, UInt16Array};
+    use arrow_array::{Array, StringArray, UInt16Array};
+    use macaddr::MacAddr6;
     use rustflow_core::common::common_flow::FlowType;
 
     use super::*;
@@ -400,7 +367,7 @@ mod tests {
     }
 
     #[test]
-    fn writes_addresses_as_fixed_binary() {
+    fn writes_addresses_as_text() {
         let path = temp_path("rustflow_parquet_sink_test.parquet");
         let mut flow = CommonFlow::new(FlowType::Ipfix);
         flow.src_addr = Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)));
@@ -434,34 +401,24 @@ mod tests {
 
         let column = |name: &str| batch.column(batch.schema().index_of(name).unwrap()).clone();
 
-        let src_addr = column("src_addr");
-        let src_addr = src_addr
-            .as_any()
-            .downcast_ref::<FixedSizeBinaryArray>()
-            .unwrap();
-        assert_eq!(src_addr.value_length(), IP_ADDR_LEN);
-        // IPv4 is stored as its IPv4-mapped IPv6 form.
-        assert_eq!(
-            src_addr.value(0),
-            Ipv4Addr::new(10, 0, 0, 1).to_ipv6_mapped().octets()
-        );
+        let text = |name: &str| {
+            let col = column(name);
+            col.as_any().downcast_ref::<StringArray>().unwrap().clone()
+        };
+
+        let src_addr = text("src_addr");
+        assert_eq!(src_addr.value(0), "10.0.0.1");
         assert!(src_addr.is_null(1));
 
-        let dst_addr = column("dst_addr");
-        let dst_addr = dst_addr
-            .as_any()
-            .downcast_ref::<FixedSizeBinaryArray>()
-            .unwrap();
-        assert_eq!(dst_addr.value(0), Ipv6Addr::LOCALHOST.octets());
+        let dst_addr = text("dst_addr");
+        assert_eq!(dst_addr.value(0), Ipv6Addr::LOCALHOST.to_string());
 
-        let src_mac = column("src_mac");
-        let src_mac = src_mac
-            .as_any()
-            .downcast_ref::<FixedSizeBinaryArray>()
-            .unwrap();
-        assert_eq!(src_mac.value_length(), MAC_ADDR_LEN);
-        assert_eq!(src_mac.value(0), [0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
+        let src_mac = text("src_mac");
+        assert_eq!(src_mac.value(0), "00:11:22:33:44:55");
         assert!(src_mac.is_null(1));
+
+        let bgp = text("bgp_next_hop");
+        assert!(bgp.is_null(0) && bgp.is_null(1));
 
         let src_port = column("src_port");
         assert_eq!(

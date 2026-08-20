@@ -101,12 +101,10 @@ impl PrefixEnrichment {
 
             let mut fields = HashMap::new();
             for (idx, header) in headers.iter().enumerate() {
-                if idx != prefix_col_idx {
-                    if let Some(value) = record.get(idx) {
-                        let value = value.trim();
-                        if !value.is_empty() {
-                            fields.insert(header.clone(), value.to_string());
-                        }
+                if let Some(value) = record.get(idx) {
+                    let value = value.trim();
+                    if !value.is_empty() {
+                        fields.insert(header.clone(), value.to_string());
                     }
                 }
             }
@@ -346,5 +344,85 @@ impl From<std::io::Error> for EnrichmentError {
 impl From<maxminddb::MaxMindDbError> for EnrichmentError {
     fn from(e: maxminddb::MaxMindDbError) -> Self {
         Self::MaxmindDb(e)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+    use std::net::Ipv4Addr;
+
+    use super::*;
+
+    fn csv_file(name: &str, body: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(name);
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(body.as_bytes()).unwrap();
+        path
+    }
+
+    #[test]
+    fn prefix_column_is_available_as_a_field() {
+        let path = csv_file(
+            "rustflow_enrich_prefix.csv",
+            "prefix,asn,org\n\
+             10.0.0.0/8,13335,CLOUDFLARENET\n\
+             10.1.0.0/16,2519,VECTANT\n",
+        );
+        let tries = PrefixEnrichment::load_from_csv(&path).unwrap();
+
+        // longest-prefix match wins, and reports its own network
+        let net = Ipv4Net::new(Ipv4Addr::new(10, 1, 2, 3), 32).unwrap();
+        let (_, data) = tries.ipv4.get_lpm(&net).unwrap();
+        assert_eq!(
+            data.fields.get("prefix").map(String::as_str),
+            Some("10.1.0.0/16")
+        );
+        assert_eq!(data.fields.get("asn").map(String::as_str), Some("2519"));
+
+        let net = Ipv4Net::new(Ipv4Addr::new(10, 9, 9, 9), 32).unwrap();
+        let (_, data) = tries.ipv4.get_lpm(&net).unwrap();
+        assert_eq!(
+            data.fields.get("prefix").map(String::as_str),
+            Some("10.0.0.0/8")
+        );
+        assert_eq!(
+            data.fields.get("org").map(String::as_str),
+            Some("CLOUDFLARENET")
+        );
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn alternate_prefix_header_names_are_recognised() {
+        // the prefix column need not be first, nor called "prefix"
+        let path = csv_file(
+            "rustflow_enrich_network.csv",
+            "asn,network,org\n192,10.0.0.0/8,ACME\n",
+        );
+        let tries = PrefixEnrichment::load_from_csv(&path).unwrap();
+        let net = Ipv4Net::new(Ipv4Addr::new(10, 0, 0, 1), 32).unwrap();
+        let (_, data) = tries.ipv4.get_lpm(&net).unwrap();
+        assert_eq!(
+            data.fields.get("network").map(String::as_str),
+            Some("10.0.0.0/8")
+        );
+        assert_eq!(data.fields.get("asn").map(String::as_str), Some("192"));
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn empty_values_are_omitted_rather_than_stored_blank() {
+        let path = csv_file(
+            "rustflow_enrich_empty.csv",
+            "prefix,asn,org\n10.0.0.0/8,,ACME\n",
+        );
+        let tries = PrefixEnrichment::load_from_csv(&path).unwrap();
+        let net = Ipv4Net::new(Ipv4Addr::new(10, 0, 0, 1), 32).unwrap();
+        let (_, data) = tries.ipv4.get_lpm(&net).unwrap();
+        assert!(data.fields.get("asn").is_none());
+        assert_eq!(data.fields.get("org").map(String::as_str), Some("ACME"));
+        std::fs::remove_file(&path).ok();
     }
 }
