@@ -93,6 +93,7 @@ for the complete CLI options.
 - [Flow enrichment](./docs/enrichment.md)
 - [IPFIX exporter](./docs/exporter.md)
 - [IPFIX traffic generator](./docs/generator.md)
+- [Library usage](./docs/library.md)
 - [Production deployment](./docs/deployment.md)
 - [Protocol references](./docs/protocols.md)
 - [Alternatives](./docs/alternatives.md)
