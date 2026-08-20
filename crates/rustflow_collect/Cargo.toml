@@ -29,3 +29,4 @@ arrow-array = "59.2.0"
 arrow-schema = "59.2.0"
 ctrlc = { version = "3.5.2", features = ["termination"] }
 macaddr = "1"
+prost = "0.14"

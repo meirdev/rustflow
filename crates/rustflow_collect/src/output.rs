@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Timelike, Utc};
 use csv::Writer as CsvWriter;
+use prost::Message as _;
 use rustflow_core::common::common_flow::CommonFlow;
 use serde::Serialize;
 
@@ -18,6 +19,7 @@ enum WriterKind {
     Ndjson(BufWriter<Box<dyn Write + Send>>),
     Csv(CsvWriter<Box<dyn Write + Send>>),
     Parquet(ParquetSink),
+    Protobuf(BufWriter<Box<dyn Write + Send>>),
     Discard,
 }
 
@@ -32,6 +34,9 @@ impl WriterKind {
             WriterKind::Csv(w) => {
                 w.flush().ok();
             }
+            WriterKind::Protobuf(w) => {
+                w.flush().ok();
+            }
             WriterKind::Parquet(_) | WriterKind::Discard => {}
         }
     }
@@ -43,6 +48,9 @@ impl WriterKind {
                 w.flush().ok();
             }
             WriterKind::Csv(w) => {
+                w.flush().ok();
+            }
+            WriterKind::Protobuf(w) => {
                 w.flush().ok();
             }
             WriterKind::Parquet(w) => {
@@ -224,6 +232,15 @@ impl OutputWriter {
                     eprintln!("Failed to write parquet record: {}", e);
                 }
             }
+            WriterKind::Protobuf(w) => {
+                let message = crate::proto::CommonFlow::from_flow(flow, enriched);
+                match frame_protobuf(line, &message) {
+                    Ok(()) => {
+                        w.write_all(line).ok();
+                    }
+                    Err(e) => eprintln!("Failed to encode protobuf record: {}", e),
+                }
+            }
             WriterKind::Discard => {}
         }
         state.dirty = true;
@@ -242,7 +259,7 @@ impl OutputWriter {
                     w.write_all(b"\n").ok();
                 }
             }
-            WriterKind::Csv(_) | WriterKind::Parquet(_) => {
+            WriterKind::Csv(_) | WriterKind::Parquet(_) | WriterKind::Protobuf(..) => {
                 unreachable!("write_raw only supports the ndjson serialization format");
             }
             WriterKind::Discard => {}
@@ -361,6 +378,16 @@ fn write_enriched_json_line(
 
     line.push(b'}');
     line.push(b'\n');
+}
+
+/// Encode one protobuf message into `line`, prefixed with its length as a
+/// varint.
+fn frame_protobuf(
+    line: &mut Vec<u8>,
+    message: &crate::proto::CommonFlow,
+) -> Result<(), prost::EncodeError> {
+    line.clear();
+    message.encode_length_delimited(line)
 }
 
 /// Render one flow plus its enrichment fields into `fields`, reusing each
@@ -523,6 +550,9 @@ fn create_writer(
         SerializationFormat::Parquet => WriterKind::Parquet(
             ParquetSink::new(output, enriched_fields).map_err(io::Error::other)?,
         ),
+        SerializationFormat::Protobuf => {
+            WriterKind::Protobuf(BufWriter::with_capacity(WRITE_BUFFER_BYTES, output))
+        }
         SerializationFormat::Discard => WriterKind::Discard,
     };
 
@@ -609,6 +639,7 @@ fn file_extension(serialization: SerializationFormat) -> &'static str {
         SerializationFormat::Ndjson => "ndjson",
         SerializationFormat::Csv => "csv",
         SerializationFormat::Parquet => "parquet",
+        SerializationFormat::Protobuf => "pb",
         SerializationFormat::Discard => "discard",
     }
 }
@@ -744,6 +775,42 @@ mod tests {
         write_csv_record(&mut buf, &flow, &fields, &HashMap::new());
         assert_eq!(buf[9], "", "stale value from the previous record");
         assert_eq!(buf[7], "7");
+    }
+
+    #[test]
+    fn protobuf_framing_prefixes_each_message() {
+        use prost::Message as _;
+        use rustflow_core::common::common_flow::FlowType;
+
+        use crate::proto::CommonFlow as Proto;
+
+        let flow = CommonFlow::new(FlowType::Ipfix);
+        let message = Proto::from_flow(&flow, &HashMap::new());
+        let body_len = message.encoded_len();
+
+        // a body under 128 bytes takes a single varint length byte
+        let mut line = Vec::new();
+        frame_protobuf(&mut line, &message).unwrap();
+        assert!(body_len < 128, "sample message should be small");
+        assert_eq!(line.len(), body_len + 1);
+        assert_eq!(line[0] as usize, body_len);
+        // the body after the prefix still decodes
+        assert_eq!(Proto::decode(&line[1..]).unwrap(), message);
+    }
+
+    #[test]
+    fn protobuf_framing_reuses_the_buffer() {
+        use rustflow_core::common::common_flow::FlowType;
+
+        use crate::proto::CommonFlow as Proto;
+
+        let message = Proto::from_flow(&CommonFlow::new(FlowType::Ipfix), &HashMap::new());
+        let mut line = Vec::new();
+        frame_protobuf(&mut line, &message).unwrap();
+        let first = line.len();
+        // a second call must replace the buffer, not append to it
+        frame_protobuf(&mut line, &message).unwrap();
+        assert_eq!(line.len(), first);
     }
 
     #[test]

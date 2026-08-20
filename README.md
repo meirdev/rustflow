@@ -18,7 +18,7 @@ It can collect flows from the network or PCAP files, normalize them into a commo
 - sFlow v5
 - Network and PCAP input
 - Raw or normalized flow output
-- NDJSON, CSV, and Parquet serialization
+- NDJSON, CSV, Protobuf and Parquet serialization
 - File rotation and time-based partitioning
 - Flow enrichment using CSV or MaxMind databases
 - Prometheus metrics

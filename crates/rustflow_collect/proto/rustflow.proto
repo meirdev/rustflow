@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package rustflow;
+
+message CommonFlow {
+  string flow_type = 1;
+
+  optional int64 time_received_ns = 2;
+  uint32 sequence_num = 3;
+  optional uint32 sampling_rate = 4;
+  optional bytes sampler_address = 5;
+
+  optional int64 time_flow_start_ns = 6;
+  optional int64 time_flow_end_ns = 7;
+
+  uint64 bytes = 8;
+  uint64 packets = 9;
+
+  optional bytes src_addr = 10;
+  optional bytes dst_addr = 11;
+  optional bytes src_mac = 12;
+  optional bytes dst_mac = 13;
+
+  optional uint32 etype = 14;
+  optional uint32 proto = 15;
+  optional uint32 src_port = 16;
+  optional uint32 dst_port = 17;
+  optional uint32 in_if = 18;
+  optional uint32 out_if = 19;
+  optional uint32 ip_tos = 20;
+  optional uint32 ip_ttl = 21;
+  optional uint32 tcp_flags = 22;
+  optional uint32 icmp_type = 23;
+  optional uint32 icmp_code = 24;
+  optional uint32 ipv6_flow_label = 25;
+  optional uint32 fragment_id = 26;
+  optional uint32 fragment_offset = 27;
+  optional uint32 src_as = 28;
+  optional uint32 dst_as = 29;
+
+  optional bytes next_hop = 30;
+  optional uint32 src_net = 31;
+  optional uint32 dst_net = 32;
+  optional bytes bgp_next_hop = 33;
+
+  optional uint32 src_vlan = 34;
+  optional uint32 dst_vlan = 35;
+  optional uint32 observation_domain_id = 36;
+  optional uint32 template_id = 37;
+
+  // Fields added by --enrich, keyed by their output name.
+  map<string, string> enriched = 38;
+}

@@ -5,7 +5,7 @@ RustFlow supports two flow representations:
 - **Raw** - preserves the original protocol-specific flow structure.
 - **Common** - normalizes NetFlow, IPFIX, and sFlow into a common schema.
 
-The common format can be serialized as **NDJSON, CSV, or Parquet**, or discarded entirely for load testing.
+The common format can be serialized as **NDJSON, CSV, Protobuf, or Parquet**, or discarded entirely for load testing.
 
 ## Common Flow
 
@@ -122,6 +122,23 @@ rustflow collect \
 ```
 
 Parquet output is compressed using Snappy.
+
+## Protobuf
+
+`-s protobuf` writes a stream of protobuf messages using the schema in
+[`crates/rustflow_collect/proto/rustflow.proto`](../crates/rustflow_collect/proto/rustflow.proto).
+It requires `--format common`, and files use the `.pb` extension.
+
+```bash
+rustflow collect \
+  -t netflow \
+  -p 9995 \
+  -f common \
+  -s protobuf \
+  -o flows.pb
+```
+
+Protobuf messages are **length-delimited**: each message is prefixed with its size as a varint.
 
 ## Discard
 

@@ -2,6 +2,7 @@ mod enrich;
 mod metrics;
 mod output;
 mod parquet_sink;
+mod proto;
 
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -120,6 +121,8 @@ pub enum SerializationFormat {
     Csv,
     /// Snappy-compressed Apache Parquet
     Parquet,
+    /// Length-delimited protobuf, see `proto/rustflow.proto`
+    Protobuf,
     /// Decode and count flows but write no output (for load testing)
     Discard,
 }
@@ -581,10 +584,10 @@ fn read_sflow_socket(
 fn validate_cli(cli: &CollectArgs) {
     if matches!(
         cli.serialization,
-        SerializationFormat::Csv | SerializationFormat::Parquet
+        SerializationFormat::Csv | SerializationFormat::Parquet | SerializationFormat::Protobuf
     ) && cli.format != OutputFormat::Common
     {
-        eprintln!("Error: --serialization csv/parquet requires --format common");
+        eprintln!("Error: --serialization csv/parquet/protobuf requires --format common");
         std::process::exit(1);
     }
     if cli.serialization == SerializationFormat::Parquet && cli.output.is_none() {
