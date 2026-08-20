@@ -12,7 +12,7 @@ Group=rustflow
 # Arguments live in /etc/rustflow/collector.env so this unit can stay
 # untouched across upgrades. See contrib/systemd/collector.env for a template.
 EnvironmentFile=/etc/rustflow/collector.env
-ExecStart=/usr/local/bin/rustflow_collector $RUSTFLOW_ARGS
+ExecStart=/usr/local/bin/rustflow collect $RUSTFLOW_ARGS
 
 # Graceful shutdown: on SIGTERM the collector stops reading, writes out every
 # flow it has already decoded, and finalizes the output file (a Parquet file

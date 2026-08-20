@@ -1,0 +1,14 @@
+[package]
+name = "rustflow_generate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Synthetic IPFIX traffic generator; the `rustflow generate` command"
+
+[dependencies]
+rustflow_core.workspace = true
+clap = { version = "4.5", features = ["derive"] }
+rand = "0.9"
+chrono = { version = "0.4", features = ["std"] }
+ipnet = "2.12.0"

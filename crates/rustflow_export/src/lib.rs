@@ -1,3 +1,9 @@
+//! IPFIX exporter.
+//!
+//! Capture is a hand-rolled `AF_PACKET` + `PACKET_RX_RING` loop, so this crate
+//! is Linux-only.
+#![cfg(target_os = "linux")]
+
 mod capture;
 mod exporter;
 mod flow;
@@ -10,15 +16,14 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use capture::PacketCapture;
-use clap::Parser;
+use clap::Args as ClapArgs;
 use exporter::Exporter;
 use flow::FlowCache;
 use log::{error, info, warn};
 
-#[derive(Parser, Debug, Clone)]
-#[command(name = "rustflow_exporter", version)]
-#[command(about = "IPFIX exporter for network flow data", long_about = None)]
-pub struct Args {
+/// Arguments for the `export` subcommand.
+#[derive(ClapArgs, Debug, Clone)]
+pub struct ExportArgs {
     /// Network interface to capture from
     #[arg(short, long, default_value = "lo")]
     pub interface: String,
@@ -56,7 +61,7 @@ pub struct Args {
     pub promiscuous: bool,
 }
 
-impl Args {
+impl ExportArgs {
     pub fn collector_addr(&self) -> Result<SocketAddr> {
         let addr = format!("{}:{}", self.collector_host, self.collector_port);
         addr.parse()
@@ -64,11 +69,8 @@ impl Args {
     }
 }
 
-fn main() -> Result<()> {
-    env_logger::init();
-
-    let args = Args::parse();
-
+/// Run the IPFIX exporter. Logging is initialized by the caller.
+pub fn run(args: ExportArgs) -> Result<()> {
     info!("Configuration:");
     info!("  Interface: {}", args.interface);
     info!(

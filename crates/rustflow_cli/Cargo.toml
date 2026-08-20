@@ -1,0 +1,24 @@
+[package]
+name = "rustflow_cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "RustFlow command line interface: collect, generate and export NetFlow, IPFIX and sFlow"
+keywords = ["netflow", "ipfix", "sflow", "flow", "network"]
+categories = ["command-line-utilities", "network-programming"]
+
+[[bin]]
+name = "rustflow"
+path = "src/main.rs"
+
+[dependencies]
+rustflow_collect.workspace = true
+rustflow_generate.workspace = true
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+env_logger = "0.11"
+
+# The exporter captures with AF_PACKET, so it only exists on Linux.
+[target.'cfg(target_os = "linux")'.dependencies]
+rustflow_export.workspace = true

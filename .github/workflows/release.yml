@@ -18,13 +18,39 @@ jobs:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # core types and parsers
       - name: Publish rustflow_core
         run: cargo publish -p rustflow_core
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
+      # collector library
       - name: Publish rustflow_lib
         run: cargo publish -p rustflow_lib
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      # `rustflow collect`
+      - name: Publish rustflow_collect
+        run: cargo publish -p rustflow_collect
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      # `rustflow generate`
+      - name: Publish rustflow_generate
+        run: cargo publish -p rustflow_generate
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      # `rustflow export`
+      - name: Publish rustflow_export
+        run: cargo publish -p rustflow_export
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      # the `rustflow` binary
+      - name: Publish rustflow_cli
+        run: cargo publish -p rustflow_cli
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -47,20 +73,8 @@ jobs:
       - name: Build
         run: cargo build --release --target ${{ matrix.BUILD_TARGET }}
 
-      - name: Update binaries to release (collector)
+      - name: Upload the rustflow binary to the release
         uses: softprops/action-gh-release@v2
         if: github.ref_type == 'tag'
         with:
-          files: target/${{ matrix.BUILD_TARGET }}/release/rustflow_collector
-
-      - name: Update binaries to release (exporter)
-        uses: softprops/action-gh-release@v2
-        if: github.ref_type == 'tag'
-        with:
-          files: target/${{ matrix.BUILD_TARGET }}/release/rustflow_exporter
-
-      - name: Update binaries to release (generator)
-        uses: softprops/action-gh-release@v2
-        if: github.ref_type == 'tag'
-        with:
-          files: target/${{ matrix.BUILD_TARGET }}/release/rustflow_generator
+          files: target/${{ matrix.BUILD_TARGET }}/release/rustflow

@@ -33,24 +33,43 @@
 
 ## Installation
 
-### Prebuilt binaries (Linux x86_64)
-
-Every release ships statically linked (musl) binaries with no runtime
-dependencies, on the [releases page](https://github.com/meirdev/rustflow/releases):
-`rustflow_collector`, `rustflow_exporter`, and `rustflow_generator`.
+### From crates.io
 
 ```bash
-VERSION=0.7.1
-curl -fsSL -o rustflow_collector \
-  "https://github.com/meirdev/rustflow/releases/download/v${VERSION}/rustflow_collector"
-chmod +x rustflow_collector
-sudo install -m 755 rustflow_collector /usr/local/bin/
-
-rustflow_collector --version
+cargo install rustflow_cli
+rustflow --version
 ```
 
-Replace `rustflow_collector` with `rustflow_exporter` or `rustflow_generator` for the
-other tools.
+### Prebuilt binary (Linux x86_64)
+
+Every release ships a single statically linked (musl) binary with no runtime
+dependencies, on the [releases page](https://github.com/meirdev/rustflow/releases).
+
+```bash
+VERSION=0.8.0
+curl -fsSL -o rustflow \
+  "https://github.com/meirdev/rustflow/releases/download/v${VERSION}/rustflow"
+chmod +x rustflow
+sudo install -m 755 rustflow /usr/local/bin/
+
+rustflow --version
+```
+
+### Commands
+
+`rustflow` is one executable with three subcommands:
+
+| Command             | Purpose                                                          |
+| ------------------- | ---------------------------------------------------------------- |
+| `rustflow collect`  | Collect flows from the network or a pcap file and write them out |
+| `rustflow generate` | Generate synthetic IPFIX traffic for testing a collector         |
+| `rustflow export`   | Capture on an interface and export as IPFIX — **Linux only**     |
+
+`rustflow export` uses `AF_PACKET` for capture, so it is built only on Linux; on
+other platforms the subcommand reports that and exits. `collect` and `generate`
+are portable.
+
+Run `rustflow <command> --help` for the flags of each.
 
 ### From source
 
@@ -62,7 +81,6 @@ sockets directly).
 git clone https://github.com/meirdev/rustflow.git
 cd rustflow
 cargo build --release
-# binaries are in target/release/
 ```
 
 For a fully static Linux binary (the same as the release artifacts):
@@ -95,19 +113,19 @@ Links to relevant RFCs and specifications for flow protocols.
 
 ## Collector Usage
 
-The `rustflow_collector` binary collects flow data from network devices or pcap files.
+`rustflow collect` reads flow data from network devices or pcap files.
 
 ### Basic Usage
 
 ```bash
 # Collect NetFlow/IPFIX on UDP port 9995
-rustflow_collector -t netflow -p 9995
+rustflow collect -t netflow -p 9995
 
 # Collect sFlow on UDP port 6343
-rustflow_collector -t sflow -p 6343
+rustflow collect -t sflow -p 6343
 
 # Read from a pcap file
-rustflow_collector -t netflow --pcap capture.pcap
+rustflow collect -t netflow --pcap capture.pcap
 ```
 
 ### Output Formats
@@ -116,16 +134,16 @@ By default, the collector outputs raw protocol data as NDJSON (newline-delimited
 
 ```bash
 # Output normalized common flow format
-rustflow_collector -t netflow -p 9995 -f common
+rustflow collect -t netflow -p 9995 -f common
 
 # Output as CSV (requires common format)
-rustflow_collector -t netflow -p 9995 -f common -s csv
+rustflow collect -t netflow -p 9995 -f common -s csv
 
 # Output as Snappy-compressed Parquet (requires common format and -o)
-rustflow_collector -t netflow -p 9995 -f common -s parquet -o flows.parquet
+rustflow collect -t netflow -p 9995 -f common -s parquet -o flows.parquet
 
 # Write to a single file instead of stdout
-rustflow_collector -t netflow -p 9995 -f common -o flows.ndjson
+rustflow collect -t netflow -p 9995 -f common -o flows.ndjson
 ```
 
 | Serialization (`-s`) | Description                                                                |
@@ -143,13 +161,13 @@ rustflow_collector -t netflow -p 9995 -f common -o flows.ndjson
 
 ```bash
 # One file, never rotated
-rustflow_collector -t netflow -p 9995 -f common -o flows.ndjson
+rustflow collect -t netflow -p 9995 -f common -o flows.ndjson
 
 # A new file every hour, all of them directly under ./flows
-rustflow_collector -t netflow -p 9995 -f common -s parquet -o flows -i 1h
+rustflow collect -t netflow -p 9995 -f common -s parquet -o flows -i 1h
 
 # A new file every 5 minutes, partitioned by day/hour/5-minute bucket
-rustflow_collector -t netflow -p 9995 -f common -s parquet -o /data/flows -i 5m -l 3
+rustflow collect -t netflow -p 9995 -f common -s parquet -o /data/flows -i 5m -l 3
 ```
 
 Use `--level` (`-l`) to choose how deeply the output directory is partitioned by the interval's start time:
@@ -171,15 +189,15 @@ Enrich flows with additional data using prefix matching. Supports CSV files and 
 
 ```bash
 # Enrich destination addresses with ASN and organization info from a CSV file
-rustflow_collector -t netflow -p 9995 -f common \
+rustflow collect -t netflow -p 9995 -f common \
   --enrich "type=prefix_lookup,source=asn.csv,key=dst_addr,fields=asn:dst_asn;org:dst_org"
 
 # Enrich with GeoIP data from a MaxMind DB file (use dotted paths for nested fields)
-rustflow_collector -t netflow -p 9995 -f common \
+rustflow collect -t netflow -p 9995 -f common \
   --enrich "type=prefix_lookup,source=GeoLite2-City.mmdb,key=src_addr,fields=country.iso_code:src_country;city.names.en:src_city"
 
 # Multiple enrichments with auto-reload
-rustflow_collector -t netflow -p 9995 -f common \
+rustflow collect -t netflow -p 9995 -f common \
   --enrich "type=prefix_lookup,source=asn.csv,key=dst_addr,fields=asn:dst_asn;org:dst_org,reload=30s" \
   --enrich "type=prefix_lookup,source=GeoLite2-Country.mmdb,key=dst_addr,fields=country.iso_code:dst_country,reload=1h"
 ```
@@ -209,7 +227,7 @@ prefix,asn,org
 Load custom Information Element definitions for IPFIX/NetFlow v9:
 
 ```bash
-rustflow_collector -t netflow -p 9995 --ie-mapping custom_ies.csv
+rustflow collect -t netflow -p 9995 --ie-mapping custom_ies.csv
 ```
 
 ### Shutdown
@@ -224,13 +242,13 @@ When listening on a socket, metrics are exposed on port 9090 by default:
 
 ```bash
 # Custom metrics endpoint
-rustflow_collector -t netflow -p 9995 --metrics-host 127.0.0.1 --metrics-port 9100
+rustflow collect -t netflow -p 9995 --metrics-host 127.0.0.1 --metrics-port 9100
 ```
 
 ### All Options
 
 ```
-rustflow_collector --help
+rustflow collect --help
 ```
 
 ### Running as a Service (systemd)
@@ -242,7 +260,7 @@ drain and finalize its output file.
 
 ```bash
 # Binary (see Installation), service user, and config
-sudo install -m 755 rustflow_collector /usr/local/bin/
+sudo install -m 755 rustflow collect /usr/local/bin/
 sudo useradd --system --no-create-home --shell /usr/sbin/nologin rustflow
 sudo install -d -m 755 /etc/rustflow
 sudo install -m 644 contrib/systemd/collector.env /etc/rustflow/collector.env
@@ -274,16 +292,16 @@ Ports below 1024 need either a port ≥ 1024 (recommended, e.g. 9995 / 6343) or
 
 ## Exporter Usage
 
-The `rustflow_exporter` binary captures network traffic and exports it as IPFIX to a collector.
+`rustflow export` captures network traffic and exports it as IPFIX to a collector. Linux only — capture uses `AF_PACKET`.
 
 ### Basic Usage
 
 ```bash
 # Capture on eth0 and export to collector at 192.168.1.100:4739
-rustflow_exporter -i eth0 -H 192.168.1.100 -p 4739
+rustflow export -i eth0 -H 192.168.1.100 -p 4739
 
 # Capture on loopback interface (default)
-rustflow_exporter -H 127.0.0.1 -p 4739
+rustflow export -H 127.0.0.1 -p 4739
 ```
 
 ### Options
@@ -304,56 +322,56 @@ rustflow_exporter -H 127.0.0.1 -p 4739
 
 ```bash
 # Capture with promiscuous mode and custom timeouts
-rustflow_exporter -i eth0 -H 10.0.0.1 -p 2055 --promiscuous \
+rustflow export -i eth0 -H 10.0.0.1 -p 2055 --promiscuous \
   --active-timeout 120 --inactive-timeout 30
 
 # Sample 1 out of every 100 packets
-rustflow_exporter -i eth0 -H 10.0.0.1 -p 4739 --sampling-packet-interval 100
+rustflow export -i eth0 -H 10.0.0.1 -p 4739 --sampling-packet-interval 100
 
 # Enable debug logging
-RUST_LOG=debug rustflow_exporter -i eth0 -H 10.0.0.1 -p 4739
+RUST_LOG=debug rustflow export -i eth0 -H 10.0.0.1 -p 4739
 ```
 
 ### All Options
 
 ```
-rustflow_exporter --help
+rustflow export --help
 ```
 
 ## Generator Usage
 
-The `rustflow_generator` binary generates synthetic IPFIX flow data for testing collectors under load.
+`rustflow generate` produces synthetic IPFIX flow data for testing collectors under load.
 
 ### Basic Usage
 
 ```bash
 # Send to a specific collector
-rustflow_generator -H 192.168.1.100 -p 9995
+rustflow generate -H 192.168.1.100 -p 9995
 
 # Generate at 5000 packets per second with 20 flows per packet
-rustflow_generator -H 10.0.0.1 -p 4739 -r 5000 -f 20
+rustflow generate -H 10.0.0.1 -p 4739 -r 5000 -f 20
 
 # Send exactly 1000 packets then stop
-rustflow_generator -H 10.0.0.1 -p 4739 -n 1000
+rustflow generate -H 10.0.0.1 -p 4739 -n 1000
 ```
 
 ### Customizing Generated Flows
 
 ```bash
 # Specify source and destination CIDR ranges
-rustflow_generator -H 10.0.0.1 -p 4739 \
+rustflow generate -H 10.0.0.1 -p 4739 \
   --src_cidr 172.16.0.0/12 --dst_cidr 10.0.0.0/8
 
 # Generate only TCP flows on well-known destination ports
-rustflow_generator -H 10.0.0.1 -p 4739 \
+rustflow generate -H 10.0.0.1 -p 4739 \
   --protocols 6 --dst_port_range 80-443
 
 # Generate TCP and UDP flows with custom source port range
-rustflow_generator -H 10.0.0.1 -p 4739 \
+rustflow generate -H 10.0.0.1 -p 4739 \
   --protocols 6,17 --src_port_range 49152-65535
 
 # Unlimited rate (as fast as possible)
-rustflow_generator -H 10.0.0.1 -p 4739 -r 0
+rustflow generate -H 10.0.0.1 -p 4739 -r 0
 ```
 
 ### Options
@@ -376,5 +394,5 @@ rustflow_generator -H 10.0.0.1 -p 4739 -r 0
 ### All Options
 
 ```
-rustflow_generator --help
+rustflow generate --help
 ```

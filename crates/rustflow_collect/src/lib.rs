@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 
 use chrono::Utc;
-use clap::{Parser, ValueEnum};
+use clap::{Args as ClapArgs, ValueEnum};
 use enrich::{EnrichmentEngine, parse_enrich_arg};
 use output::{MAX_PARTITION_LEVEL, OutputOptions, OutputWriter};
 use rustflow::pcap::{NetflowPcapReader, SflowPcapReader};
@@ -21,10 +21,9 @@ use rustflow_core::ipfix::parser::IPFIX_VERSION;
 use rustflow_core::netflow_v5::parser::NETFLOW_V5_VERSION;
 use rustflow_core::netflow_v9::parser::NETFLOW_V9_VERSION;
 
-#[derive(Parser)]
-#[command(name = "rustflow_collector", version)]
-#[command(about = "A flow data collector supporting NetFlow and sFlow protocols")]
-struct Cli {
+/// Arguments for the `collect` subcommand.
+#[derive(ClapArgs)]
+pub struct CollectArgs {
     /// Flow protocol type to collect
     #[arg(short = 't', long, value_enum)]
     flow_type: FlowType,
@@ -579,7 +578,7 @@ fn read_sflow_socket(
 }
 
 /// Reject serialization/format combinations that cannot be produced.
-fn validate_cli(cli: &Cli) {
+fn validate_cli(cli: &CollectArgs) {
     if matches!(
         cli.serialization,
         SerializationFormat::Csv | SerializationFormat::Parquet
@@ -594,9 +593,8 @@ fn validate_cli(cli: &Cli) {
     }
 }
 
-fn main() {
-    let cli = Cli::parse();
-
+/// Run the flow collector.
+pub fn run(cli: CollectArgs) {
     validate_cli(&cli);
 
     let mut ie_registry = IERegistry::new_with_iana_elements();

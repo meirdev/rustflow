@@ -1,11 +1,14 @@
 [package]
-name = "rustflow_collector"
+name = "rustflow_collect"
 version.workspace = true
-edition = "2024"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Flow collector for NetFlow, IPFIX and sFlow; the `rustflow collect` command"
 
 [dependencies]
-rustflow = { path = "../rustflow", package = "rustflow_lib" }
-rustflow_core = { path = "../rustflow_core" }
+rustflow.workspace = true
+rustflow_core.workspace = true
 clap = { version = "4.5.60", features = ["derive"] }
 crossbeam = { version = "0.8.4", features = ["crossbeam-channel"] }
 prometheus = "0.14.0"

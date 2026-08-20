@@ -11,7 +11,7 @@ use rustflow_core::ipfix::parser::{
     Record, Set,
 };
 
-use crate::Args;
+use crate::ExportArgs;
 use crate::flow::Flow;
 use crate::ipfix::data::OptionsData;
 use crate::ipfix::template::{
@@ -23,13 +23,13 @@ const MAX_RECORDS_PER_SET: usize = 30;
 
 pub struct Exporter {
     socket: UdpSocket,
-    args: Args,
+    args: ExportArgs,
     sequence_number: AtomicU32,
     last_template_send: Instant,
 }
 
 impl Exporter {
-    pub fn new(args: Args) -> Result<Self> {
+    pub fn new(args: ExportArgs) -> Result<Self> {
         let collector_addr = args.collector_addr()?;
         info!("Connecting to collector at {}", collector_addr);
 

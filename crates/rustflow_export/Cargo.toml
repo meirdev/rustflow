@@ -1,0 +1,18 @@
+[package]
+name = "rustflow_export"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "IPFIX exporter for captured network traffic (Linux only); the `rustflow export` command"
+
+[dependencies]
+rustflow_core.workspace = true
+libc = "0.2"
+etherparse = "0.16"
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+chrono = "0.4"
+log = "0.4"
+env_logger = "0.11"
+ctrlc = "3.4"

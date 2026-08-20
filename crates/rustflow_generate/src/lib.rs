@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
-use clap::Parser;
+use clap::Args as ClapArgs;
 use ipnet::Ipv4Net;
 use rand::Rng;
 use rustflow_core::common::InformationElement;
@@ -57,10 +57,9 @@ use rustflow_core::ipfix::parser::{
 const FLOW_TEMPLATE_ID: u16 = 256;
 const OPTIONS_TEMPLATE_ID: u16 = 257;
 
-#[derive(Parser, Debug)]
-#[command(name = "rustflow_generator", version)]
-#[command(about = "IPFIX flow generator for testing")]
-struct Args {
+/// Arguments for the `generate` subcommand.
+#[derive(ClapArgs, Debug)]
+pub struct GenerateArgs {
     /// Collector host address
     #[arg(short = 'H', long, default_value = "127.0.0.1")]
     host: String,
@@ -260,7 +259,7 @@ struct IpfixGenerator {
 }
 
 impl IpfixGenerator {
-    fn new(args: &Args) -> std::io::Result<Self> {
+    fn new(args: &GenerateArgs) -> std::io::Result<Self> {
         let socket = UdpSocket::bind("0.0.0.0:0")?;
         let target: SocketAddr = format!("{}:{}", args.host, args.port).parse().unwrap();
 
@@ -394,9 +393,8 @@ impl IpfixGenerator {
     }
 }
 
-fn main() -> std::io::Result<()> {
-    let args = Args::parse();
-
+/// Run the IPFIX flow generator.
+pub fn run(args: GenerateArgs) -> std::io::Result<()> {
     eprintln!("IPFIX Generator");
     eprintln!("  Target: {}:{}", args.host, args.port);
     eprintln!(
