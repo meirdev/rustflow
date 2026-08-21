@@ -9,7 +9,7 @@
 
 **RustFlow** is a high-performance flow collector written in Rust, with support for **NetFlow v5/v9, IPFIX, and sFlow v5**.
 
-It can collect flows from the network or PCAP files, normalize them into a common schema, enrich them with external data, and export them as **NDJSON, CSV, or Parquet**.
+It can collect flows from the network or PCAP files, normalize them into a common schema, enrich them with external data, and export them as **NDJSON, CSV, Protobuf, or Parquet**.
 
 ## Features
 
