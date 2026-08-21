@@ -7,7 +7,7 @@ The crate is named `rustflow_lib` because `rustflow` was already taken on crates
 
 ```toml
 [dependencies]
-rustflow_lib = "0.9"
+rustflow_lib = "0.10"
 ```
 
 ## Reading Flows From the Network
@@ -112,7 +112,7 @@ The async readers are behind the `tokio` feature:
 
 ```toml
 [dependencies]
-rustflow_lib = { version = "0.9", features = ["tokio"] }
+rustflow_lib = { version = "0.10", features = ["tokio"] }
 tokio = { version = "1", features = ["full"] }
 ```
 
