@@ -1,0 +1,70 @@
+services:
+  rustflow:
+    build:
+      context: ..
+      dockerfile: compose/Dockerfile
+    command: >
+      collect -t netflow -p 9995 -f common -s parquet
+      -o /data/flows -i 1m -l 2
+      --metrics-host 0.0.0.0 --metrics-port 9090
+    ports:
+      - "9995:9995/udp"
+      - "9090:9090"
+    volumes:
+      - flows:/data/flows
+    restart: unless-stopped
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.8
+    environment:
+      CLICKHOUSE_USER: rustflow
+      CLICKHOUSE_PASSWORD: rustflow
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ports:
+      - "8123:8123"
+    volumes:
+      - flows:/var/lib/clickhouse/user_files/flows:ro
+      - clickhouse:/var/lib/clickhouse
+      - ./clickhouse/initdb:/docker-entrypoint-initdb.d:ro
+    ulimits:
+      nofile: 262144
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus:/prometheus
+    depends_on:
+      - rustflow
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:12.2.0
+    environment:
+      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana:/var/lib/grafana
+    depends_on:
+      - clickhouse
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  flows:
+  clickhouse:
+  prometheus:
+  grafana:
