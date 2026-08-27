@@ -34,7 +34,7 @@ The common flow format provides a consistent schema across the supported flow pr
 | `out_if`                | uint32    | Yes      | Output interface index                 |
 | `ip_tos`                | uint8     | Yes      | IP Type of Service / traffic class     |
 | `ip_ttl`                | uint8     | Yes      | IP TTL / hop limit                     |
-| `tcp_flags`             | uint8     | Yes      | TCP flags bitmask                      |
+| `tcp_flags`             | uint16    | Yes      | TCP flags bitmask                      |
 | `icmp_type`             | uint8     | Yes      | ICMP type                              |
 | `icmp_code`             | uint8     | Yes      | ICMP code                              |
 | `ipv6_flow_label`       | uint32    | Yes      | IPv6 flow label                        |
