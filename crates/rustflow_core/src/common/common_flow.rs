@@ -115,7 +115,7 @@ pub struct CommonFlow {
     pub ip_ttl: Option<u8>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tcp_flags: Option<u8>,
+    pub tcp_flags: Option<u16>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icmp_type: Option<u8>,
@@ -265,7 +265,7 @@ impl NetFlowV5Context<'_> {
             out_if: Some(record.output as u32),
             ip_tos: Some(record.tos),
             ip_ttl: None,
-            tcp_flags: Some(record.tcp_flags),
+            tcp_flags: Some(u16::from(record.tcp_flags)),
             icmp_type: None,
             icmp_code: None,
             ipv6_flow_label: None,
@@ -327,7 +327,7 @@ impl NetFlowV9Context<'_> {
                     PacketDeltaCount => flow.packets = extract_u64(value),
                     ProtocolIdentifier => flow.proto = extract_u8(value),
                     IpClassOfService => flow.ip_tos = extract_u8(value),
-                    TcpControlBits => flow.tcp_flags = extract_u8(value),
+                    TcpControlBits => flow.tcp_flags = extract_u16(value),
                     SourceTransportPort => flow.src_port = extract_u16(value),
                     SourceIpv4Address => {
                         if let V9FieldValue::Ipv4Address(addr) = value {
@@ -540,7 +540,7 @@ impl IpfixContext<'_> {
                     PacketDeltaCount => flow.packets = ipfix_extract_u64(value),
                     ProtocolIdentifier => flow.proto = ipfix_extract_u8(value),
                     IpClassOfService => flow.ip_tos = ipfix_extract_u8(value),
-                    TcpControlBits => flow.tcp_flags = ipfix_extract_u8(value),
+                    TcpControlBits => flow.tcp_flags = ipfix_extract_u16(value),
                     SourceTransportPort => flow.src_port = ipfix_extract_u16(value),
                     SourceIpv4Address => {
                         if let IpfixFieldValue::Ipv4Address(addr) = value {
@@ -847,7 +847,7 @@ impl SFlowV5Context<'_> {
                 flow.dst_port = Some(tcp_slice.destination_port());
 
                 let header = tcp_slice.to_header();
-                let mut flags: u8 = 0;
+                let mut flags: u16 = 0;
                 if header.fin {
                     flags |= 0x01;
                 }
@@ -871,6 +871,9 @@ impl SFlowV5Context<'_> {
                 }
                 if header.cwr {
                     flags |= 0x80;
+                }
+                if header.ns {
+                    flags |= 0x100;
                 }
                 flow.tcp_flags = Some(flags);
             }
@@ -897,7 +900,7 @@ impl SFlowV5Context<'_> {
         flow.proto = Some(ipv4.protocol as u8);
         flow.src_port = Some(ipv4.src_port as u16);
         flow.dst_port = Some(ipv4.dst_port as u16);
-        flow.tcp_flags = Some(ipv4.tcp_flags as u8);
+        flow.tcp_flags = Some(ipv4.tcp_flags as u16);
         flow.ip_tos = Some(ipv4.tos as u8);
         flow.bytes = ipv4.length as u64;
         flow.packets = 1;
@@ -910,7 +913,7 @@ impl SFlowV5Context<'_> {
         flow.proto = Some(ipv6.protocol as u8);
         flow.src_port = Some(ipv6.src_port as u16);
         flow.dst_port = Some(ipv6.dst_port as u16);
-        flow.tcp_flags = Some(ipv6.tcp_flags as u8);
+        flow.tcp_flags = Some(ipv6.tcp_flags as u16);
         flow.bytes = ipv6.length as u64;
         flow.packets = 1;
     }
