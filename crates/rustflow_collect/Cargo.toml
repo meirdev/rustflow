@@ -22,6 +22,7 @@ serde = "1.0"
 prefix-trie = "0.8.1"
 ipnet = "2"
 duration-str = "0.11"
+notify-debouncer-full = "0.7"
 maxminddb = "0.27"
 ipnetwork = "0.21"
 parquet = { version = "59.2.0", default-features = false, features = ["arrow", "snap"] }

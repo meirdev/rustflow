@@ -97,7 +97,7 @@ pub struct CollectArgs {
 
     /// Flow enrichment configuration (can be specified multiple times)
     /// Format: type=prefix_lookup,source=file.csv,key=dst_addr,fields=col:
-    /// output;col2:output2,reload=10s
+    /// output;col2:output2,reload=watch (or reload=10s)
     #[arg(long = "enrich")]
     enrich: Vec<String>,
 }
@@ -600,6 +600,8 @@ fn validate_cli(cli: &CollectArgs) {
 pub fn run(cli: CollectArgs) {
     validate_cli(&cli);
 
+    let metrics = Arc::new(metrics::Metrics::new());
+
     let mut ie_registry = IERegistry::new_with_iana_elements();
     if let Some(ref path) = cli.ie_mapping {
         match ie_registry.load_from_csv(path) {
@@ -612,7 +614,7 @@ pub fn run(cli: CollectArgs) {
     }
 
     // Parse and build enrichment engine
-    let mut enrichment_engine = EnrichmentEngine::new();
+    let mut enrichment_engine = EnrichmentEngine::new(Arc::clone(&metrics));
     for enrich_arg in &cli.enrich {
         match parse_enrich_arg(enrich_arg) {
             Ok(config) => {
@@ -683,7 +685,6 @@ pub fn run(cli: CollectArgs) {
             &enrichment_engine,
         ),
         (FlowType::Netflow, None, Some(port)) => {
-            let metrics = Arc::new(metrics::Metrics::new());
             let _metrics_handle = metrics::start_metrics_server(
                 Arc::clone(&metrics),
                 &cli.metrics_host,
@@ -704,7 +705,6 @@ pub fn run(cli: CollectArgs) {
             read_sflow_pcap(path, cli.format, &output, &enrichment_engine)
         }
         (FlowType::Sflow, None, Some(port)) => {
-            let metrics = Arc::new(metrics::Metrics::new());
             let _metrics_handle = metrics::start_metrics_server(
                 Arc::clone(&metrics),
                 &cli.metrics_host,

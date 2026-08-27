@@ -31,6 +31,15 @@ impl LookupKey {
         }
     }
 
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::SrcAddr => "src_addr",
+            Self::DstAddr => "dst_addr",
+            Self::NextHop => "next_hop",
+            Self::SamplerAddress => "sampler_address",
+        }
+    }
+
     pub fn extract(&self, flow: &CommonFlow) -> Option<IpAddr> {
         match self {
             Self::SrcAddr => flow.src_addr,
@@ -47,13 +56,19 @@ pub struct FieldMapping {
     pub output_field: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReloadMode {
+    Interval(Duration),
+    Watch,
+}
+
 #[derive(Debug, Clone)]
 pub struct EnrichmentConfig {
     pub lookup_type: LookupType,
     pub source_file: PathBuf,
     pub lookup_key: LookupKey,
     pub field_mappings: Vec<FieldMapping>,
-    pub reload_interval: Option<Duration>,
+    pub reload: Option<ReloadMode>,
 }
 
 pub fn parse_enrich_arg(arg: &str) -> Result<EnrichmentConfig, String> {
@@ -61,7 +76,7 @@ pub fn parse_enrich_arg(arg: &str) -> Result<EnrichmentConfig, String> {
     let mut source_file = None;
     let mut lookup_key = None;
     let mut field_mappings = Vec::new();
-    let mut reload_interval = None;
+    let mut reload = None;
 
     for part in arg.split(',') {
         let (key, value) = part
@@ -105,9 +120,13 @@ pub fn parse_enrich_arg(arg: &str) -> Result<EnrichmentConfig, String> {
                 }
             }
             "reload" => {
-                let duration = duration_str::parse(value.trim())
-                    .map_err(|e| format!("Invalid reload duration '{}': {}", value, e))?;
-                reload_interval = Some(duration);
+                reload = Some(if value.trim().eq_ignore_ascii_case("watch") {
+                    ReloadMode::Watch
+                } else {
+                    let duration = duration_str::parse(value.trim())
+                        .map_err(|e| format!("Invalid reload value '{}': {}", value, e))?;
+                    ReloadMode::Interval(duration)
+                });
             }
             other => return Err(format!("Unknown parameter: '{}'", other)),
         }
@@ -122,7 +141,7 @@ pub fn parse_enrich_arg(arg: &str) -> Result<EnrichmentConfig, String> {
         source_file: source_file.ok_or("Missing 'source' parameter")?,
         lookup_key: lookup_key.ok_or("Missing 'key' parameter")?,
         field_mappings,
-        reload_interval,
+        reload,
     })
 }
 
@@ -140,7 +159,7 @@ mod tests {
         assert_eq!(config.field_mappings.len(), 1);
         assert_eq!(config.field_mappings[0].source_column, "account");
         assert_eq!(config.field_mappings[0].output_field, "dst_account");
-        assert!(config.reload_interval.is_none());
+        assert!(config.reload.is_none());
     }
 
     #[test]
@@ -149,7 +168,18 @@ mod tests {
             "type=prefix_lookup,source=test.csv,key=src_addr,fields=region:src_region,reload=30s";
         let config = parse_enrich_arg(arg).unwrap();
         assert!(matches!(config.lookup_key, LookupKey::SrcAddr));
-        assert_eq!(config.reload_interval, Some(Duration::from_secs(30)));
+        assert_eq!(
+            config.reload,
+            Some(ReloadMode::Interval(Duration::from_secs(30)))
+        );
+    }
+
+    #[test]
+    fn test_parse_with_watch_reload() {
+        let arg =
+            "type=prefix_lookup,source=test.csv,key=src_addr,fields=region:src_region,reload=watch";
+        let config = parse_enrich_arg(arg).unwrap();
+        assert_eq!(config.reload, Some(ReloadMode::Watch));
     }
 
     #[test]
