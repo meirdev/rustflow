@@ -8,12 +8,13 @@ edition = "2024"
 license = "BSD-3-Clause"
 repository = "https://github.com/meirdev/rustflow"
 
-# Internal crates are declared here so a release only has to change the version
-# in this file. A path dependency still needs an explicit version to be
-# publishable, and a stale one fails the publish rather than the build.
 [workspace.dependencies]
 rustflow_core = { path = "crates/rustflow_core", version = "0.11.0" }
 rustflow = { path = "crates/rustflow", package = "rustflow_lib", version = "0.11.0" }
 rustflow_collect = { path = "crates/rustflow_collect", version = "0.11.0" }
 rustflow_generate = { path = "crates/rustflow_generate", version = "0.11.0" }
 rustflow_export = { path = "crates/rustflow_export", version = "0.11.0" }
+
+[profile.release]
+lto = true
+codegen-units = 1

@@ -73,6 +73,9 @@ jobs:
       - name: Build
         run: cargo build --release --target ${{ matrix.BUILD_TARGET }}
 
+      - name: Strip the binary
+        run: strip target/${{ matrix.BUILD_TARGET }}/release/rustflow
+
       - name: Upload the rustflow binary to the release
         uses: softprops/action-gh-release@v2
         if: github.ref_type == 'tag'
