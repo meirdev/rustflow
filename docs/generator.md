@@ -75,7 +75,8 @@ rustflow generate \
 
 ## Address Ranges
 
-Source and destination addresses are generated from configurable CIDR ranges.
+Source and destination addresses are generated from configurable IPv4 or IPv6 CIDR ranges.
+Both ranges must use the same address family because they share one IPFIX flow template.
 
 The defaults are:
 
@@ -90,6 +91,14 @@ Use `--src-cidr` and `--dst-cidr` to change them:
 rustflow generate \
   --src-cidr 172.16.0.0/12 \
   --dst-cidr 10.0.0.0/8
+```
+
+To generate IPv6 flows:
+
+```bash
+rustflow generate \
+  --src-cidr 2001:db8:1::/48 \
+  --dst-cidr 2001:db8:2::/48
 ```
 
 ## Protocols
@@ -135,9 +144,45 @@ rustflow generate \
   --dst-port-range 80-443
 ```
 
+Ranges are inclusive.
+
+## TCP Flags
+
+Use `--tcp-flags` to specify a comma-separated list of TCP flag choices. For each
+generated TCP flow, RustFlow randomly selects one entry from the list. Non-TCP
+flows use a value of `0`.
+
+Flag names are case-insensitive. Supported names are `fin`, `syn`, `rst`, `psh`,
+`ack`, `urg`, `ece`, `cwr`, and `ns`. Numeric values can be used for combined
+flags; for example, `18` represents SYN and ACK.
+
+```bash
+rustflow generate \
+  --protocols 6 \
+  --tcp-flags syn,ack,18
+```
+
+The default is `0`.
+
+## Flow Data Ranges
+
+Use `--octet-range` and `--packet-range` to control the octet and packet counts
+reported by each generated flow. Both ranges are inclusive.
+
+```bash
+rustflow generate \
+  --octet-range 1200-9000 \
+  --packet-range 10-100
+```
+
+The default octet range is `64-65535`, and the default packet range is `1-99`.
+These per-flow packet counts are separate from `--count`, which limits the total
+number of IPFIX packets sent by the generator.
+
 ## Example
 
-Generate 100,000 IPFIX packets at 10,000 packets per second, with 20 flows per packet:
+Generate 100,000 IPv6 IPFIX packets at 10,000 packets per second, with 20 flows
+per packet and configurable flow data:
 
 ```bash
 rustflow generate \
@@ -145,7 +190,13 @@ rustflow generate \
   -p 4739 \
   --rate 10000 \
   --flows-per-packet 20 \
-  --count 100000
+  --count 100000 \
+  --src-cidr 2001:db8:1::/48 \
+  --dst-cidr 2001:db8:2::/48 \
+  --protocols 6 \
+  --tcp-flags syn,ack,18 \
+  --octet-range 1200-9000 \
+  --packet-range 10-100
 ```
 
 ## CLI Options
