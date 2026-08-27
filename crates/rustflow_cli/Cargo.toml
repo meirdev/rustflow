@@ -17,7 +17,7 @@ rustflow_collect.workspace = true
 rustflow_generate.workspace = true
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
-env_logger = "0.11"
+env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 
 # The exporter captures with AF_PACKET, so it only exists on Linux.
 [target.'cfg(target_os = "linux")'.dependencies]
