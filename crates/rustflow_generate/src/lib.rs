@@ -1,61 +1,125 @@
 //! IPFIX flow generator for testing collectors under load.
 
-use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
+use std::fmt;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 use clap::Args as ClapArgs;
-use ipnet::Ipv4Net;
+use ipnet::IpNet;
 use rand::Rng;
+use rand::distr::uniform::SampleUniform;
+use rand::seq::IndexedRandom;
 use rustflow_core::common::InformationElement;
-
-fn random_ip_in_cidr(cidr: &Ipv4Net, rng: &mut impl Rng) -> Ipv4Addr {
-    let network = u32::from(cidr.network());
-    let host_mask = u32::from(cidr.hostmask());
-    if host_mask == 0 {
-        return Ipv4Addr::from(network);
-    }
-    let host_bits = rng.random_range(1..host_mask);
-    Ipv4Addr::from(network | host_bits)
-}
-
-#[derive(Debug, Clone)]
-struct PortRange {
-    start: u16,
-    end: u16,
-}
-
-impl PortRange {
-    fn parse(s: &str) -> Result<Self, String> {
-        let parts: Vec<&str> = s.splitn(2, '-').collect();
-        if parts.len() != 2 {
-            return Err(format!("invalid port range: {s} (expected start-end)"));
-        }
-        let start: u16 = parts[0]
-            .parse()
-            .map_err(|e| format!("invalid start port: {e}"))?;
-        let end: u16 = parts[1]
-            .parse()
-            .map_err(|e| format!("invalid end port: {e}"))?;
-        if start > end {
-            return Err(format!("start port {start} > end port {end}"));
-        }
-        Ok(Self { start, end })
-    }
-
-    fn random_port(&self, rng: &mut impl Rng) -> u16 {
-        rng.random_range(self.start..=self.end)
-    }
-}
 use rustflow_core::ipfix::encoder::Encode;
 use rustflow_core::ipfix::parser::{
     DataRecord, FieldSpecifier, FieldValue, Header, IPFIX_OPTIONS_TEMPLATE_SET_ID,
-    IPFIX_TEMPLATE_SET_ID, IPFIX_VERSION, IpfixPacket, Record, Set,
+    IPFIX_TEMPLATE_SET_ID, IPFIX_VERSION, IpfixPacket, Record, Set, TemplateRecord,
 };
 
 const FLOW_TEMPLATE_ID: u16 = 256;
 const OPTIONS_TEMPLATE_ID: u16 = 257;
+
+const IPPROTO_TCP: u8 = 6;
+
+fn random_ip_in_cidr(cidr: &IpNet, rng: &mut impl Rng) -> IpAddr {
+    match cidr {
+        IpNet::V4(cidr) => {
+            let host_bits = rng.random::<u32>() & u32::from(cidr.hostmask());
+            IpAddr::V4(Ipv4Addr::from(u32::from(cidr.network()) | host_bits))
+        }
+        IpNet::V6(cidr) => {
+            let host_bits = rng.random::<u128>() & u128::from(cidr.hostmask());
+            IpAddr::V6(Ipv6Addr::from(u128::from(cidr.network()) | host_bits))
+        }
+    }
+}
+
+fn parse_protocol(value: &str) -> Result<u8, String> {
+    value
+        .trim()
+        .parse::<u8>()
+        .map_err(|_| format!("invalid protocol number '{}'", value.trim()))
+}
+
+fn parse_tcp_flag(value: &str) -> Result<u16, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "" => Ok(0),
+        "fin" => Ok(0x001),
+        "syn" => Ok(0x002),
+        "rst" => Ok(0x004),
+        "psh" => Ok(0x008),
+        "ack" => Ok(0x010),
+        "urg" => Ok(0x020),
+        "ece" => Ok(0x040),
+        "cwr" => Ok(0x080),
+        "ns" => Ok(0x100),
+        value => value
+            .parse::<u16>()
+            .map_err(|_| format!("invalid TCP flag '{value}'")),
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct InclusiveRange<T> {
+    start: T,
+    end: T,
+}
+
+impl<T> FromStr for InclusiveRange<T>
+where
+    T: FromStr + PartialOrd + fmt::Display,
+    T::Err: fmt::Display,
+{
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (start, end) = s
+            .split_once('-')
+            .ok_or_else(|| format!("invalid range '{s}' (expected start-end)"))?;
+        let start = start
+            .trim()
+            .parse::<T>()
+            .map_err(|e| format!("invalid range start: {e}"))?;
+        let end = end
+            .trim()
+            .parse::<T>()
+            .map_err(|e| format!("invalid range end: {e}"))?;
+        if start > end {
+            return Err(format!("range start {start} > end {end}"));
+        }
+        Ok(Self { start, end })
+    }
+}
+
+impl<T: fmt::Display> fmt::Display for InclusiveRange<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}-{}", self.start, self.end)
+    }
+}
+
+impl<T: SampleUniform + PartialOrd + Copy> InclusiveRange<T> {
+    fn sample(&self, rng: &mut impl Rng) -> T {
+        rng.random_range(self.start..=self.end)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AddressFamily {
+    V4,
+    V6,
+}
+
+impl AddressFamily {
+    fn of(cidr: &IpNet) -> Self {
+        match cidr {
+            IpNet::V4(_) => Self::V4,
+            IpNet::V6(_) => Self::V6,
+        }
+    }
+}
 
 /// Arguments for the `generate` subcommand.
 #[derive(ClapArgs, Debug)]
@@ -88,25 +152,37 @@ pub struct GenerateArgs {
     #[arg(long, default_value = "30")]
     template_interval: u64,
 
-    /// Source IP CIDR range (e.g. 10.0.0.0/8)
+    /// Source IP CIDR range (e.g. 10.0.0.0/8 or 2001:db8::/32)
     #[arg(long, default_value = "10.0.0.0/8")]
-    src_cidr: String,
+    src_cidr: IpNet,
 
-    /// Destination IP CIDR range (e.g. 192.168.0.0/16)
+    /// Destination IP CIDR range (same address family as --src-cidr)
     #[arg(long, default_value = "192.168.0.0/16")]
-    dst_cidr: String,
+    dst_cidr: IpNet,
 
     /// Comma-separated list of protocol numbers (e.g. 6,17 for TCP,UDP)
-    #[arg(long, default_value = "6,17")]
-    protocols: String,
+    #[arg(long, default_value = "6,17", value_delimiter = ',', value_parser = parse_protocol)]
+    protocols: Vec<u8>,
 
     /// Source port range (e.g. 1024-65535)
     #[arg(long, default_value = "1024-65535")]
-    src_port_range: String,
+    src_port_range: InclusiveRange<u16>,
 
     /// Destination port range (e.g. 1-1024)
     #[arg(long, default_value = "1-1024")]
-    dst_port_range: String,
+    dst_port_range: InclusiveRange<u16>,
+
+    /// Comma-separated TCP flag choices (names or values, e.g. syn,ack,18)
+    #[arg(long, default_value = "0", value_delimiter = ',', value_parser = parse_tcp_flag)]
+    tcp_flags: Vec<u16>,
+
+    /// Octet count range per flow (e.g. 64-65535)
+    #[arg(long, default_value = "64-65535")]
+    octet_range: InclusiveRange<u16>,
+
+    /// Packet count range per flow (e.g. 1-99)
+    #[arg(long, default_value = "1-99")]
+    packet_range: InclusiveRange<u16>,
 }
 
 // Static empty name for DataRecord fields
@@ -121,15 +197,21 @@ fn field_specifier(ie: InformationElement, length: u16) -> FieldSpecifier {
     }
 }
 
-fn create_flow_template() -> rustflow_core::ipfix::parser::TemplateRecord {
+fn create_flow_template(family: AddressFamily) -> TemplateRecord {
     use InformationElement::*;
 
-    rustflow_core::ipfix::parser::TemplateRecord::new(
+    let (source_address, destination_address, address_length) = match family {
+        AddressFamily::V4 => (SourceIpv4Address, DestinationIpv4Address, 4),
+        AddressFamily::V6 => (SourceIpv6Address, DestinationIpv6Address, 16),
+    };
+
+    TemplateRecord::new(
         FLOW_TEMPLATE_ID,
         vec![
-            field_specifier(SourceIpv4Address, 4),
-            field_specifier(DestinationIpv4Address, 4),
+            field_specifier(source_address, address_length),
+            field_specifier(destination_address, address_length),
             field_specifier(ProtocolIdentifier, 1),
+            field_specifier(TcpControlBits, 2),
             field_specifier(SourceTransportPort, 2),
             field_specifier(DestinationTransportPort, 2),
             field_specifier(OctetDeltaCount, 8),
@@ -138,6 +220,17 @@ fn create_flow_template() -> rustflow_core::ipfix::parser::TemplateRecord {
             field_specifier(FlowEndMilliseconds, 8),
         ],
     )
+}
+
+fn address_field(
+    ip: IpAddr,
+    v4: InformationElement,
+    v6: InformationElement,
+) -> (InformationElement, FieldValue) {
+    match ip {
+        IpAddr::V4(addr) => (v4, FieldValue::Ipv4Address(addr)),
+        IpAddr::V6(addr) => (v6, FieldValue::Ipv6Address(addr)),
+    }
 }
 
 fn create_options_template() -> rustflow_core::ipfix::parser::OptionsTemplateRecord {
@@ -153,74 +246,78 @@ fn create_options_template() -> rustflow_core::ipfix::parser::OptionsTemplateRec
     )
 }
 
-fn create_flow_record(
-    src_ip: Ipv4Addr,
-    dst_ip: Ipv4Addr,
+struct Flow {
+    src_ip: IpAddr,
+    dst_ip: IpAddr,
     protocol: u8,
+    tcp_flags: u16,
     src_port: u16,
     dst_port: u16,
-    octets: u64,
-    packets: u64,
+    octets: u16,
+    packets: u16,
     flow_start: DateTime<Utc>,
     flow_end: DateTime<Utc>,
-) -> DataRecord {
+}
+
+fn create_flow_record(flow: &Flow) -> DataRecord {
     use InformationElement::*;
     let name = EMPTY_NAME.clone();
 
+    let (source_ie, source_value) =
+        address_field(flow.src_ip, SourceIpv4Address, SourceIpv6Address);
+    let (destination_ie, destination_value) =
+        address_field(flow.dst_ip, DestinationIpv4Address, DestinationIpv6Address);
+
     DataRecord(vec![
-        (
-            None,
-            SourceIpv4Address.into(),
-            name.clone(),
-            FieldValue::Ipv4Address(src_ip),
-        ),
-        (
-            None,
-            DestinationIpv4Address.into(),
-            name.clone(),
-            FieldValue::Ipv4Address(dst_ip),
-        ),
+        (None, source_ie.into(), name.clone(), source_value),
+        (None, destination_ie.into(), name.clone(), destination_value),
         (
             None,
             ProtocolIdentifier.into(),
             name.clone(),
-            FieldValue::Unsigned8(protocol),
+            FieldValue::Unsigned8(flow.protocol),
+        ),
+        (
+            None,
+            TcpControlBits.into(),
+            name.clone(),
+            FieldValue::Unsigned16(flow.tcp_flags),
         ),
         (
             None,
             SourceTransportPort.into(),
             name.clone(),
-            FieldValue::Unsigned16(src_port),
+            FieldValue::Unsigned16(flow.src_port),
         ),
         (
             None,
             DestinationTransportPort.into(),
             name.clone(),
-            FieldValue::Unsigned16(dst_port),
+            FieldValue::Unsigned16(flow.dst_port),
         ),
         (
             None,
             OctetDeltaCount.into(),
             name.clone(),
-            FieldValue::Unsigned64(octets),
+            FieldValue::Unsigned64(u64::from(flow.octets)),
         ),
         (
             None,
             PacketDeltaCount.into(),
             name.clone(),
-            FieldValue::Unsigned64(packets),
+            FieldValue::Unsigned64(u64::from(flow.packets)),
         ),
         (
             None,
             FlowStartMilliseconds.into(),
             name.clone(),
-            FieldValue::DateTimeMilliseconds(flow_start),
+            FieldValue::DateTimeMilliseconds(flow.flow_start),
         ),
         (
             None,
             FlowEndMilliseconds.into(),
             name,
-            FieldValue::DateTimeMilliseconds(flow_end),
+            FieldValue::DateTimeMilliseconds(flow.flow_end),
         ),
     ])
 }
@@ -251,32 +348,37 @@ struct IpfixGenerator {
     observation_domain_id: u32,
     sequence_number: u32,
     flows_per_packet: u16,
-    src_cidr: Ipv4Net,
-    dst_cidr: Ipv4Net,
+    family: AddressFamily,
+    src_cidr: IpNet,
+    dst_cidr: IpNet,
     protocols: Vec<u8>,
-    src_port_range: PortRange,
-    dst_port_range: PortRange,
+    tcp_flags: Vec<u16>,
+    octet_range: InclusiveRange<u16>,
+    packet_range: InclusiveRange<u16>,
+    src_port_range: InclusiveRange<u16>,
+    dst_port_range: InclusiveRange<u16>,
+}
+
+fn invalid_input(message: String) -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::InvalidInput, message)
 }
 
 impl IpfixGenerator {
     fn new(args: &GenerateArgs) -> std::io::Result<Self> {
+        let family = AddressFamily::of(&args.src_cidr);
+        if AddressFamily::of(&args.dst_cidr) != family {
+            return Err(invalid_input(
+                "--src-cidr and --dst-cidr must use the same IP address family".to_string(),
+            ));
+        }
+        if args.protocols.is_empty() {
+            return Err(invalid_input(
+                "--protocols must contain at least one protocol number".to_string(),
+            ));
+        }
+
         let socket = UdpSocket::bind("0.0.0.0:0")?;
         let target: SocketAddr = format!("{}:{}", args.host, args.port).parse().unwrap();
-
-        let src_cidr: Ipv4Net = args.src_cidr.parse().expect("invalid --src-cidr");
-        let dst_cidr: Ipv4Net = args.dst_cidr.parse().expect("invalid --dst-cidr");
-        let protocols: Vec<u8> = args
-            .protocols
-            .split(',')
-            .map(|s| s.trim().parse::<u8>().expect("invalid protocol number"))
-            .collect();
-        if protocols.is_empty() {
-            panic!("--protocols must contain at least one protocol number");
-        }
-        let src_port_range =
-            PortRange::parse(&args.src_port_range).expect("invalid --src-port-range");
-        let dst_port_range =
-            PortRange::parse(&args.dst_port_range).expect("invalid --dst-port-range");
 
         Ok(Self {
             socket,
@@ -284,11 +386,15 @@ impl IpfixGenerator {
             observation_domain_id: args.observation_domain_id,
             sequence_number: 0,
             flows_per_packet: args.flows_per_packet,
-            src_cidr,
-            dst_cidr,
-            protocols,
-            src_port_range,
-            dst_port_range,
+            family,
+            src_cidr: args.src_cidr,
+            dst_cidr: args.dst_cidr,
+            protocols: args.protocols.clone(),
+            tcp_flags: args.tcp_flags.clone(),
+            octet_range: args.octet_range,
+            packet_range: args.packet_range,
+            src_port_range: args.src_port_range,
+            dst_port_range: args.dst_port_range,
         })
     }
 
@@ -311,7 +417,7 @@ impl IpfixGenerator {
                 Set {
                     id: IPFIX_TEMPLATE_SET_ID,
                     length: 0,
-                    records: vec![Record::Template(create_flow_template())],
+                    records: vec![Record::Template(create_flow_template(self.family))],
                 },
                 Set {
                     id: IPFIX_OPTIONS_TEMPLATE_SET_ID,
@@ -355,19 +461,32 @@ impl IpfixGenerator {
                 let src_ip = random_ip_in_cidr(&self.src_cidr, &mut rng);
                 let dst_ip = random_ip_in_cidr(&self.dst_cidr, &mut rng);
                 let protocol = self.protocols[rng.random_range(0..self.protocols.len())];
-                let src_port = self.src_port_range.random_port(&mut rng);
-                let dst_port = self.dst_port_range.random_port(&mut rng);
-                let octets: u64 = rng.random_range(64..65536);
-                let packets: u64 = rng.random_range(1..100);
+                let tcp_flags = if protocol == IPPROTO_TCP {
+                    self.tcp_flags.choose(&mut rng).copied().unwrap_or(0)
+                } else {
+                    0
+                };
+                let src_port = self.src_port_range.sample(&mut rng);
+                let dst_port = self.dst_port_range.sample(&mut rng);
+                let octets = self.octet_range.sample(&mut rng);
+                let packets = self.packet_range.sample(&mut rng);
 
                 let flow_start =
                     now - chrono::Duration::milliseconds(rng.random_range(1000..60000));
                 let flow_end = now - chrono::Duration::milliseconds(rng.random_range(0..1000));
 
-                Record::Data(create_flow_record(
-                    src_ip, dst_ip, protocol, src_port, dst_port, octets, packets, flow_start,
+                Record::Data(create_flow_record(&Flow {
+                    src_ip,
+                    dst_ip,
+                    protocol,
+                    tcp_flags,
+                    src_port,
+                    dst_port,
+                    octets,
+                    packets,
+                    flow_start,
                     flow_end,
-                ))
+                }))
             })
             .collect();
 
@@ -393,8 +512,18 @@ impl IpfixGenerator {
     }
 }
 
+fn join<T: fmt::Display>(values: &[T]) -> String {
+    values
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 /// Run the IPFIX flow generator.
 pub fn run(args: GenerateArgs) -> std::io::Result<()> {
+    let mut generator = IpfixGenerator::new(&args)?;
+
     eprintln!("IPFIX Generator");
     eprintln!("  Target: {}:{}", args.host, args.port);
     eprintln!(
@@ -416,12 +545,13 @@ pub fn run(args: GenerateArgs) -> std::io::Result<()> {
     );
     eprintln!("  Source CIDR: {}", args.src_cidr);
     eprintln!("  Destination CIDR: {}", args.dst_cidr);
-    eprintln!("  Protocols: {}", args.protocols);
+    eprintln!("  Protocols: {}", join(&args.protocols));
     eprintln!("  Source port range: {}", args.src_port_range);
     eprintln!("  Destination port range: {}", args.dst_port_range);
+    eprintln!("  TCP flag choices: {}", join(&args.tcp_flags));
+    eprintln!("  Octet range: {}", args.octet_range);
+    eprintln!("  Packet range: {}", args.packet_range);
     eprintln!();
-
-    let mut generator = IpfixGenerator::new(&args)?;
 
     generator.send_templates()?;
     generator.send_options()?;
