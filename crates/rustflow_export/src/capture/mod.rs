@@ -14,9 +14,11 @@ use crate::flow::FlowKey;
 
 // AF_PACKET constants
 const ETH_P_ALL: u16 = 0x0003;
+const PACKET_ADD_MEMBERSHIP: libc::c_int = 1;
 const PACKET_RX_RING: libc::c_int = 5;
 const PACKET_VERSION: libc::c_int = 10;
 const TPACKET_V2: libc::c_int = 1;
+const PACKET_MR_PROMISC: libc::c_ushort = 1;
 
 // Ring buffer configuration
 const FRAME_SIZE: u32 = 2048;
@@ -27,6 +29,14 @@ const FRAME_NR: u32 = (BLOCK_SIZE / FRAME_SIZE) * BLOCK_NR;
 // Frame status flags
 const TP_STATUS_KERNEL: u32 = 0;
 const TP_STATUS_USER: u32 = 1;
+
+#[repr(C)]
+struct PacketMreq {
+    mr_ifindex: libc::c_int,
+    mr_type: libc::c_ushort,
+    mr_alen: libc::c_ushort,
+    mr_address: [libc::c_uchar; 8],
+}
 
 #[repr(C)]
 struct TpacketReq {
@@ -55,10 +65,12 @@ pub struct PacketCapture {
     ring: *mut u8,
     ring_size: usize,
     frame_idx: u32,
+    sampling_interval: u32,
+    sampling_countdown: u32,
 }
 
 impl PacketCapture {
-    pub fn new(interface: &str, _promiscuous: bool) -> Result<Self> {
+    pub fn new(interface: &str, promiscuous: bool, sampling_interval: u32) -> Result<Self> {
         info!("Opening AF_PACKET capture on interface: {}", interface);
 
         // Create AF_PACKET socket
@@ -172,6 +184,38 @@ impl PacketCapture {
             ));
         }
 
+        if promiscuous {
+            let mreq = PacketMreq {
+                mr_ifindex: ifindex,
+                mr_type: PACKET_MR_PROMISC,
+                mr_alen: 0,
+                mr_address: [0; 8],
+            };
+
+            let ret = unsafe {
+                libc::setsockopt(
+                    fd,
+                    libc::SOL_PACKET,
+                    PACKET_ADD_MEMBERSHIP,
+                    &mreq as *const _ as *const libc::c_void,
+                    mem::size_of::<PacketMreq>() as libc::socklen_t,
+                )
+            };
+            if ret < 0 {
+                unsafe {
+                    libc::munmap(ring, ring_size);
+                    libc::close(fd);
+                }
+                return Err(anyhow!(
+                    "Failed to enable promiscuous mode on '{}': {}",
+                    interface,
+                    io::Error::last_os_error()
+                ));
+            }
+
+            info!("Promiscuous mode enabled on {}", interface);
+        }
+
         info!("AF_PACKET ring buffer ready: {} frames", FRAME_NR);
 
         Ok(Self {
@@ -179,6 +223,8 @@ impl PacketCapture {
             ring: ring as *mut u8,
             ring_size,
             frame_idx: 0,
+            sampling_interval: sampling_interval.max(1),
+            sampling_countdown: 1,
         })
     }
 
@@ -203,13 +249,19 @@ impl PacketCapture {
             return None;
         }
 
-        // Get packet data
-        let packet_data = unsafe {
-            let data_ptr = self.ring.add(frame_offset + hdr.tp_mac as usize);
-            std::slice::from_raw_parts(data_ptr, hdr.tp_snaplen as usize)
-        };
+        let result = if self.sampling_countdown > 1 {
+            self.sampling_countdown -= 1;
+            None
+        } else {
+            self.sampling_countdown = self.sampling_interval;
 
-        let result = parse_packet(packet_data);
+            let packet_data = unsafe {
+                let data_ptr = self.ring.add(frame_offset + hdr.tp_mac as usize);
+                std::slice::from_raw_parts(data_ptr, hdr.tp_snaplen as usize)
+            };
+
+            parse_packet(packet_data)
+        };
 
         // Return frame to kernel
         hdr.tp_status = TP_STATUS_KERNEL;

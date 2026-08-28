@@ -53,7 +53,7 @@ pub struct ExportArgs {
     pub template_refresh_rate: u64,
 
     /// Sampling packet interval
-    #[arg(long, default_value = "1")]
+    #[arg(long, default_value = "1", value_parser = clap::value_parser!(u32).range(1..))]
     pub sampling_packet_interval: u32,
 
     /// Enable promiscuous mode
@@ -88,7 +88,11 @@ pub fn run(args: ExportArgs) -> Result<()> {
     );
 
     // Initialize components
-    let mut capture = PacketCapture::new(&args.interface, args.promiscuous)?;
+    let mut capture = PacketCapture::new(
+        &args.interface,
+        args.promiscuous,
+        args.sampling_packet_interval,
+    )?;
     let mut exporter = Exporter::new(args.clone())?;
     let mut flow_cache = FlowCache::new(args.active_timeout, args.inactive_timeout);
 
