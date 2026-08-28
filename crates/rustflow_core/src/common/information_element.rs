@@ -66,18 +66,9 @@ pub enum InformationElement {
 }
 
 /// Largest discriminant in [`InformationElement`].
-///
-/// Only bounds the lookup table below; `ie_table_matches_derive` fails if a
-/// variant is ever added above it.
 const MAX_IE_ID: u16 = 305;
 
 /// Identifier-indexed lookup table for [`InformationElement::from_id`].
-///
-/// The derived `try_from` compiles to a decision tree over 55 sparse
-/// discriminants and runs once per field of every record, which profiled at
-/// ~5% of collector CPU. Indexing an array is a single load instead. The
-/// table is generated from the derive rather than written out by hand, so it
-/// cannot disagree with the enum.
 static IE_BY_ID: LazyLock<Box<[Option<InformationElement>]>> = LazyLock::new(|| {
     (0..=MAX_IE_ID)
         .map(|id| InformationElement::try_from(id).ok())
@@ -85,8 +76,6 @@ static IE_BY_ID: LazyLock<Box<[Option<InformationElement>]>> = LazyLock::new(|| 
 });
 
 impl InformationElement {
-    /// Map a NetFlow/IPFIX field identifier to its element, if it is one we
-    /// know. Equivalent to `try_from(id).ok()`, but O(1).
     #[inline]
     pub fn from_id(id: u16) -> Option<Self> {
         IE_BY_ID.get(id as usize).copied().flatten()
@@ -97,9 +86,6 @@ impl InformationElement {
 mod tests {
     use super::*;
 
-    /// The table is a cache of the derive, so the two must agree for every
-    /// possible identifier -- including those above `MAX_IE_ID`, which is how
-    /// a newly added high-numbered variant gets caught.
     #[test]
     fn ie_table_matches_derive() {
         for id in 0..=u16::MAX {

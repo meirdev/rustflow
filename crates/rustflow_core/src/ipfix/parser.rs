@@ -196,8 +196,8 @@ impl IpfixParser {
                     many0(parse_options_template_record).parse(input)?;
 
                 for template in &options_templates {
-                    let fields = self
-                        .resolve_fields(&template.fields, template.scope_field_count as usize);
+                    let fields =
+                        self.resolve_fields(&template.fields, template.scope_field_count as usize);
                     self.options_templates.insert(
                         (observation_domain_id, template.template_id),
                         CachedTemplate {
@@ -248,8 +248,12 @@ impl IpfixParser {
 
         for field in fields {
             let (input, field_length) = parse_field_length(field.spec.field_length, remaining)?;
-            let (input, value) =
-                self.parse_field_value(observation_domain_id, field.data_type, field_length, input)?;
+            let (input, value) = self.parse_field_value(
+                observation_domain_id,
+                field.data_type,
+                field_length,
+                input,
+            )?;
             values.push((
                 field.spec.enterprise_number,
                 field.spec.information_element_identifier,
