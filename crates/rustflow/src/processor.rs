@@ -139,6 +139,11 @@ impl NetflowProcessor {
         time_received_ns: Option<i64>,
     ) -> Vec<CommonFlow> {
         let mut flows = Vec::new();
+        // `CommonFlow` is ~280 bytes, so growing from empty reallocates and
+        // copies the whole run several times per packet. The record counts are
+        // an upper bound (template records produce no flow), which is exactly
+        // what a capacity hint wants.
+        flows.reserve(estimated_flow_count(packet));
 
         match packet {
             NetflowPacket::V5(parsed) => {
@@ -154,13 +159,18 @@ impl NetflowProcessor {
             }
             NetflowPacket::V9(parsed) => {
                 let cache_key = (src, parsed.header.source_id);
+                // `&self`: the cache cannot change while this packet is
+                // converted, so the rate is looked up once instead of once per
+                // record. Each repeat cost a hash probe plus a clock read for
+                // the entry's TTL check.
+                let sampling_rate = self.sampling_cache.get(&cache_key);
                 for flow_set in parsed.flow_sets.iter() {
                     for record in flow_set.records.iter() {
                         if let V9Record::Data(data_record) = record {
                             let ctx = NetFlowV9Context {
                                 header: &parsed.header,
                                 sampler_address: Some(src),
-                                sampling_rate: self.sampling_cache.get(&cache_key),
+                                sampling_rate,
                             };
                             let mut flow = ctx.convert(data_record, flow_set.id);
                             flow.time_received_ns = time_received_ns;
@@ -171,13 +181,18 @@ impl NetflowProcessor {
             }
             NetflowPacket::Ipfix(parsed) => {
                 let cache_key = (src, parsed.header.observation_domain_id);
+                // `&self`: the cache cannot change while this packet is
+                // converted, so the rate is looked up once instead of once per
+                // record. Each repeat cost a hash probe plus a clock read for
+                // the entry's TTL check.
+                let sampling_rate = self.sampling_cache.get(&cache_key);
                 for set in parsed.sets.iter() {
                     for record in set.records.iter() {
                         if let IpfixRecord::Data(data_record) = record {
                             let ctx = IpfixContext {
                                 header: &parsed.header,
                                 sampler_address: Some(src),
-                                sampling_rate: self.sampling_cache.get(&cache_key),
+                                sampling_rate,
                             };
                             let mut flow = ctx.convert(data_record, set.id);
                             flow.time_received_ns = time_received_ns;
@@ -210,6 +225,8 @@ impl NetflowProcessor {
         match version {
             NETFLOW_V5_VERSION => {
                 if let Ok((_, parsed)) = self.v5_parser.parse(payload) {
+                    // Same reasoning as convert_to_flows: size once, do not regrow.
+                    flows.reserve(parsed.flow_records.len());
                     let ctx = NetFlowV5Context {
                         header: &parsed.header,
                         sampler_address: Some(src),
@@ -227,7 +244,14 @@ impl NetflowProcessor {
                 });
 
                 if let Ok((_, parsed)) = parser.parse(payload) {
+                    // Same reasoning as convert_to_flows: size once, do not regrow.
+                    flows.reserve(parsed.flow_sets.iter().map(|s| s.records.len()).sum());
                     let cache_key = (src, parsed.header.source_id);
+                    // A record can install a new sampling rate mid-packet,
+                    // so this is tracked in a local that mirrors every `set`
+                    // below rather than hoisted as a constant. Still one lookup
+                    // per packet instead of one per record.
+                    let mut sampling_rate = self.sampling_cache.get(&cache_key);
 
                     for flow_set in parsed.flow_sets.iter() {
                         for record in flow_set.records.iter() {
@@ -235,17 +259,19 @@ impl NetflowProcessor {
                                 V9Record::OptionsData(data_record) => {
                                     if let Some(rate) = extract_v9_sampling_rate(data_record) {
                                         self.sampling_cache.set(cache_key, rate);
+                                        sampling_rate = Some(rate);
                                     }
                                 }
                                 V9Record::Data(data_record) => {
                                     if let Some(rate) = extract_v9_sampling_rate(data_record) {
                                         self.sampling_cache.set(cache_key, rate);
+                                        sampling_rate = Some(rate);
                                     }
 
                                     let ctx = NetFlowV9Context {
                                         header: &parsed.header,
                                         sampler_address: Some(src),
-                                        sampling_rate: self.sampling_cache.get(&cache_key),
+                                        sampling_rate,
                                     };
                                     let mut flow = ctx.convert(data_record, flow_set.id);
                                     flow.time_received_ns = time_received_ns;
@@ -263,7 +289,14 @@ impl NetflowProcessor {
                 });
 
                 if let Ok((_, parsed)) = parser.parse(payload) {
+                    // Same reasoning as convert_to_flows: size once, do not regrow.
+                    flows.reserve(parsed.sets.iter().map(|s| s.records.len()).sum());
                     let cache_key = (src, parsed.header.observation_domain_id);
+                    // A record can install a new sampling rate mid-packet,
+                    // so this is tracked in a local that mirrors every `set`
+                    // below rather than hoisted as a constant. Still one lookup
+                    // per packet instead of one per record.
+                    let mut sampling_rate = self.sampling_cache.get(&cache_key);
 
                     for set in parsed.sets.iter() {
                         for record in set.records.iter() {
@@ -271,17 +304,19 @@ impl NetflowProcessor {
                                 IpfixRecord::OptionsData(data_record) => {
                                     if let Some(rate) = extract_ipfix_sampling_rate(data_record) {
                                         self.sampling_cache.set(cache_key, rate);
+                                        sampling_rate = Some(rate);
                                     }
                                 }
                                 IpfixRecord::Data(data_record) => {
                                     if let Some(rate) = extract_ipfix_sampling_rate(data_record) {
                                         self.sampling_cache.set(cache_key, rate);
+                                        sampling_rate = Some(rate);
                                     }
 
                                     let ctx = IpfixContext {
                                         header: &parsed.header,
                                         sampler_address: Some(src),
-                                        sampling_rate: self.sampling_cache.get(&cache_key),
+                                        sampling_rate,
                                     };
                                     let mut flow = ctx.convert(data_record, set.id);
                                     flow.time_received_ns = time_received_ns;
@@ -413,5 +448,16 @@ impl SflowProcessor {
 impl Default for SflowProcessor {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Upper bound on the flows a parsed packet yields, used to size the output
+/// vector up front. Counts every record, including the template records that
+/// yield nothing, because over-reserving is far cheaper than regrowing.
+fn estimated_flow_count(packet: &NetflowPacket) -> usize {
+    match packet {
+        NetflowPacket::V5(parsed) => parsed.flow_records.len(),
+        NetflowPacket::V9(parsed) => parsed.flow_sets.iter().map(|s| s.records.len()).sum(),
+        NetflowPacket::Ipfix(parsed) => parsed.sets.iter().map(|s| s.records.len()).sum(),
     }
 }

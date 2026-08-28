@@ -321,7 +321,7 @@ impl NetFlowV9Context<'_> {
         }
 
         for (field_type, _, value) in &record.0 {
-            if let Ok(ie) = InformationElement::try_from(*field_type) {
+            if let Some(ie) = InformationElement::from_id(*field_type) {
                 match ie {
                     OctetDeltaCount => flow.bytes = extract_u64(value),
                     PacketDeltaCount => flow.packets = extract_u64(value),
@@ -534,7 +534,7 @@ impl IpfixContext<'_> {
         }
 
         for (_, field_type, _, value) in &record.0 {
-            if let Ok(ie) = InformationElement::try_from(*field_type) {
+            if let Some(ie) = InformationElement::from_id(*field_type) {
                 match ie {
                     OctetDeltaCount => flow.bytes = ipfix_extract_u64(value),
                     PacketDeltaCount => flow.packets = ipfix_extract_u64(value),
