@@ -95,6 +95,7 @@ for the complete CLI options.
 - [IPFIX traffic generator](./docs/generator.md)
 - [Library usage](./docs/library.md)
 - [Production deployment](./docs/deployment.md)
+- [Vector integration](./docs/vector.md)
 - [Protocol references](./docs/protocols.md)
 - [Alternatives](./docs/alternatives.md)
 
