@@ -42,8 +42,8 @@ type TemplateKey = (u32, u16);
 
 pub struct IpfixParser {
     pub ie_registry: IERegistry,
-    pub templates: TimeoutHashMap<TemplateKey, CachedTemplate<TemplateRecord>>,
-    pub options_templates: TimeoutHashMap<TemplateKey, CachedTemplate<OptionsTemplateRecord>>,
+    pub templates: TimeoutHashMap<TemplateKey, TemplateRecord>,
+    pub options_templates: TimeoutHashMap<TemplateKey, OptionsTemplateRecord>,
 }
 
 impl IpfixParser {
@@ -83,39 +83,6 @@ impl IpfixParser {
             )
     }
 
-    /// Resolve a template's field list against the IE registry once.
-    ///
-    /// The answer is fixed for the life of the template, but was previously
-    /// recomputed for every data record: a hash lookup and an `Arc` clone per
-    /// field, ~300 per packet on a typical 20-record IPFIX packet, which
-    /// profiled as the single hottest function in the collector. Scope fields
-    /// additionally formatted their identifier into a fresh `String` each
-    /// time. Doing it at template-install time turns record parsing into an
-    /// indexed walk.
-    fn resolve_fields(&self, fields: &[FieldSpecifier], scope_count: usize) -> Vec<ResolvedField> {
-        fields
-            .iter()
-            .enumerate()
-            .map(|(idx, field)| {
-                // Scope fields are not registry elements; they keep the
-                // identifier as their name, as before.
-                let (data_type, name) = if idx < scope_count {
-                    (
-                        DataType::Unsigned,
-                        Arc::from(field.information_element_identifier.to_string()),
-                    )
-                } else {
-                    self.lookup_field_info(field)
-                };
-                ResolvedField {
-                    spec: field.clone(),
-                    data_type,
-                    name,
-                }
-            })
-            .collect()
-    }
-
     fn parse_templated_records<'a>(
         &self,
         observation_domain_id: u32,
@@ -126,15 +93,21 @@ impl IpfixParser {
 
         if let Some(t) = self.templates.get(&key) {
             let (input, records) =
-                many0(|i| self.parse_record_from_fields(observation_domain_id, &t.fields, i))
+                many0(|i| self.parse_record_from_fields(observation_domain_id, &t.fields, 0, i))
                     .parse(input)?;
             return Ok((input, records.into_iter().map(Record::Data).collect()));
         }
 
         if let Some(t) = self.options_templates.get(&key) {
-            let (input, records) =
-                many0(|i| self.parse_record_from_fields(observation_domain_id, &t.fields, i))
-                    .parse(input)?;
+            let (input, records) = many0(|i| {
+                self.parse_record_from_fields(
+                    observation_domain_id,
+                    &t.fields,
+                    t.scope_field_count as usize,
+                    i,
+                )
+            })
+            .parse(input)?;
             return Ok((
                 input,
                 records.into_iter().map(Record::OptionsData).collect(),
@@ -179,13 +152,9 @@ impl IpfixParser {
                 let (input, templates) = many0(parse_template_record).parse(input)?;
 
                 for template in &templates {
-                    let fields = self.resolve_fields(&template.fields, 0);
                     self.templates.insert(
                         (observation_domain_id, template.template_id),
-                        CachedTemplate {
-                            record: template.clone(),
-                            fields,
-                        },
+                        template.clone(),
                     );
                 }
 
@@ -196,14 +165,9 @@ impl IpfixParser {
                     many0(parse_options_template_record).parse(input)?;
 
                 for template in &options_templates {
-                    let fields =
-                        self.resolve_fields(&template.fields, template.scope_field_count as usize);
                     self.options_templates.insert(
                         (observation_domain_id, template.template_id),
-                        CachedTemplate {
-                            record: template.clone(),
-                            fields,
-                        },
+                        template.clone(),
                     );
                 }
 
@@ -240,24 +204,30 @@ impl IpfixParser {
     fn parse_record_from_fields<'a>(
         &self,
         observation_domain_id: u32,
-        fields: &[ResolvedField],
+        fields: &[FieldSpecifier],
+        scope_count: usize,
         input: &'a [u8],
     ) -> IResult<&'a [u8], DataRecord> {
         let mut values = Vec::with_capacity(fields.len());
         let mut remaining = input;
 
-        for field in fields {
-            let (input, field_length) = parse_field_length(field.spec.field_length, remaining)?;
-            let (input, value) = self.parse_field_value(
-                observation_domain_id,
-                field.data_type,
-                field_length,
-                input,
-            )?;
+        for (idx, field) in fields.iter().enumerate() {
+            let (data_type, name): (DataType, Arc<str>) = if idx < scope_count {
+                (
+                    DataType::Unsigned,
+                    Arc::from(field.information_element_identifier.to_string()),
+                )
+            } else {
+                self.lookup_field_info(field)
+            };
+
+            let (input, field_length) = parse_field_length(field.field_length, remaining)?;
+            let (input, value) =
+                self.parse_field_value(observation_domain_id, data_type, field_length, input)?;
             values.push((
-                field.spec.enterprise_number,
-                field.spec.information_element_identifier,
-                Arc::clone(&field.name),
+                field.enterprise_number,
+                field.information_element_identifier,
+                name,
                 value,
             ));
             remaining = input;
@@ -568,25 +538,6 @@ fn parse_options_template_record(input: &[u8]) -> IResult<&[u8], OptionsTemplate
             fields,
         },
     ))
-}
-
-/// One template field with its registry metadata already resolved.
-#[derive(Debug, Clone)]
-pub struct ResolvedField {
-    pub spec: FieldSpecifier,
-    pub data_type: DataType,
-    pub name: Arc<str>,
-}
-
-/// A cached template: the record exactly as it arrived, plus its fields
-/// resolved against the IE registry.
-///
-/// Both are stored together so a re-sent template that changes its fields
-/// cannot leave stale metadata behind — the whole entry is replaced.
-#[derive(Debug, Clone)]
-pub struct CachedTemplate<T> {
-    pub record: T,
-    pub fields: Vec<ResolvedField>,
 }
 
 #[derive(Debug, Clone, Serialize)]
