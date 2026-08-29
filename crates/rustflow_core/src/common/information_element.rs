@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 /// IANA IPFIX Information Elements (commonly used subset)
@@ -61,4 +63,38 @@ pub enum InformationElement {
     IcmpTypeIpv6 = 178,
     IcmpCodeIpv6 = 179,
     SamplingPacketInterval = 305,
+}
+
+/// Largest discriminant in [`InformationElement`].
+const MAX_IE_ID: u16 = 305;
+
+/// Identifier-indexed lookup table for [`InformationElement::from_id`].
+static IE_BY_ID: LazyLock<Box<[Option<InformationElement>]>> = LazyLock::new(|| {
+    (0..=MAX_IE_ID)
+        .map(|id| InformationElement::try_from(id).ok())
+        .collect()
+});
+
+impl InformationElement {
+    #[inline]
+    pub fn from_id(id: u16) -> Option<Self> {
+        IE_BY_ID.get(id as usize).copied().flatten()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ie_table_matches_derive() {
+        for id in 0..=u16::MAX {
+            assert_eq!(
+                InformationElement::from_id(id),
+                InformationElement::try_from(id).ok(),
+                "lookup table disagrees with the derive for id {id}; \
+                 if a variant above MAX_IE_ID was added, raise it"
+            );
+        }
+    }
 }

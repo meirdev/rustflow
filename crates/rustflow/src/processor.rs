@@ -139,6 +139,7 @@ impl NetflowProcessor {
         time_received_ns: Option<i64>,
     ) -> Vec<CommonFlow> {
         let mut flows = Vec::new();
+        flows.reserve(estimated_flow_count(packet));
 
         match packet {
             NetflowPacket::V5(parsed) => {
@@ -154,13 +155,15 @@ impl NetflowProcessor {
             }
             NetflowPacket::V9(parsed) => {
                 let cache_key = (src, parsed.header.source_id);
+                let sampling_rate = self.sampling_cache.get(&cache_key);
+
                 for flow_set in parsed.flow_sets.iter() {
                     for record in flow_set.records.iter() {
                         if let V9Record::Data(data_record) = record {
                             let ctx = NetFlowV9Context {
                                 header: &parsed.header,
                                 sampler_address: Some(src),
-                                sampling_rate: self.sampling_cache.get(&cache_key),
+                                sampling_rate,
                             };
                             let mut flow = ctx.convert(data_record, flow_set.id);
                             flow.time_received_ns = time_received_ns;
@@ -171,13 +174,15 @@ impl NetflowProcessor {
             }
             NetflowPacket::Ipfix(parsed) => {
                 let cache_key = (src, parsed.header.observation_domain_id);
+                let sampling_rate = self.sampling_cache.get(&cache_key);
+
                 for set in parsed.sets.iter() {
                     for record in set.records.iter() {
                         if let IpfixRecord::Data(data_record) = record {
                             let ctx = IpfixContext {
                                 header: &parsed.header,
                                 sampler_address: Some(src),
-                                sampling_rate: self.sampling_cache.get(&cache_key),
+                                sampling_rate,
                             };
                             let mut flow = ctx.convert(data_record, set.id);
                             flow.time_received_ns = time_received_ns;
@@ -210,6 +215,8 @@ impl NetflowProcessor {
         match version {
             NETFLOW_V5_VERSION => {
                 if let Ok((_, parsed)) = self.v5_parser.parse(payload) {
+                    flows.reserve(v5_record_count(&parsed));
+
                     let ctx = NetFlowV5Context {
                         header: &parsed.header,
                         sampler_address: Some(src),
@@ -227,7 +234,10 @@ impl NetflowProcessor {
                 });
 
                 if let Ok((_, parsed)) = parser.parse(payload) {
+                    flows.reserve(v9_record_count(&parsed));
+
                     let cache_key = (src, parsed.header.source_id);
+                    let mut sampling_rate = self.sampling_cache.get(&cache_key);
 
                     for flow_set in parsed.flow_sets.iter() {
                         for record in flow_set.records.iter() {
@@ -235,17 +245,19 @@ impl NetflowProcessor {
                                 V9Record::OptionsData(data_record) => {
                                     if let Some(rate) = extract_v9_sampling_rate(data_record) {
                                         self.sampling_cache.set(cache_key, rate);
+                                        sampling_rate = Some(rate);
                                     }
                                 }
                                 V9Record::Data(data_record) => {
                                     if let Some(rate) = extract_v9_sampling_rate(data_record) {
                                         self.sampling_cache.set(cache_key, rate);
+                                        sampling_rate = Some(rate);
                                     }
 
                                     let ctx = NetFlowV9Context {
                                         header: &parsed.header,
                                         sampler_address: Some(src),
-                                        sampling_rate: self.sampling_cache.get(&cache_key),
+                                        sampling_rate,
                                     };
                                     let mut flow = ctx.convert(data_record, flow_set.id);
                                     flow.time_received_ns = time_received_ns;
@@ -263,7 +275,10 @@ impl NetflowProcessor {
                 });
 
                 if let Ok((_, parsed)) = parser.parse(payload) {
+                    flows.reserve(ipfix_record_count(&parsed));
+
                     let cache_key = (src, parsed.header.observation_domain_id);
+                    let mut sampling_rate = self.sampling_cache.get(&cache_key);
 
                     for set in parsed.sets.iter() {
                         for record in set.records.iter() {
@@ -271,17 +286,19 @@ impl NetflowProcessor {
                                 IpfixRecord::OptionsData(data_record) => {
                                     if let Some(rate) = extract_ipfix_sampling_rate(data_record) {
                                         self.sampling_cache.set(cache_key, rate);
+                                        sampling_rate = Some(rate);
                                     }
                                 }
                                 IpfixRecord::Data(data_record) => {
                                     if let Some(rate) = extract_ipfix_sampling_rate(data_record) {
                                         self.sampling_cache.set(cache_key, rate);
+                                        sampling_rate = Some(rate);
                                     }
 
                                     let ctx = IpfixContext {
                                         header: &parsed.header,
                                         sampler_address: Some(src),
-                                        sampling_rate: self.sampling_cache.get(&cache_key),
+                                        sampling_rate,
                                     };
                                     let mut flow = ctx.convert(data_record, set.id);
                                     flow.time_received_ns = time_received_ns;
@@ -414,4 +431,26 @@ impl Default for SflowProcessor {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Upper bound on the flows a parsed packet yields, used to size the output
+/// vector up front.
+fn estimated_flow_count(packet: &NetflowPacket) -> usize {
+    match packet {
+        NetflowPacket::V5(parsed) => v5_record_count(parsed),
+        NetflowPacket::V9(parsed) => v9_record_count(parsed),
+        NetflowPacket::Ipfix(parsed) => ipfix_record_count(parsed),
+    }
+}
+
+fn v5_record_count(parsed: &NetFlowV5Packet) -> usize {
+    parsed.flow_records.len()
+}
+
+fn v9_record_count(parsed: &NetFlowV9Packet) -> usize {
+    parsed.flow_sets.iter().map(|s| s.records.len()).sum()
+}
+
+fn ipfix_record_count(parsed: &IpfixPacket) -> usize {
+    parsed.sets.iter().map(|s| s.records.len()).sum()
 }
