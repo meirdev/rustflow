@@ -155,11 +155,8 @@ impl NetflowProcessor {
             }
             NetflowPacket::V9(parsed) => {
                 let cache_key = (src, parsed.header.source_id);
-                // `&self`: the cache cannot change while this packet is
-                // converted, so the rate is looked up once instead of once per
-                // record. Each repeat cost a hash probe plus a clock read for
-                // the entry's TTL check.
                 let sampling_rate = self.sampling_cache.get(&cache_key);
+
                 for flow_set in parsed.flow_sets.iter() {
                     for record in flow_set.records.iter() {
                         if let V9Record::Data(data_record) = record {
@@ -177,11 +174,8 @@ impl NetflowProcessor {
             }
             NetflowPacket::Ipfix(parsed) => {
                 let cache_key = (src, parsed.header.observation_domain_id);
-                // `&self`: the cache cannot change while this packet is
-                // converted, so the rate is looked up once instead of once per
-                // record. Each repeat cost a hash probe plus a clock read for
-                // the entry's TTL check.
                 let sampling_rate = self.sampling_cache.get(&cache_key);
+
                 for set in parsed.sets.iter() {
                     for record in set.records.iter() {
                         if let IpfixRecord::Data(data_record) = record {
@@ -243,10 +237,6 @@ impl NetflowProcessor {
                     flows.reserve(v9_record_count(&parsed));
 
                     let cache_key = (src, parsed.header.source_id);
-                    // A record can install a new sampling rate mid-packet,
-                    // so this is tracked in a local that mirrors every `set`
-                    // below rather than hoisted as a constant. Still one lookup
-                    // per packet instead of one per record.
                     let mut sampling_rate = self.sampling_cache.get(&cache_key);
 
                     for flow_set in parsed.flow_sets.iter() {
@@ -288,10 +278,6 @@ impl NetflowProcessor {
                     flows.reserve(ipfix_record_count(&parsed));
 
                     let cache_key = (src, parsed.header.observation_domain_id);
-                    // A record can install a new sampling rate mid-packet,
-                    // so this is tracked in a local that mirrors every `set`
-                    // below rather than hoisted as a constant. Still one lookup
-                    // per packet instead of one per record.
                     let mut sampling_rate = self.sampling_cache.get(&cache_key);
 
                     for set in parsed.sets.iter() {
