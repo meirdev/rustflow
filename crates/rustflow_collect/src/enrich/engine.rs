@@ -8,6 +8,7 @@ use ipnet::{Ipv4Net, Ipv6Net};
 use maxminddb::PathElement;
 use prefix_trie::PrefixMap;
 use rustflow_core::common::common_flow::CommonFlow;
+use serde_json::Value;
 
 use crate::enrich::config::{EnrichmentConfig, FieldMapping, LookupType};
 
@@ -146,10 +147,13 @@ impl PrefixEnrichment {
 
             let mut fields = HashMap::new();
             for (mapping, path) in &paths {
-                if let Ok(Some(value)) = lookup.decode_path::<String>(path) {
-                    if !value.is_empty() {
-                        fields.insert(mapping.source_column.clone(), value);
-                    }
+                let value = lookup
+                    .decode_path::<serde_json::Value>(path)
+                    .ok()
+                    .flatten()
+                    .and_then(mmdb_value_to_string);
+                if let Some(value) = value {
+                    fields.insert(mapping.source_column.clone(), value);
                 }
             }
 
@@ -245,6 +249,17 @@ impl PrefixEnrichment {
                 }
             });
         }
+    }
+}
+
+fn mmdb_value_to_string(value: serde_json::Value) -> Option<String> {
+    match value {
+        Value::Null => None,
+        Value::String(s) if s.is_empty() => None,
+        Value::String(s) => Some(s),
+        Value::Number(n) => Some(n.to_string()),
+        Value::Bool(b) => Some(b.to_string()),
+        Value::Array(_) | Value::Object(_) => Some(value.to_string()),
     }
 }
 
