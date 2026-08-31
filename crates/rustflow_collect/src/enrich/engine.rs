@@ -3,17 +3,17 @@ use std::net::IpAddr;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 use std::thread;
+use std::time::SystemTime;
 
 use ipnet::{Ipv4Net, Ipv6Net};
 use maxminddb::PathElement;
 use prefix_trie::PrefixMap;
+use prometheus::{Counter, Gauge};
 use rustflow_core::common::common_flow::CommonFlow;
 use serde_json::Value;
 
-use crate::enrich::config::{EnrichmentConfig, FieldMapping, LookupType};
-
-/// Column names that are recognized as prefix/network columns in CSV files
-const PREFIX_COLUMN_NAMES: &[&str] = &["prefix", "network", "cidr"];
+use crate::enrich::config::{EnrichmentConfig, FieldMapping, LookupKey, LookupType};
+use crate::metrics::Metrics;
 
 #[derive(Debug, Clone)]
 pub struct PrefixData {
@@ -23,6 +23,9 @@ pub struct PrefixData {
 struct PrefixTries {
     ipv4: PrefixMap<Ipv4Net, PrefixData>,
     ipv6: PrefixMap<Ipv6Net, PrefixData>,
+    /// Rows that were present in the source but skipped because their prefix
+    /// could not be parsed.
+    skipped_rows: usize,
 }
 
 impl PrefixTries {
@@ -30,44 +33,85 @@ impl PrefixTries {
         Self {
             ipv4: PrefixMap::new(),
             ipv6: PrefixMap::new(),
+            skipped_rows: 0,
         }
+    }
+
+    fn len(&self) -> usize {
+        self.ipv4.len() + self.ipv6.len()
     }
 }
 
+#[derive(Clone)]
 pub struct PrefixEnrichment {
     config: EnrichmentConfig,
     tries: Arc<RwLock<PrefixTries>>,
+    loaded_rows: Gauge,
+    last_reload: Gauge,
+    reload_failures: Counter,
+    skipped_rows: Gauge,
 }
 
 impl PrefixEnrichment {
-    pub fn new(config: EnrichmentConfig) -> Self {
+    pub fn new(config: EnrichmentConfig, metrics: &Metrics) -> Self {
+        let labels = [config.source_file.display().to_string()];
         Self {
+            loaded_rows: metrics.enrichment_loaded_rows.with_label_values(&labels),
+            last_reload: metrics
+                .enrichment_last_reload_timestamp_seconds
+                .with_label_values(&labels),
+            reload_failures: metrics
+                .enrichment_reload_failures_total
+                .with_label_values(&labels),
+            skipped_rows: metrics.enrichment_skipped_rows.with_label_values(&labels),
             config,
             tries: Arc::new(RwLock::new(PrefixTries::new())),
         }
     }
 
     pub fn load(&self) -> Result<usize, EnrichmentError> {
-        let new_tries =
-            Self::load_from_file(&self.config.source_file, &self.config.field_mappings)?;
-        let count = new_tries.ipv4.len() + new_tries.ipv6.len();
+        let new_tries = Self::load_from_file(
+            &self.config.source_file,
+            &self.config.field_mappings,
+            self.config.prefix_column.as_deref(),
+        )?;
+        let count = new_tries.len();
+        let skipped = new_tries.skipped_rows;
 
-        let mut tries = self
-            .tries
-            .write()
-            .map_err(|_| EnrichmentError::LockPoisoned)?;
-        *tries = new_tries;
+        {
+            let mut tries = self
+                .tries
+                .write()
+                .map_err(|_| EnrichmentError::LockPoisoned)?;
+            *tries = new_tries;
+        }
+        self.record_successful_load(count, skipped);
 
         Ok(count)
+    }
+
+    fn record_successful_load(&self, count: usize, skipped: usize) {
+        self.loaded_rows.set(count as f64);
+        self.skipped_rows.set(skipped as f64);
+        self.last_reload.set(
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs_f64(),
+        );
     }
 
     fn load_from_file(
         path: &Path,
         field_mappings: &[FieldMapping],
+        prefix_column: Option<&str>,
     ) -> Result<PrefixTries, EnrichmentError> {
         match path.extension().and_then(|e| e.to_str()) {
             Some("mmdb") => Self::load_from_mmdb(path, field_mappings),
-            Some("csv") => Self::load_from_csv(path),
+            Some("csv") => {
+                let column = prefix_column.ok_or(EnrichmentError::MissingPrefix)?;
+                Self::load_from_csv(path, column)
+            }
             Some(ext) => Err(EnrichmentError::UnsupportedFormat(ext.to_string())),
             None => Err(EnrichmentError::UnsupportedFormat(
                 "no extension".to_string(),
@@ -75,17 +119,21 @@ impl PrefixEnrichment {
         }
     }
 
-    fn load_from_csv(path: &Path) -> Result<PrefixTries, EnrichmentError> {
+    fn load_from_csv(path: &Path, prefix_column: &str) -> Result<PrefixTries, EnrichmentError> {
         let mut reader = csv::Reader::from_path(path)?;
-        let headers: Vec<String> = reader.headers()?.iter().map(|s| s.to_string()).collect();
+        let headers: Vec<String> = reader
+            .headers()?
+            .iter()
+            .map(|s| s.trim().to_string())
+            .collect();
 
         let prefix_col_idx = headers
             .iter()
-            .position(|h| {
-                let h_lower = h.to_lowercase();
-                PREFIX_COLUMN_NAMES.contains(&h_lower.as_str())
-            })
-            .unwrap_or(0);
+            .position(|h| h == prefix_column)
+            .ok_or_else(|| EnrichmentError::PrefixColumnNotFound {
+                column: prefix_column.to_string(),
+                headers: headers.clone(),
+            })?;
 
         let mut tries = PrefixTries::new();
 
@@ -118,6 +166,7 @@ impl PrefixEnrichment {
                 tries.ipv6.insert(ipv6_net, data);
             } else {
                 eprintln!("Warning: Could not parse prefix: {}", prefix_str);
+                tries.skipped_rows += 1;
             }
         }
 
@@ -131,12 +180,15 @@ impl PrefixEnrichment {
         let reader = maxminddb::Reader::open_readfile(path)?;
         let mut tries = PrefixTries::new();
 
-        let paths: Vec<(&FieldMapping, Vec<PathElement<'_>>)> = field_mappings
+        let mut columns: Vec<&str> = field_mappings
             .iter()
-            .map(|m| {
-                let path = m.source_column.split('.').map(PathElement::Key).collect();
-                (m, path)
-            })
+            .map(|m| m.source_column.as_str())
+            .collect();
+        columns.sort_unstable();
+        columns.dedup();
+        let paths: Vec<(&str, Vec<PathElement<'_>>)> = columns
+            .into_iter()
+            .map(|column| (column, column.split('.').map(PathElement::Key).collect()))
             .collect();
 
         for result in reader.networks(Default::default())? {
@@ -146,14 +198,14 @@ impl PrefixEnrichment {
             }
 
             let mut fields = HashMap::new();
-            for (mapping, path) in &paths {
+            for (column, path) in &paths {
                 let value = lookup
                     .decode_path::<serde_json::Value>(path)
                     .ok()
                     .flatten()
                     .and_then(mmdb_value_to_string);
                 if let Some(value) = value {
-                    fields.insert(mapping.source_column.clone(), value);
+                    fields.insert((*column).to_string(), value);
                 }
             }
 
@@ -206,14 +258,20 @@ impl PrefixEnrichment {
 
     pub fn enrich(&self, flow: &CommonFlow) -> HashMap<String, String> {
         let mut result = HashMap::new();
+        let mut lookups: [Option<Option<PrefixData>>; LookupKey::COUNT] = Default::default();
 
-        if let Some(addr) = self.config.lookup_key.extract(flow) {
-            if let Some(data) = self.lookup(&addr) {
-                for mapping in &self.config.field_mappings {
-                    if let Some(value) = data.fields.get(&mapping.source_column) {
-                        result.insert(mapping.output_field.clone(), value.clone());
-                    }
-                }
+        for mapping in &self.config.field_mappings {
+            let data = lookups[mapping.key.index()].get_or_insert_with(|| {
+                mapping
+                    .key
+                    .extract(flow)
+                    .and_then(|addr| self.lookup(&addr))
+            });
+            let value = data
+                .as_ref()
+                .and_then(|data| data.fields.get(&mapping.source_column));
+            if let Some(value) = value {
+                result.insert(mapping.output_field.clone(), value.clone());
             }
         }
 
@@ -222,32 +280,24 @@ impl PrefixEnrichment {
 
     pub fn start_reload_task(&self) {
         if let Some(interval) = self.config.reload_interval {
-            let tries = Arc::clone(&self.tries);
-            let path = self.config.source_file.clone();
-            let field_mappings = self.config.field_mappings.clone();
-
+            let enrichment = self.clone();
             thread::spawn(move || {
                 loop {
                     thread::sleep(interval);
-
-                    match Self::load_from_file(&path, &field_mappings) {
-                        Ok(new_tries) => {
-                            let count = new_tries.ipv4.len() + new_tries.ipv6.len();
-                            if let Ok(mut guard) = tries.write() {
-                                *guard = new_tries;
-                                eprintln!(
-                                    "Reloaded {} prefix entries from {}",
-                                    count,
-                                    path.display()
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            eprintln!("Failed to reload enrichment from {}: {}", path.display(), e);
-                        }
-                    }
+                    enrichment.reload();
                 }
             });
+        }
+    }
+
+    fn reload(&self) {
+        let path = self.config.source_file.display();
+        match self.load() {
+            Ok(count) => eprintln!("Reloaded {} prefix entries from {}", count, path),
+            Err(e) => {
+                self.reload_failures.inc();
+                eprintln!("Failed to reload enrichment from {}: {}", path, e);
+            }
         }
     }
 }
@@ -266,13 +316,15 @@ fn mmdb_value_to_string(value: serde_json::Value) -> Option<String> {
 pub struct EnrichmentEngine {
     prefix_enrichments: Vec<PrefixEnrichment>,
     output_fields: Vec<String>,
+    metrics: Arc<Metrics>,
 }
 
 impl EnrichmentEngine {
-    pub fn new() -> Self {
+    pub fn new(metrics: Arc<Metrics>) -> Self {
         Self {
             prefix_enrichments: Vec::new(),
             output_fields: Vec::new(),
+            metrics,
         }
     }
 
@@ -285,7 +337,7 @@ impl EnrichmentEngine {
 
         match config.lookup_type {
             LookupType::PrefixLookup => {
-                let enrichment = PrefixEnrichment::new(config);
+                let enrichment = PrefixEnrichment::new(config, &self.metrics);
                 let count = enrichment.load()?;
                 enrichment.start_reload_task();
                 self.prefix_enrichments.push(enrichment);
@@ -307,18 +359,16 @@ impl EnrichmentEngine {
     }
 }
 
-impl Default for EnrichmentEngine {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[derive(Debug)]
 pub enum EnrichmentError {
     Csv(csv::Error),
     Io(std::io::Error),
     MaxmindDb(maxminddb::MaxMindDbError),
     UnsupportedFormat(String),
+    PrefixColumnNotFound {
+        column: String,
+        headers: Vec<String>,
+    },
     MissingPrefix,
     LockPoisoned,
 }
@@ -336,7 +386,13 @@ impl std::fmt::Display for EnrichmentError {
                     ext
                 )
             }
-            Self::MissingPrefix => write!(f, "Missing prefix column in CSV"),
+            Self::PrefixColumnNotFound { column, headers } => write!(
+                f,
+                "Prefix column '{}' not found in CSV header; available columns: {}",
+                column,
+                headers.join(", ")
+            ),
+            Self::MissingPrefix => write!(f, "CSV sources require 'prefix_column'"),
             Self::LockPoisoned => write!(f, "Lock poisoned"),
         }
     }
@@ -367,6 +423,8 @@ mod tests {
     use std::io::Write;
     use std::net::Ipv4Addr;
 
+    use rustflow_core::common::common_flow::FlowType;
+
     use super::*;
 
     fn csv_file(name: &str, body: &str) -> std::path::PathBuf {
@@ -377,6 +435,192 @@ mod tests {
     }
 
     #[test]
+    fn prefix_column_is_found_by_name() {
+        // the prefix column need not be first, nor have any particular name
+        let path = csv_file(
+            "rustflow_enrich_custom_col.csv",
+            "prefix,subnet,asn\nignored,10.0.0.0/8,64500\n",
+        );
+        let tries = PrefixEnrichment::load_from_csv(&path, "subnet").unwrap();
+        let net = Ipv4Net::new(Ipv4Addr::new(10, 0, 0, 1), 32).unwrap();
+        let (_, data) = tries.ipv4.get_lpm(&net).unwrap();
+        assert_eq!(data.fields.get("asn").map(String::as_str), Some("64500"));
+        assert_eq!(
+            data.fields.get("subnet").map(String::as_str),
+            Some("10.0.0.0/8")
+        );
+
+        let Err(err) = PrefixEnrichment::load_from_csv(&path, "nope") else {
+            panic!("unknown prefix column was accepted");
+        };
+        assert!(
+            matches!(err, EnrichmentError::PrefixColumnNotFound { .. }),
+            "{}",
+            err
+        );
+        assert!(err.to_string().contains("prefix, subnet, asn"), "{}", err);
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn each_key_is_looked_up_independently() {
+        let path = csv_file(
+            "rustflow_enrich_multi_key.csv",
+            "prefix,asn\n10.0.0.0/8,64500\n192.168.0.0/16,64501\n",
+        );
+        let mapping = |key, src: &str, dst: &str| FieldMapping {
+            key,
+            source_column: src.to_string(),
+            output_field: dst.to_string(),
+        };
+        let enrichment = PrefixEnrichment::new(
+            EnrichmentConfig {
+                lookup_type: LookupType::PrefixLookup,
+                source_file: path.clone(),
+                field_mappings: vec![
+                    mapping(LookupKey::SrcAddr, "asn", "src_asn"),
+                    mapping(LookupKey::SrcAddr, "prefix", "src_net"),
+                    mapping(LookupKey::DstAddr, "asn", "dst_asn"),
+                    mapping(LookupKey::NextHop, "asn", "next_hop_asn"),
+                ],
+                prefix_column: Some("prefix".to_string()),
+                reload_interval: None,
+            },
+            &Metrics::new(),
+        );
+        assert_eq!(enrichment.load().unwrap(), 2);
+
+        let mut flow = CommonFlow::new(FlowType::Ipfix);
+        flow.src_addr = Some(IpAddr::V4(Ipv4Addr::new(10, 1, 1, 1)));
+        flow.dst_addr = Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)));
+        // next_hop stays None
+
+        let out = enrichment.enrich(&flow);
+        assert_eq!(out.get("src_asn").map(String::as_str), Some("64500"));
+        assert_eq!(out.get("src_net").map(String::as_str), Some("10.0.0.0/8"));
+        assert_eq!(out.get("dst_asn").map(String::as_str), Some("64501"));
+        assert!(!out.contains_key("next_hop_asn"));
+        assert_eq!(out.len(), 3);
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    fn csv_config(path: &std::path::Path, key: LookupKey, out: &str) -> EnrichmentConfig {
+        EnrichmentConfig {
+            lookup_type: LookupType::PrefixLookup,
+            source_file: path.to_path_buf(),
+            field_mappings: vec![FieldMapping {
+                key,
+                source_column: "asn".to_string(),
+                output_field: out.to_string(),
+            }],
+            prefix_column: Some("prefix".to_string()),
+            reload_interval: None,
+        }
+    }
+
+    #[test]
+    fn successful_load_records_metrics() {
+        let path = csv_file(
+            "rustflow_enrich_metrics.csv",
+            "prefix,asn\n10.0.0.0/8,64512\n",
+        );
+        let source = path.display().to_string();
+        let metrics = Arc::new(Metrics::new());
+        let mut engine = EnrichmentEngine::new(Arc::clone(&metrics));
+        let count = engine
+            .add(csv_config(&path, LookupKey::DstAddr, "dst_asn"))
+            .unwrap();
+
+        assert_eq!(count, 1);
+        let labels = [source.as_str()];
+        assert_eq!(
+            metrics
+                .enrichment_loaded_rows
+                .with_label_values(&labels)
+                .get(),
+            1.0
+        );
+        assert_eq!(
+            metrics
+                .enrichment_skipped_rows
+                .with_label_values(&labels)
+                .get(),
+            0.0
+        );
+        assert!(
+            metrics
+                .enrichment_last_reload_timestamp_seconds
+                .with_label_values(&labels)
+                .get()
+                > 0.0
+        );
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn failed_reload_counts_a_failure_and_keeps_previous_data() {
+        let path = csv_file(
+            "rustflow_enrich_reload_failure.csv",
+            "prefix,asn\n10.0.0.0/8,64512\n",
+        );
+        let source = path.display().to_string();
+        let metrics = Arc::new(Metrics::new());
+        let enrichment =
+            PrefixEnrichment::new(csv_config(&path, LookupKey::SrcAddr, "src_asn"), &metrics);
+        assert_eq!(enrichment.load().unwrap(), 1);
+
+        // the prefix column disappears, so the reload fails
+        std::fs::write(&path, "garbage,asn\nfoo,bar\n").unwrap();
+        enrichment.reload();
+
+        let labels = [source.as_str()];
+        assert_eq!(
+            metrics
+                .enrichment_reload_failures_total
+                .with_label_values(&labels)
+                .get(),
+            1.0
+        );
+        assert_eq!(
+            metrics
+                .enrichment_loaded_rows
+                .with_label_values(&labels)
+                .get(),
+            1.0
+        );
+        let data = enrichment
+            .lookup(&IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3)))
+            .expect("previous data should still be served");
+        assert_eq!(data.fields.get("asn").map(String::as_str), Some("64512"));
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn unparsable_rows_are_counted_as_skipped() {
+        let path = csv_file(
+            "rustflow_enrich_skipped.csv",
+            "prefix,asn\n10.0.0.0/8,1\nnot-a-prefix,2\n10.1.0.0/16,3\n",
+        );
+        let source = path.display().to_string();
+        let metrics = Arc::new(Metrics::new());
+        let mut engine = EnrichmentEngine::new(Arc::clone(&metrics));
+        let count = engine
+            .add(csv_config(&path, LookupKey::DstAddr, "dst_asn"))
+            .unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(
+            metrics
+                .enrichment_skipped_rows
+                .with_label_values(&[source.as_str()])
+                .get(),
+            1.0
+        );
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
     fn prefix_column_is_available_as_a_field() {
         let path = csv_file(
             "rustflow_enrich_prefix.csv",
@@ -384,7 +628,7 @@ mod tests {
              10.0.0.0/8,13335,CLOUDFLARENET\n\
              10.1.0.0/16,2519,VECTANT\n",
         );
-        let tries = PrefixEnrichment::load_from_csv(&path).unwrap();
+        let tries = PrefixEnrichment::load_from_csv(&path, "prefix").unwrap();
 
         // longest-prefix match wins, and reports its own network
         let net = Ipv4Net::new(Ipv4Addr::new(10, 1, 2, 3), 32).unwrap();
@@ -410,20 +654,12 @@ mod tests {
     }
 
     #[test]
-    fn alternate_prefix_header_names_are_recognised() {
-        // the prefix column need not be first, nor called "prefix"
-        let path = csv_file(
-            "rustflow_enrich_network.csv",
-            "asn,network,org\n192,10.0.0.0/8,ACME\n",
-        );
-        let tries = PrefixEnrichment::load_from_csv(&path).unwrap();
-        let net = Ipv4Net::new(Ipv4Addr::new(10, 0, 0, 1), 32).unwrap();
-        let (_, data) = tries.ipv4.get_lpm(&net).unwrap();
-        assert_eq!(
-            data.fields.get("network").map(String::as_str),
-            Some("10.0.0.0/8")
-        );
-        assert_eq!(data.fields.get("asn").map(String::as_str), Some("192"));
+    fn csv_without_prefix_column_is_rejected() {
+        let path = csv_file("rustflow_enrich_no_col.csv", "prefix,asn\n10.0.0.0/8,192\n");
+        let Err(err) = PrefixEnrichment::load_from_file(&path, &[], None) else {
+            panic!("CSV without prefix_column was accepted");
+        };
+        assert!(matches!(err, EnrichmentError::MissingPrefix), "{}", err);
         std::fs::remove_file(&path).ok();
     }
 
@@ -433,7 +669,7 @@ mod tests {
             "rustflow_enrich_empty.csv",
             "prefix,asn,org\n10.0.0.0/8,,ACME\n",
         );
-        let tries = PrefixEnrichment::load_from_csv(&path).unwrap();
+        let tries = PrefixEnrichment::load_from_csv(&path, "prefix").unwrap();
         let net = Ipv4Net::new(Ipv4Addr::new(10, 0, 0, 1), 32).unwrap();
         let (_, data) = tries.ipv4.get_lpm(&net).unwrap();
         assert!(data.fields.get("asn").is_none());

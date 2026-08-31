@@ -9,20 +9,43 @@ rustflow collect \
   -t netflow \
   -p 9995 \
   -f common \
-  --enrich "type=prefix_lookup,source=asn.csv,key=dst_addr,fields=asn:dst_asn"
+  --enrich "type=prefix_lookup,source=asn.csv,prefix_column=prefix,fields=dst_addr@asn:dst_asn"
 ```
 
 ## Parameters
 
-| Parameter | Description                                                      |
-| --------- | ---------------------------------------------------------------- |
-| `type`    | Lookup type. Currently `prefix_lookup`                           |
-| `source`  | Path to a CSV or MaxMind DB (`.mmdb`) file                       |
-| `key`     | Flow field used for the lookup                                   |
-| `fields`  | Field mappings in `source:output` format, separated by `;`       |
-| `reload`  | Optional automatic reload interval, such as `10s`, `1m`, or `1h` |
+| Parameter       | Description                                                                                 |
+| --------------- | ------------------------------------------------------------------------------------------- |
+| `type`          | Lookup type. Currently `prefix_lookup`                                                      |
+| `source`        | Path to a CSV or MaxMind DB (`.mmdb`) file                                                  |
+| `fields`        | Lookup groups in `<key>@<source>:<output>[\|<source>:<output>...]` format, separated by `;` |
+| `prefix_column` | Name of the column holding the prefix. Required for CSV sources                             |
+| `reload`        | Optional automatic reload: an interval such as `10s`, `1m`, or `1h`                         |
 
-Supported lookup keys:
+### Fields
+
+Each `fields` group starts with the flow field whose address is looked up (the key),
+followed by `@` and one or more `source:output` mappings separated by `|`. Groups are
+separated by `;`, so a single source can be looked up with several keys:
+
+```bash
+rustflow collect \
+  -t netflow \
+  -p 9995 \
+  -f common \
+  --enrich "type=prefix_lookup,source=GeoLite2-City.mmdb,fields=src_addr@country.iso_code:src_country|city.names.en:src_city;dst_addr@country.iso_code:dst_country|city.names.en:dst_city"
+```
+
+In this example:
+
+```text
+src_addr -> country.iso_code -> src_country
+src_addr -> city.names.en    -> src_city
+dst_addr -> country.iso_code -> dst_country
+dst_addr -> city.names.en    -> dst_city
+```
+
+Supported keys:
 
 - `src_addr`
 - `dst_addr`
@@ -31,9 +54,9 @@ Supported lookup keys:
 
 ## CSV
 
-CSV enrichment files must contain a `prefix`, `cidr`, or `network` column, plus any fields
-you want to use for enrichment. The prefix column is found by name, so it can appear in any
-position.
+CSV enrichment files must contain a prefix column, plus any fields you want to use for
+enrichment. Name the prefix column with `prefix_column`; it is found by name, so it can
+appear in any position.
 
 Lookups are longest-prefix matches, so a more specific row wins over one that covers it.
 
@@ -52,7 +75,7 @@ rustflow collect \
   -t netflow \
   -p 9995 \
   -f common \
-  --enrich "type=prefix_lookup,source=asn.csv,key=dst_addr,fields=asn:dst_asn;org:dst_org"
+  --enrich "type=prefix_lookup,source=asn.csv,prefix_column=prefix,fields=dst_addr@asn:dst_asn|org:dst_org"
 ```
 
 In this example:
@@ -70,7 +93,7 @@ rustflow collect \
   -t netflow \
   -p 9995 \
   -f common \
-  --enrich "type=prefix_lookup,source=asn.csv,key=dst_addr,fields=prefix:dst_network;asn:dst_asn"
+  --enrich "type=prefix_lookup,source=asn.csv,prefix_column=prefix,fields=dst_addr@prefix:dst_network|asn:dst_asn"
 ```
 
 With the table above, `1.0.0.1` gets a `dst_network` of `1.0.0.0/24`.
@@ -88,7 +111,18 @@ rustflow collect \
   -t netflow \
   -p 9995 \
   -f common \
-  --enrich "type=prefix_lookup,source=GeoLite2-City.mmdb,key=src_addr,fields=country.iso_code:src_country;city.names.en:src_city"
+  --enrich "type=prefix_lookup,source=GeoLite2-City.mmdb,fields=src_addr@country.iso_code:src_country|city.names.en:src_city"
+```
+
+Values are converted to strings regardless of their type in the database, so
+numeric fields such as `autonomous_system_number` in GeoLite2-ASN work as well:
+
+```bash
+rustflow collect \
+  -t netflow \
+  -p 9995 \
+  -f common \
+  --enrich "type=prefix_lookup,source=GeoLite2-ASN.mmdb,fields=src_addr@autonomous_system_number:src_asn|autonomous_system_organization:src_as_org"
 ```
 
 Examples of MMDB field paths include:
@@ -111,28 +145,6 @@ rustflow collect \
   -t netflow \
   -p 9995 \
   -f common \
-  --enrich "type=prefix_lookup,source=asn.csv,key=dst_addr,fields=asn:dst_asn;org:dst_org" \
-  --enrich "type=prefix_lookup,source=GeoLite2-Country.mmdb,key=dst_addr,fields=country.iso_code:dst_country"
-```
-
-## Automatic Reload
-
-Use `reload` to periodically reload an enrichment source without restarting the collector.
-
-```bash
-rustflow collect \
-  -t netflow \
-  -p 9995 \
-  -f common \
-  --enrich "type=prefix_lookup,source=asn.csv,key=dst_addr,fields=asn:dst_asn,reload=30s"
-```
-
-Another example using a MaxMind database:
-
-```bash
-rustflow collect \
-  -t netflow \
-  -p 9995 \
-  -f common \
-  --enrich "type=prefix_lookup,source=GeoLite2-Country.mmdb,key=dst_addr,fields=country.iso_code:dst_country,reload=1h"
+  --enrich "type=prefix_lookup,source=asn.csv,prefix_column=prefix,fields=dst_addr@asn:dst_asn|org:dst_org" \
+  --enrich "type=prefix_lookup,source=GeoLite2-Country.mmdb,fields=dst_addr@country.iso_code:dst_country"
 ```
