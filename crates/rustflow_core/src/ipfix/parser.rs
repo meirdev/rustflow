@@ -460,12 +460,6 @@ pub struct Header {
 }
 
 impl Header {
-    /// A Message Header for a packet being built
-    ///
-    /// The Version is fixed at [`IPFIX_VERSION`] and the Length left at 0:
-    /// it cannot be known until the Sets are encoded, so
-    /// [`IpfixPacket::encode`](crate::ipfix::encoder::Encode::encode)
-    /// recomputes it and ignores this field.
     pub fn new(
         export_time: DateTime<Utc>,
         sequence_number: u32,
@@ -508,11 +502,6 @@ pub struct Set {
 }
 
 impl Set {
-    /// A Set for a packet being built
-    ///
-    /// The Length is left at 0: it cannot be known until the Records are
-    /// encoded, so [`Set::encode`](crate::ipfix::encoder::Encode::encode)
-    /// recomputes it and ignores this field.
     pub fn new(id: u16, records: Vec<Record>) -> Self {
         Self {
             id,
@@ -664,38 +653,11 @@ fn parse_field_specifier(input: &[u8]) -> IResult<&[u8], FieldSpecifier> {
 }
 
 #[derive(Debug, Clone)]
-/// The decoded fields of one Data Record, in Template order
-///
-/// A Data Set carries values only, so a record means nothing without the
-/// Template it was decoded against; each field keeps enough of that Template to
-/// stand on its own afterwards:
-///
-/// - [`FieldSpecifier`] — the Template's entry for this field: its identifier
-///   with the enterprise bit stripped, the Enterprise Number (`None` for an
-///   IANA element, so enterprise 15 and IANA 15 stay distinct), and the Field
-///   Length, which is what tells [`Encode`](crate::ipfix::encoder::Encode)
-///   whether the value takes a variable-length prefix.
-/// - `Arc<str>` — the name the identifier resolved to. Shared rather than owned
-///   because every record decoded against a Template repeats the same names.
-///   Falls back to the identifier in decimal when the registry has no entry, and
-///   for scope fields, which bypass the registry and are always read as unsigned.
-/// - [`FieldValue`] — the value, sized by that Field Length.
-///
-/// Names are not unique: a Template may repeat an element, so this is a list and
-/// not a map. [`Serialize`] flattens it to name/value pairs, keeping only the
-/// last two.
 pub struct DataRecord(pub Vec<(FieldSpecifier, Arc<str>, FieldValue)>);
 
-/// Shared placeholder name for records built for encoding
 static EMPTY_NAME: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from(""));
 
 impl DataRecord {
-    /// A record of field values, for building a packet to encode
-    ///
-    /// The field specifiers and names are placeholders, since
-    /// [`Encode`](crate::ipfix::encoder::Encode) writes only the values. The
-    /// placeholder Field Length is 0, not [`IPFIX_VARIABLE_LENGTH`], so values
-    /// are written bare; build the tuples directly for a variable-length field.
     pub fn new(values: Vec<FieldValue>) -> Self {
         Self(
             values

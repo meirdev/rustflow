@@ -3,8 +3,7 @@ use chrono::{DateTime, Utc};
 
 use super::parser::{
     DataRecord, FieldSpecifier, FieldValue, Header, IPFIX_HEADER_SIZE, IPFIX_VARIABLE_LENGTH,
-    IpfixPacket,
-    OptionsTemplateRecord, Record, SET_HEADER_SIZE, Set, SetHeader, TemplateRecord,
+    IpfixPacket, OptionsTemplateRecord, Record, SET_HEADER_SIZE, Set, SetHeader, TemplateRecord,
 };
 use crate::common::parser::NTP_UNIX_EPOCH_DIFF;
 
@@ -122,9 +121,6 @@ impl Encode for DataRecord {
     fn encode<B: BufMut>(&self, buf: &mut B) {
         for (field, _, value) in &self.0 {
             if field.field_length == IPFIX_VARIABLE_LENGTH {
-                // RFC 7011 section 7: a Field Length of 65535 in the Template
-                // means the value carries its own length, in one octet below
-                // 255, otherwise a 255 escape and two more octets.
                 let mut value_data = Vec::new();
                 value.encode(&mut value_data);
 

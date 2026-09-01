@@ -534,7 +534,7 @@ impl IpfixContext<'_> {
         }
 
         for (field, _, value) in &record.0 {
-        let field_type = &field.information_element_identifier;
+            let field_type = &field.information_element_identifier;
             if let Some(ie) = InformationElement::from_id(*field_type) {
                 match ie {
                     OctetDeltaCount => flow.bytes = ipfix_extract_u64(value),
