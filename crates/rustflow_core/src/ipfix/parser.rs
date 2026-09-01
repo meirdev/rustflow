@@ -16,6 +16,7 @@ use primitive_types::U256;
 use serde::Serialize;
 use strum::EnumString;
 
+use crate::common::InformationElement;
 use crate::common::ie_registry::{DataType, IERegistry};
 use crate::common::parser::{
     ipv4_addr, ipv6_addr, macaddr6, string, timestamp_micros, timestamp_millis, timestamp_nanos,
@@ -615,6 +616,11 @@ impl FieldSpecifier {
             field_length,
             enterprise_number: None,
         }
+    }
+
+    /// A field specifier for a known IANA [`InformationElement`].
+    pub fn from_ie(information_element: InformationElement, field_length: u16) -> Self {
+        Self::iana(information_element.into(), field_length)
     }
 
     /// A field specifier for an enterprise-specific Information Element

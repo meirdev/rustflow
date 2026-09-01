@@ -47,11 +47,11 @@ fn encoder_reproduces_rfc_7011_appendix_a_vector() {
                 vec![Record::Template(TemplateRecord::new(
                     256,
                     vec![
-                        FieldSpecifier::iana(SourceIpv4Address.into(), 4),
-                        FieldSpecifier::iana(DestinationIpv4Address.into(), 4),
-                        FieldSpecifier::iana(IpNextHopIpv4Address.into(), 4),
-                        FieldSpecifier::iana(PacketDeltaCount.into(), 4),
-                        FieldSpecifier::iana(OctetDeltaCount.into(), 4),
+                        FieldSpecifier::from_ie(SourceIpv4Address, 4),
+                        FieldSpecifier::from_ie(DestinationIpv4Address, 4),
+                        FieldSpecifier::from_ie(IpNextHopIpv4Address, 4),
+                        FieldSpecifier::from_ie(PacketDeltaCount, 4),
+                        FieldSpecifier::from_ie(OctetDeltaCount, 4),
                     ],
                 ))],
             ),

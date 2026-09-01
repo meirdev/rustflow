@@ -184,15 +184,6 @@ pub struct GenerateArgs {
     packet_range: InclusiveRange<u16>,
 }
 
-fn field_specifier(ie: InformationElement, length: u16) -> FieldSpecifier {
-    FieldSpecifier {
-        enterprise_bit: false,
-        information_element_identifier: ie.into(),
-        field_length: length,
-        enterprise_number: None,
-    }
-}
-
 fn create_flow_template(family: AddressFamily) -> TemplateRecord {
     use InformationElement::*;
 
@@ -204,16 +195,16 @@ fn create_flow_template(family: AddressFamily) -> TemplateRecord {
     TemplateRecord::new(
         FLOW_TEMPLATE_ID,
         vec![
-            field_specifier(source_address, address_length),
-            field_specifier(destination_address, address_length),
-            field_specifier(ProtocolIdentifier, 1),
-            field_specifier(TcpControlBits, 2),
-            field_specifier(SourceTransportPort, 2),
-            field_specifier(DestinationTransportPort, 2),
-            field_specifier(OctetDeltaCount, 8),
-            field_specifier(PacketDeltaCount, 8),
-            field_specifier(FlowStartMilliseconds, 8),
-            field_specifier(FlowEndMilliseconds, 8),
+            FieldSpecifier::from_ie(source_address, address_length),
+            FieldSpecifier::from_ie(destination_address, address_length),
+            FieldSpecifier::from_ie(ProtocolIdentifier, 1),
+            FieldSpecifier::from_ie(TcpControlBits, 2),
+            FieldSpecifier::from_ie(SourceTransportPort, 2),
+            FieldSpecifier::from_ie(DestinationTransportPort, 2),
+            FieldSpecifier::from_ie(OctetDeltaCount, 8),
+            FieldSpecifier::from_ie(PacketDeltaCount, 8),
+            FieldSpecifier::from_ie(FlowStartMilliseconds, 8),
+            FieldSpecifier::from_ie(FlowEndMilliseconds, 8),
         ],
     )
 }
@@ -236,8 +227,8 @@ fn create_options_template() -> rustflow_core::ipfix::parser::OptionsTemplateRec
         OPTIONS_TEMPLATE_ID,
         1,
         vec![
-            field_specifier(ObservationDomainId, 4),
-            field_specifier(SamplingPacketInterval, 4),
+            FieldSpecifier::from_ie(ObservationDomainId, 4),
+            FieldSpecifier::from_ie(SamplingPacketInterval, 4),
         ],
     )
 }
