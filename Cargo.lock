@@ -1435,7 +1435,6 @@ name = "rustflow_lib"
 version = "0.11.0"
 dependencies = [
  "chrono",
- "libc",
  "log",
  "pcap-file",
  "rustc-hash",
