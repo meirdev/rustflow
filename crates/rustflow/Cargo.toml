@@ -17,3 +17,8 @@ log = "0.4"
 rustc-hash = "2.1"
 tokio = { version = "1", features = ["net"], optional = true }
 pcap-file = "2"
+
+# Only for the `min_collector` example (SO_RCVBUF, SIGINT); the library itself
+# stays dependency-free here.
+[target.'cfg(unix)'.dev-dependencies]
+libc = "0.2"

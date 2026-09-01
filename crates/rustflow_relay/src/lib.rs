@@ -171,7 +171,7 @@ pub fn run(args: RelayArgs) -> Result<()> {
 
     let receive = UdpSocket::bind(args.listen)
         .with_context(|| format!("failed to bind relay listener {}", args.listen))?;
-    set_socket_buffer(&receive, libc::SO_RCVBUF, args.socket_buffer)?;
+    set_socket_buffer(&receive, BufferDirection::Receive, args.socket_buffer)?;
     receive.set_read_timeout(Some(Duration::from_secs(1)))?;
 
     let metrics = Arc::new(Metrics::new(args.listen, args.target)?);
@@ -258,7 +258,7 @@ fn create_output(
         }
     });
     let socket = create_udp_socket(bind, source.is_some() && cfg!(target_os = "linux"))?;
-    set_socket_buffer(&socket, libc::SO_SNDBUF, buffer_size)?;
+    set_socket_buffer(&socket, BufferDirection::Send, buffer_size)?;
     socket
         .connect(target)
         .with_context(|| format!("failed to connect output socket to {target}"))?;
@@ -347,23 +347,19 @@ fn create_udp_socket(bind: SocketAddr, transparent: bool) -> Result<UdpSocket> {
     UdpSocket::bind(bind).with_context(|| format!("failed to bind output socket to {bind}"))
 }
 
-fn set_socket_buffer(socket: &UdpSocket, option: libc::c_int, size: usize) -> Result<()> {
-    use std::os::fd::AsRawFd;
-    let size = libc::c_int::try_from(size).context("socket buffer size is too large")?;
-    let rc = unsafe {
-        libc::setsockopt(
-            socket.as_raw_fd(),
-            libc::SOL_SOCKET,
-            option,
-            &size as *const _ as *const libc::c_void,
-            std::mem::size_of_val(&size) as libc::socklen_t,
-        )
-    };
-    if rc == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error()).context("setting UDP socket buffer size")
+#[derive(Clone, Copy)]
+enum BufferDirection {
+    Receive,
+    Send,
+}
+
+fn set_socket_buffer(socket: &UdpSocket, direction: BufferDirection, size: usize) -> Result<()> {
+    let socket = socket2::SockRef::from(socket);
+    match direction {
+        BufferDirection::Receive => socket.set_recv_buffer_size(size),
+        BufferDirection::Send => socket.set_send_buffer_size(size),
     }
+    .context("setting UDP socket buffer size")
 }
 
 fn start_metrics_server(metrics: Arc<Metrics>, address: SocketAddr) -> Result<()> {

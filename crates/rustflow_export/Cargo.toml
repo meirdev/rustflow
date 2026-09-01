@@ -4,15 +4,24 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "IPFIX exporter for captured network traffic (Linux only); the `rustflow export` command"
+description = "IPFIX exporter for captured network traffic; the `rustflow export` command"
+
+[features]
+# libpcap/Npcap capture backend: the only backend on macOS and Windows, an
+# alternative to AF_PACKET on Linux. Off by default so Linux builds don't
+# need libpcap installed.
+pcap = ["dep:pcap"]
 
 [dependencies]
 rustflow_core.workspace = true
-libc = "0.2"
 etherparse = "0.16"
+pcap = { version = "2.2", optional = true }
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
 chrono = "0.4"
 log = "0.4"
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 ctrlc = "3.4"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"

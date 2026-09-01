@@ -1,318 +1,299 @@
-// Manual AF_PACKET implementation with PACKET_MMAP (TPACKET_V2).
-// We don't use the `af_packet` crate because it has a musl compilation bug:
-// ioctl request type mismatch (u64 vs i32) that prevents cross-compilation.
+//! Packet capture backends.
+//!
+//! Each platform offers different capture mechanisms; the exporter picks one
+//! through [`open_capture`]:
+//!
+//! - `af-packet` (Linux): hand-rolled `AF_PACKET` + `PACKET_MMAP` ring, no
+//!   external dependencies.
+//! - `pcap` (all platforms, `pcap` cargo feature): libpcap on Linux/macos/BSD,
+//!   Npcap on Windows.
 
-use std::ffi::CString;
+#[cfg(any(target_os = "linux", feature = "pcap"))]
 use std::net::Ipv4Addr;
-use std::{io, mem, ptr};
 
-use anyhow::{Result, anyhow};
-use etherparse::{SlicedPacket, TransportSlice};
-use log::{debug, info};
+use anyhow::Result;
+#[cfg(not(all(target_os = "linux", feature = "pcap")))]
+use anyhow::bail;
+#[cfg(any(target_os = "linux", feature = "pcap"))]
+use etherparse::{LaxSlicedPacket, TransportSlice};
+#[cfg(any(target_os = "linux", feature = "pcap"))]
+use log::debug;
 
 use crate::flow::FlowKey;
 
-// AF_PACKET constants
-const ETH_P_ALL: u16 = 0x0003;
-const PACKET_ADD_MEMBERSHIP: libc::c_int = 1;
-const PACKET_RX_RING: libc::c_int = 5;
-const PACKET_VERSION: libc::c_int = 10;
-const TPACKET_V2: libc::c_int = 1;
-const PACKET_MR_PROMISC: libc::c_ushort = 1;
+#[cfg(target_os = "linux")]
+mod af_packet;
+#[cfg(feature = "pcap")]
+mod pcap_backend;
 
-// Ring buffer configuration
-const FRAME_SIZE: u32 = 2048;
-const BLOCK_SIZE: u32 = 4096;
-const BLOCK_NR: u32 = 256;
-const FRAME_NR: u32 = (BLOCK_SIZE / FRAME_SIZE) * BLOCK_NR;
+/// A source of sampled, parsed packets.
+///
+/// `next_packet` blocks for at most about a second and returns `None` when no
+/// selected packet arrived in that window (idle link, sampled-out packet, or
+/// an unparseable frame), so the caller's loop keeps servicing timers.
+pub trait CaptureBackend {
+    fn next_packet(&mut self) -> Option<PacketInfo>;
 
-// Frame status flags
-const TP_STATUS_KERNEL: u32 = 0;
-const TP_STATUS_USER: u32 = 1;
-
-#[repr(C)]
-struct PacketMreq {
-    mr_ifindex: libc::c_int,
-    mr_type: libc::c_ushort,
-    mr_alen: libc::c_ushort,
-    mr_address: [libc::c_uchar; 8],
+    /// Totals since the capture was opened, for PSAMP Selection Sequence
+    /// Statistics (RFC 5476 section 6.5.3).
+    fn stats(&self) -> CaptureStats;
 }
 
-#[repr(C)]
-struct TpacketReq {
-    tp_block_size: libc::c_uint,
-    tp_block_nr: libc::c_uint,
-    tp_frame_size: libc::c_uint,
-    tp_frame_nr: libc::c_uint,
+/// Packet counters at the sampler.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CaptureStats {
+    /// Packets that reached the sampler.
+    pub packets_observed: u64,
+    /// Packets the sampler selected.
+    pub packets_selected: u64,
 }
 
-#[repr(C)]
-struct Tpacket2Hdr {
-    tp_status: u32,
-    tp_len: u32,
-    tp_snaplen: u32,
-    tp_mac: u16,
-    tp_net: u16,
-    tp_sec: u32,
-    tp_nsec: u32,
-    tp_vlan_tci: u16,
-    tp_vlan_tpid: u16,
-    tp_padding: [u8; 4],
+/// Which capture backend to use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum CaptureBackendKind {
+    /// Best available backend for this platform.
+    Auto,
+    /// AF_PACKET mmap ring (Linux only).
+    AfPacket,
+    /// libpcap / Npcap (requires the `pcap` cargo feature).
+    Pcap,
 }
 
-pub struct PacketCapture {
-    fd: libc::c_int,
-    ring: *mut u8,
-    ring_size: usize,
-    frame_idx: u32,
-    sampling_interval: u32,
-    sampling_countdown: u32,
+/// Capture configuration shared by every backend.
+#[derive(Debug, Clone)]
+pub struct CaptureConfig {
+    pub promiscuous: bool,
+    pub sampling: SamplingConfig,
+    /// When set, copy up to this many bytes from the start of each selected
+    /// frame into [`PacketInfo::section`] (for PSAMP Packet Reports).
+    pub section_length: Option<usize>,
 }
 
-impl PacketCapture {
-    pub fn new(interface: &str, promiscuous: bool, sampling_interval: u32) -> Result<Self> {
-        info!("Opening AF_PACKET capture on interface: {}", interface);
+/// A configured packet sampling algorithm (RFC 5475 sampling schemes; the
+/// PSAMP selectorAlgorithm identifiers 1-4).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SamplingConfig {
+    /// Systematic count-based: select 1 out of every `interval` packets.
+    CountBased { interval: u32 },
+    /// Systematic time-based: select all packets for `interval_us`, then
+    /// skip for `space_us`, repeating.
+    TimeBased { interval_us: u32, space_us: u32 },
+    /// Random n-out-of-N: select exactly `size` packets out of every
+    /// consecutive `population`.
+    NOutOfN { size: u32, population: u32 },
+    /// Uniform probabilistic: select each packet independently with
+    /// probability `probability`.
+    Probabilistic { probability: f64 },
+}
 
-        // Create AF_PACKET socket
-        let fd = unsafe {
-            libc::socket(
-                libc::AF_PACKET,
-                libc::SOCK_RAW,
-                ETH_P_ALL.to_be() as libc::c_int,
-            )
-        };
-        if fd < 0 {
-            return Err(anyhow!(
-                "Failed to create socket: {}",
-                io::Error::last_os_error()
-            ));
-        }
-
-        // Set TPACKET_V2
-        let version: libc::c_int = TPACKET_V2;
-        let ret = unsafe {
-            libc::setsockopt(
-                fd,
-                libc::SOL_PACKET,
-                PACKET_VERSION,
-                &version as *const _ as *const libc::c_void,
-                mem::size_of::<libc::c_int>() as libc::socklen_t,
-            )
-        };
-        if ret < 0 {
-            unsafe { libc::close(fd) };
-            return Err(anyhow!(
-                "Failed to set TPACKET_V2: {}",
-                io::Error::last_os_error()
-            ));
-        }
-
-        // Setup ring buffer
-        let req = TpacketReq {
-            tp_block_size: BLOCK_SIZE,
-            tp_block_nr: BLOCK_NR,
-            tp_frame_size: FRAME_SIZE,
-            tp_frame_nr: FRAME_NR,
-        };
-
-        let ret = unsafe {
-            libc::setsockopt(
-                fd,
-                libc::SOL_PACKET,
-                PACKET_RX_RING,
-                &req as *const _ as *const libc::c_void,
-                mem::size_of::<TpacketReq>() as libc::socklen_t,
-            )
-        };
-        if ret < 0 {
-            unsafe { libc::close(fd) };
-            return Err(anyhow!(
-                "Failed to setup ring buffer: {}",
-                io::Error::last_os_error()
-            ));
-        }
-
-        // mmap the ring buffer
-        let ring_size = (BLOCK_SIZE * BLOCK_NR) as usize;
-        let ring = unsafe {
-            libc::mmap(
-                ptr::null_mut(),
-                ring_size,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_SHARED,
-                fd,
-                0,
-            )
-        };
-        if ring == libc::MAP_FAILED {
-            unsafe { libc::close(fd) };
-            return Err(anyhow!(
-                "Failed to mmap ring buffer: {}",
-                io::Error::last_os_error()
-            ));
-        }
-
-        // Get interface index
-        let ifindex = get_interface_index(fd, interface)?;
-
-        // Bind to interface
-        let addr = libc::sockaddr_ll {
-            sll_family: libc::AF_PACKET as u16,
-            sll_protocol: ETH_P_ALL.to_be(),
-            sll_ifindex: ifindex,
-            sll_hatype: 0,
-            sll_pkttype: 0,
-            sll_halen: 0,
-            sll_addr: [0; 8],
-        };
-
-        let ret = unsafe {
-            libc::bind(
-                fd,
-                &addr as *const _ as *const libc::sockaddr,
-                mem::size_of::<libc::sockaddr_ll>() as libc::socklen_t,
-            )
-        };
-        if ret < 0 {
-            unsafe {
-                libc::munmap(ring, ring_size);
-                libc::close(fd);
+impl SamplingConfig {
+    /// Effective 1-in-N packet rate, where that is well defined (time-based
+    /// sampling has no packet-count rate).
+    pub fn effective_rate(&self) -> Option<u32> {
+        match *self {
+            SamplingConfig::CountBased { interval } => Some(interval.max(1)),
+            SamplingConfig::TimeBased { .. } => None,
+            SamplingConfig::NOutOfN { size, population } => Some((population / size.max(1)).max(1)),
+            SamplingConfig::Probabilistic { probability } => {
+                Some(((1.0 / probability).round() as u32).max(1))
             }
-            return Err(anyhow!(
-                "Failed to bind to interface: {}",
-                io::Error::last_os_error()
-            ));
         }
+    }
+}
 
-        if promiscuous {
-            let mreq = PacketMreq {
-                mr_ifindex: ifindex,
-                mr_type: PACKET_MR_PROMISC,
-                mr_alen: 0,
-                mr_address: [0; 8],
-            };
+/// Open the requested capture backend on `interface`.
+pub fn open_capture(
+    kind: CaptureBackendKind,
+    interface: &str,
+    config: &CaptureConfig,
+) -> Result<Box<dyn CaptureBackend>> {
+    match kind {
+        CaptureBackendKind::Auto => {
+            #[cfg(target_os = "linux")]
+            {
+                open_af_packet(interface, config)
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                open_pcap(interface, config)
+            }
+        }
+        CaptureBackendKind::AfPacket => open_af_packet(interface, config),
+        CaptureBackendKind::Pcap => open_pcap(interface, config),
+    }
+}
 
-            let ret = unsafe {
-                libc::setsockopt(
-                    fd,
-                    libc::SOL_PACKET,
-                    PACKET_ADD_MEMBERSHIP,
-                    &mreq as *const _ as *const libc::c_void,
-                    mem::size_of::<PacketMreq>() as libc::socklen_t,
-                )
-            };
-            if ret < 0 {
-                unsafe {
-                    libc::munmap(ring, ring_size);
-                    libc::close(fd);
+#[cfg(target_os = "linux")]
+fn open_af_packet(interface: &str, config: &CaptureConfig) -> Result<Box<dyn CaptureBackend>> {
+    Ok(Box::new(af_packet::AfPacketCapture::new(
+        interface, config,
+    )?))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn open_af_packet(_interface: &str, _config: &CaptureConfig) -> Result<Box<dyn CaptureBackend>> {
+    bail!("the af-packet capture backend requires Linux; use --capture pcap")
+}
+
+#[cfg(feature = "pcap")]
+fn open_pcap(interface: &str, config: &CaptureConfig) -> Result<Box<dyn CaptureBackend>> {
+    Ok(Box::new(pcap_backend::PcapCapture::new(interface, config)?))
+}
+
+#[cfg(not(feature = "pcap"))]
+fn open_pcap(_interface: &str, _config: &CaptureConfig) -> Result<Box<dyn CaptureBackend>> {
+    bail!("this build has no pcap support; rebuild with `--features rustflow_export/pcap`")
+}
+
+/// Packet sampler implementing the RFC 5475 sampling schemes configured by
+/// [`SamplingConfig`].
+#[cfg(any(target_os = "linux", feature = "pcap"))]
+pub(crate) struct Sampler {
+    mode: SamplerMode,
+    stats: CaptureStats,
+}
+
+#[cfg(any(target_os = "linux", feature = "pcap"))]
+enum SamplerMode {
+    CountBased {
+        interval: u32,
+        countdown: u32,
+    },
+    TimeBased {
+        interval_us: u64,
+        cycle_us: u64,
+        start: std::time::Instant,
+    },
+    NOutOfN {
+        size: u32,
+        population: u32,
+        remaining_population: u32,
+        remaining_size: u32,
+        rng: SplitMix64,
+    },
+    Probabilistic {
+        /// `probability` scaled to the full u64 range.
+        threshold: u64,
+        rng: SplitMix64,
+    },
+}
+
+#[cfg(any(target_os = "linux", feature = "pcap"))]
+impl Sampler {
+    pub(crate) fn new(config: SamplingConfig) -> Self {
+        let mode = match config {
+            SamplingConfig::CountBased { interval } => SamplerMode::CountBased {
+                interval: interval.max(1),
+                countdown: 1,
+            },
+            SamplingConfig::TimeBased {
+                interval_us,
+                space_us,
+            } => SamplerMode::TimeBased {
+                interval_us: u64::from(interval_us.max(1)),
+                cycle_us: u64::from(interval_us.max(1)) + u64::from(space_us),
+                start: std::time::Instant::now(),
+            },
+            SamplingConfig::NOutOfN { size, population } => {
+                let population = population.max(1);
+                SamplerMode::NOutOfN {
+                    size: size.clamp(1, population),
+                    population,
+                    remaining_population: 0,
+                    remaining_size: 0,
+                    rng: SplitMix64::seeded(),
                 }
-                return Err(anyhow!(
-                    "Failed to enable promiscuous mode on '{}': {}",
-                    interface,
-                    io::Error::last_os_error()
-                ));
             }
+            SamplingConfig::Probabilistic { probability } => SamplerMode::Probabilistic {
+                threshold: (probability.clamp(0.0, 1.0) * u64::MAX as f64) as u64,
+                rng: SplitMix64::seeded(),
+            },
+        };
 
-            info!("Promiscuous mode enabled on {}", interface);
+        Self {
+            mode,
+            stats: CaptureStats::default(),
         }
-
-        info!("AF_PACKET ring buffer ready: {} frames", FRAME_NR);
-
-        Ok(Self {
-            fd,
-            ring: ring as *mut u8,
-            ring_size,
-            frame_idx: 0,
-            sampling_interval: sampling_interval.max(1),
-            sampling_countdown: 1,
-        })
     }
 
-    pub fn next_packet(&mut self) -> Option<PacketInfo> {
-        // Poll for packet availability with timeout
-        let mut pfd = libc::pollfd {
-            fd: self.fd,
-            events: libc::POLLIN,
-            revents: 0,
+    /// Count one observed packet; returns whether it is selected.
+    pub(crate) fn select(&mut self) -> bool {
+        self.stats.packets_observed += 1;
+        let selected = match &mut self.mode {
+            SamplerMode::CountBased {
+                interval,
+                countdown,
+            } => {
+                if *countdown > 1 {
+                    *countdown -= 1;
+                    false
+                } else {
+                    *countdown = *interval;
+                    true
+                }
+            }
+            SamplerMode::TimeBased {
+                interval_us,
+                cycle_us,
+                start,
+            } => (start.elapsed().as_micros() as u64) % *cycle_us < *interval_us,
+            SamplerMode::NOutOfN {
+                size,
+                population,
+                remaining_population,
+                remaining_size,
+                rng,
+            } => {
+                if *remaining_population == 0 {
+                    *remaining_population = *population;
+                    *remaining_size = *size;
+                }
+                // Knuth's Algorithm S: with `remaining_size` still to pick
+                // out of `remaining_population` packets, select this packet
+                // with probability remaining_size / remaining_population.
+                let take =
+                    rng.next() % u64::from(*remaining_population) < u64::from(*remaining_size);
+                *remaining_population -= 1;
+                if take {
+                    *remaining_size -= 1;
+                }
+                take
+            }
+            SamplerMode::Probabilistic { threshold, rng } => rng.next() < *threshold,
         };
 
-        let ret = unsafe { libc::poll(&mut pfd, 1, 1000) }; // 1 second timeout
-        if ret <= 0 {
-            return None;
+        if selected {
+            self.stats.packets_selected += 1;
         }
+        selected
+    }
 
-        // Check current frame
-        let frame_offset = (self.frame_idx * FRAME_SIZE) as usize;
-        let hdr = unsafe { &mut *(self.ring.add(frame_offset) as *mut Tpacket2Hdr) };
-
-        if (hdr.tp_status & TP_STATUS_USER) == 0 {
-            return None;
-        }
-
-        let result = if self.sampling_countdown > 1 {
-            self.sampling_countdown -= 1;
-            None
-        } else {
-            self.sampling_countdown = self.sampling_interval;
-
-            let packet_data = unsafe {
-                let data_ptr = self.ring.add(frame_offset + hdr.tp_mac as usize);
-                std::slice::from_raw_parts(data_ptr, hdr.tp_snaplen as usize)
-            };
-
-            parse_packet(packet_data)
-        };
-
-        // Return frame to kernel
-        hdr.tp_status = TP_STATUS_KERNEL;
-
-        // Move to next frame
-        self.frame_idx = (self.frame_idx + 1) % FRAME_NR;
-
-        result
+    pub(crate) fn stats(&self) -> CaptureStats {
+        self.stats
     }
 }
 
-impl Drop for PacketCapture {
-    fn drop(&mut self) {
-        unsafe {
-            libc::munmap(self.ring as *mut libc::c_void, self.ring_size);
-            libc::close(self.fd);
-        }
-    }
-}
+/// Small, fast PRNG (SplitMix64) for sampling decisions; not cryptographic.
+#[cfg(any(target_os = "linux", feature = "pcap"))]
+struct SplitMix64(u64);
 
-fn get_interface_index(fd: libc::c_int, interface: &str) -> Result<libc::c_int> {
-    let ifname = CString::new(interface)?;
-    let mut ifr: libc::ifreq = unsafe { mem::zeroed() };
-
-    // Copy interface name (max 15 chars + null)
-    let name_bytes = ifname.as_bytes_with_nul();
-    let copy_len = name_bytes.len().min(libc::IFNAMSIZ);
-    unsafe {
-        ptr::copy_nonoverlapping(
-            name_bytes.as_ptr(),
-            ifr.ifr_name.as_mut_ptr() as *mut u8,
-            copy_len,
-        );
+#[cfg(any(target_os = "linux", feature = "pcap"))]
+impl SplitMix64 {
+    fn seeded() -> Self {
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0x9E3779B97F4A7C15);
+        Self(seed)
     }
 
-    // ioctl request type differs between glibc (c_ulong) and musl (c_int)
-    #[cfg(target_env = "musl")]
-    let request = libc::SIOCGIFINDEX as libc::c_int;
-    #[cfg(not(target_env = "musl"))]
-    let request = libc::SIOCGIFINDEX as libc::c_ulong;
-
-    let ret = unsafe { libc::ioctl(fd, request, &mut ifr) };
-    if ret < 0 {
-        return Err(anyhow!(
-            "Interface '{}' not found: {}",
-            interface,
-            io::Error::last_os_error()
-        ));
+    fn next(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E3779B97F4A7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+        z ^ (z >> 31)
     }
-
-    Ok(unsafe { ifr.ifr_ifru.ifru_ifindex })
 }
 
 #[derive(Debug, Clone)]
@@ -320,19 +301,44 @@ pub struct PacketInfo {
     pub flow_key: FlowKey,
     pub packet_size: u64,
     pub tcp_flags: u16,
+    /// Original frame length on the wire, in octets.
+    pub frame_length: u32,
+    /// Capture timestamp, milliseconds since the Unix epoch.
+    pub observation_time_ms: i64,
+    /// Leading bytes of the frame, when the capture was opened with
+    /// [`CaptureConfig::section_length`].
+    pub section: Option<Vec<u8>>,
 }
 
-fn parse_packet(data: &[u8]) -> Option<PacketInfo> {
-    let sliced = match SlicedPacket::from_ethernet(data) {
-        Ok(s) => s,
+/// Parse a packet starting at the Ethernet header. Lax slicing tolerates
+/// frames truncated by the snap length.
+#[cfg(any(target_os = "linux", feature = "pcap"))]
+pub(crate) fn parse_ethernet(data: &[u8]) -> Option<PacketInfo> {
+    match LaxSlicedPacket::from_ethernet(data) {
+        Ok(sliced) => packet_info(&sliced),
         Err(e) => {
             debug!("Failed to parse packet: {:?}", e);
-            return None;
+            None
         }
-    };
+    }
+}
 
-    let (source_ip, dest_ip, protocol, total_length) = match sliced.net {
-        Some(etherparse::NetSlice::Ipv4(ipv4)) => {
+/// Parse a packet starting at the IP header (loopback/raw-IP link types).
+#[cfg(feature = "pcap")]
+pub(crate) fn parse_ip(data: &[u8]) -> Option<PacketInfo> {
+    match LaxSlicedPacket::from_ip(data) {
+        Ok(sliced) => packet_info(&sliced),
+        Err(e) => {
+            debug!("Failed to parse packet: {:?}", e);
+            None
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", feature = "pcap"))]
+fn packet_info(sliced: &LaxSlicedPacket) -> Option<PacketInfo> {
+    let (source_ip, dest_ip, protocol, total_length) = match &sliced.net {
+        Some(etherparse::LaxNetSlice::Ipv4(ipv4)) => {
             let header = ipv4.header();
             (
                 Ipv4Addr::from(header.source()),
@@ -341,7 +347,7 @@ fn parse_packet(data: &[u8]) -> Option<PacketInfo> {
                 header.total_len() as u64,
             )
         }
-        Some(etherparse::NetSlice::Ipv6(_)) => {
+        Some(etherparse::LaxNetSlice::Ipv6(_)) => {
             debug!("Skipping IPv6 packet");
             return None;
         }
@@ -351,7 +357,7 @@ fn parse_packet(data: &[u8]) -> Option<PacketInfo> {
         }
     };
 
-    let (source_port, dest_port, tcp_flags) = match sliced.transport {
+    let (source_port, dest_port, tcp_flags) = match &sliced.transport {
         Some(TransportSlice::Tcp(tcp)) => {
             let header = tcp.to_header();
             let flags = (header.ns as u16) << 8
@@ -382,5 +388,80 @@ fn parse_packet(data: &[u8]) -> Option<PacketInfo> {
         },
         packet_size: total_length,
         tcp_flags,
+        // Filled in by the capture backend.
+        frame_length: 0,
+        observation_time_ms: 0,
+        section: None,
     })
+}
+
+#[cfg(all(test, any(target_os = "linux", feature = "pcap")))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn count_based_selects_exactly_one_in_n() {
+        let mut sampler = Sampler::new(SamplingConfig::CountBased { interval: 10 });
+        let selected = (0..1_000).filter(|_| sampler.select()).count();
+        assert_eq!(selected, 100);
+        assert_eq!(sampler.stats().packets_observed, 1_000);
+        assert_eq!(sampler.stats().packets_selected, 100);
+    }
+
+    #[test]
+    fn n_out_of_n_selects_exactly_n_per_population() {
+        let mut sampler = Sampler::new(SamplingConfig::NOutOfN {
+            size: 5,
+            population: 100,
+        });
+        // Algorithm S selects exactly `size` in every complete population.
+        let selected = (0..100_000).filter(|_| sampler.select()).count();
+        assert_eq!(selected, 5_000);
+    }
+
+    #[test]
+    fn probabilistic_selects_close_to_probability() {
+        let mut sampler = Sampler::new(SamplingConfig::Probabilistic { probability: 0.25 });
+        let selected = (0..100_000).filter(|_| sampler.select()).count();
+        // Binomial std dev is ~137; 1500 is nearly 11 sigma.
+        assert!((23_500..=26_500).contains(&selected), "selected {selected}");
+    }
+
+    #[test]
+    fn time_based_selects_at_cycle_start() {
+        let mut sampler = Sampler::new(SamplingConfig::TimeBased {
+            interval_us: 1_000_000,
+            space_us: 1_000_000,
+        });
+        // Immediately after creation we are inside the selection interval.
+        assert!(sampler.select());
+    }
+
+    #[test]
+    fn effective_rates() {
+        assert_eq!(
+            SamplingConfig::CountBased { interval: 100 }.effective_rate(),
+            Some(100)
+        );
+        assert_eq!(
+            SamplingConfig::NOutOfN {
+                size: 5,
+                population: 100
+            }
+            .effective_rate(),
+            Some(20)
+        );
+        assert_eq!(
+            SamplingConfig::Probabilistic { probability: 0.25 }.effective_rate(),
+            Some(4)
+        );
+        assert_eq!(
+            SamplingConfig::TimeBased {
+                interval_us: 1,
+                space_us: 9
+            }
+            .effective_rate(),
+            None
+        );
+    }
 }

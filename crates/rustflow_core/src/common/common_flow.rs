@@ -669,7 +669,7 @@ impl IpfixContext<'_> {
                             if flow.bytes == 0 {
                                 flow.bytes = bytes.len() as u64;
                             }
-                            if let Ok(sliced) = SlicedPacket::from_ethernet(bytes) {
+                            if let Ok(sliced) = LaxSlicedPacket::from_ethernet(bytes) {
                                 apply_sliced_packet(&mut flow, &sliced);
                             }
                         }
@@ -680,7 +680,7 @@ impl IpfixContext<'_> {
                             if flow.bytes == 0 {
                                 flow.bytes = bytes.len() as u64;
                             }
-                            if let Ok(sliced) = SlicedPacket::from_ip(bytes) {
+                            if let Ok(sliced) = LaxSlicedPacket::from_ip(bytes) {
                                 apply_sliced_packet(&mut flow, &sliced);
                             }
                         }
@@ -767,6 +767,19 @@ pub fn extract_ipfix_sampling_rate(record: &IpfixDataRecord) -> Option<u32> {
     let sampling_interval_id: u16 = InformationElement::SamplingInterval.into();
     let sampling_packet_interval_id: u16 = InformationElement::SamplingPacketInterval.into();
     let sampler_random_interval_id: u16 = InformationElement::SamplerRandomInterval.into();
+    let selector_algorithm_id: u16 = InformationElement::SelectorAlgorithm.into();
+
+    // A PSAMP Selector Report (RFC 5476) also carries samplingPacketInterval,
+    // but with interval/space semantics rather than a flat 1-in-N rate; those
+    // records are interpreted by the PSAMP cache instead.
+    if record
+        .0
+        .iter()
+        .any(|(field, _, _)| field.information_element_identifier == selector_algorithm_id)
+    {
+        return None;
+    }
+
     for (field, _, value) in &record.0 {
         let field_type = &field.information_element_identifier;
         if *field_type == sampling_interval_id
@@ -779,7 +792,7 @@ pub fn extract_ipfix_sampling_rate(record: &IpfixDataRecord) -> Option<u32> {
     None
 }
 
-use etherparse::{InternetSlice, LinkSlice, SlicedPacket, TransportSlice};
+use etherparse::{LaxNetSlice, LaxSlicedPacket, LinkSlice, TransportSlice};
 
 use crate::sflow_v5::parser::{
     AsPathType, ExpandedFlowSample, ExtendedGateway, ExtendedRouter, ExtendedSwitch,
@@ -851,18 +864,18 @@ impl SFlowV5Context<'_> {
 
         match header.protocol {
             HeaderProtocol::EthernetIso8023 => {
-                if let Ok(sliced) = SlicedPacket::from_ethernet(&header.header) {
+                if let Ok(sliced) = LaxSlicedPacket::from_ethernet(&header.header) {
                     apply_sliced_packet(flow, &sliced);
                 }
             }
             HeaderProtocol::Ipv4 => {
-                if let Ok(sliced) = SlicedPacket::from_ip(&header.header) {
+                if let Ok(sliced) = LaxSlicedPacket::from_ip(&header.header) {
                     flow.etype = Some(0x0800);
                     apply_sliced_packet(flow, &sliced);
                 }
             }
             HeaderProtocol::Ipv6 => {
-                if let Ok(sliced) = SlicedPacket::from_ip(&header.header) {
+                if let Ok(sliced) = LaxSlicedPacket::from_ip(&header.header) {
                     flow.etype = Some(0x86dd);
                     apply_sliced_packet(flow, &sliced);
                 }
@@ -873,8 +886,10 @@ impl SFlowV5Context<'_> {
 }
 
 /// Dissect a sliced packet header into the flow's link/network/transport
-/// fields. Shared by sFlow sampled headers and PSAMP packet sections.
-fn apply_sliced_packet(flow: &mut CommonFlow, sliced: &SlicedPacket) {
+/// fields. Shared by sFlow sampled headers and PSAMP packet sections; lax
+/// slicing is used because both are usually truncated below the packet's
+/// declared length.
+fn apply_sliced_packet(flow: &mut CommonFlow, sliced: &LaxSlicedPacket) {
     if let Some(LinkSlice::Ethernet2(eth)) = &sliced.link {
         let header = eth.to_header();
         flow.src_mac = Some(MacAddr6::from(header.source));
@@ -883,7 +898,7 @@ fn apply_sliced_packet(flow: &mut CommonFlow, sliced: &SlicedPacket) {
     }
 
     match &sliced.net {
-        Some(InternetSlice::Ipv4(ipv4_slice)) => {
+        Some(LaxNetSlice::Ipv4(ipv4_slice)) => {
             let ipv4_header = ipv4_slice.header();
             flow.src_addr = Some(IpAddr::V4(ipv4_header.source_addr()));
             flow.dst_addr = Some(IpAddr::V4(ipv4_header.destination_addr()));
@@ -896,7 +911,7 @@ fn apply_sliced_packet(flow: &mut CommonFlow, sliced: &SlicedPacket) {
                 flow.etype = Some(0x0800);
             }
         }
-        Some(InternetSlice::Ipv6(ipv6_slice)) => {
+        Some(LaxNetSlice::Ipv6(ipv6_slice)) => {
             let ipv6_header = ipv6_slice.header();
             flow.src_addr = Some(IpAddr::V6(ipv6_header.source_addr()));
             flow.dst_addr = Some(IpAddr::V6(ipv6_header.destination_addr()));
@@ -907,7 +922,7 @@ fn apply_sliced_packet(flow: &mut CommonFlow, sliced: &SlicedPacket) {
                 flow.etype = Some(0x86dd);
             }
         }
-        Some(InternetSlice::Arp(_)) | None => {}
+        Some(LaxNetSlice::Arp(_)) | None => {}
     }
 
     match &sliced.transport {

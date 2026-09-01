@@ -113,6 +113,10 @@ fn psamp_packet_report_end_to_end() {
     let reports = message(&[set(256, &selector_report), set(257, &sequence_report)]);
     assert!(processor.process(EXPORTER, &reports, None).is_empty());
 
+    // The selector report's samplingPacketInterval (= 1, interval/space
+    // semantics) must not be misread as a legacy flat 1-in-N rate.
+    assert_eq!(processor.sampling_cache.get(&(EXPORTER, OBS_DOMAIN)), None);
+
     // Packet Report: selection sequence 9, observation time, sampled frame.
     let frame = sample_frame();
     let mut packet_report = Vec::new();
