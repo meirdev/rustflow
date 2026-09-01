@@ -2,7 +2,8 @@ use bytes::BufMut;
 use chrono::{DateTime, Utc};
 
 use super::parser::{
-    DataRecord, FieldSpecifier, FieldValue, Header, IPFIX_HEADER_SIZE, IpfixPacket,
+    DataRecord, FieldSpecifier, FieldValue, Header, IPFIX_HEADER_SIZE, IPFIX_VARIABLE_LENGTH,
+    IpfixPacket,
     OptionsTemplateRecord, Record, SET_HEADER_SIZE, Set, SetHeader, TemplateRecord,
 };
 use crate::common::parser::NTP_UNIX_EPOCH_DIFF;
@@ -54,35 +55,12 @@ impl Encode for SetHeader {
     }
 }
 
-impl TemplateRecord {
-    pub fn new(template_id: u16, fields: Vec<FieldSpecifier>) -> Self {
-        let field_count = fields.len() as u16;
-        Self {
-            template_id,
-            field_count,
-            fields,
-        }
-    }
-}
-
 impl Encode for TemplateRecord {
     fn encode<B: BufMut>(&self, buf: &mut B) {
         buf.put_u16(self.template_id);
         buf.put_u16(self.field_count);
         for field in &self.fields {
             field.encode(buf);
-        }
-    }
-}
-
-impl OptionsTemplateRecord {
-    pub fn new(template_id: u16, scope_field_count: u16, fields: Vec<FieldSpecifier>) -> Self {
-        let field_count = fields.len() as u16;
-        Self {
-            template_id,
-            field_count,
-            scope_field_count,
-            fields,
         }
     }
 }
@@ -142,8 +120,24 @@ impl Encode for Record {
 
 impl Encode for DataRecord {
     fn encode<B: BufMut>(&self, buf: &mut B) {
-        for (_, _, _, value) in &self.0 {
-            value.encode(buf);
+        for (field, _, value) in &self.0 {
+            if field.field_length == IPFIX_VARIABLE_LENGTH {
+                // RFC 7011 section 7: a Field Length of 65535 in the Template
+                // means the value carries its own length, in one octet below
+                // 255, otherwise a 255 escape and two more octets.
+                let mut value_data = Vec::new();
+                value.encode(&mut value_data);
+
+                if value_data.len() < 255 {
+                    buf.put_u8(value_data.len() as u8);
+                } else {
+                    buf.put_u8(255);
+                    buf.put_u16(value_data.len() as u16);
+                }
+                buf.put_slice(&value_data);
+            } else {
+                value.encode(buf);
+            }
         }
     }
 }

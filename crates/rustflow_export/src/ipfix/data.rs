@@ -5,9 +5,6 @@ use chrono::{DateTime, Utc};
 use rustflow_core::common::InformationElement;
 use rustflow_core::ipfix::parser::{DataRecord, FieldValue};
 
-// Static empty name - encoder doesn't use field names, only FieldValue
-static EMPTY_NAME: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from(""));
-
 #[derive(Debug, Clone)]
 pub struct FlowData {
     pub source_ipv4: Ipv4Addr,
@@ -24,70 +21,17 @@ pub struct FlowData {
 
 impl FlowData {
     pub fn to_data_record(&self) -> DataRecord {
-        use InformationElement::*;
-        let name = EMPTY_NAME.clone();
-
-        DataRecord(vec![
-            (
-                None,
-                SourceIpv4Address.into(),
-                name.clone(),
-                FieldValue::Ipv4Address(self.source_ipv4),
-            ),
-            (
-                None,
-                DestinationIpv4Address.into(),
-                name.clone(),
-                FieldValue::Ipv4Address(self.destination_ipv4),
-            ),
-            (
-                None,
-                ProtocolIdentifier.into(),
-                name.clone(),
-                FieldValue::Unsigned8(self.protocol),
-            ),
-            (
-                None,
-                SourceTransportPort.into(),
-                name.clone(),
-                FieldValue::Unsigned16(self.source_port),
-            ),
-            (
-                None,
-                DestinationTransportPort.into(),
-                name.clone(),
-                FieldValue::Unsigned16(self.destination_port),
-            ),
-            (
-                None,
-                OctetDeltaCount.into(),
-                name.clone(),
-                FieldValue::Unsigned64(self.octet_count),
-            ),
-            (
-                None,
-                PacketDeltaCount.into(),
-                name.clone(),
-                FieldValue::Unsigned64(self.packet_count),
-            ),
-            (
-                None,
-                TcpControlBits.into(),
-                name.clone(),
-                FieldValue::Unsigned16(self.tcp_flags),
-            ),
-            (
-                None,
-                FlowStartMilliseconds.into(),
-                name.clone(),
-                FieldValue::DateTimeMilliseconds(self.flow_start),
-            ),
-            (
-                None,
-                FlowEndMilliseconds.into(),
-                name,
-                FieldValue::DateTimeMilliseconds(self.flow_end),
-            ),
+        DataRecord::new(vec![
+            FieldValue::Ipv4Address(self.source_ipv4),
+            FieldValue::Ipv4Address(self.destination_ipv4),
+            FieldValue::Unsigned8(self.protocol),
+            FieldValue::Unsigned16(self.source_port),
+            FieldValue::Unsigned16(self.destination_port),
+            FieldValue::Unsigned64(self.octets),
+            FieldValue::Unsigned64(self.packets),
+            FieldValue::Unsigned16(self.tcp_flags),
+            FieldValue::DateTimeMilliseconds(self.flow_start),
+            FieldValue::DateTimeMilliseconds(self.flow_end),
         ])
     }
 }
@@ -107,22 +51,9 @@ impl OptionsData {
     }
 
     pub fn to_data_record(&self) -> DataRecord {
-        use InformationElement::*;
-        let name = EMPTY_NAME.clone();
-
-        DataRecord(vec![
-            (
-                None,
-                ObservationDomainId.into(),
-                name.clone(),
-                FieldValue::Unsigned32(self.observation_domain_id),
-            ),
-            (
-                None,
-                SamplingPacketInterval.into(),
-                name,
-                FieldValue::Unsigned32(self.sampling_packet_interval),
-            ),
+        DataRecord::new(vec![
+            FieldValue::Unsigned32(self.observation_domain_id),
+            FieldValue::Unsigned32(self.sampling_packet_interval),
         ])
     }
 }

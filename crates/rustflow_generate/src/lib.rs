@@ -3,7 +3,6 @@
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::str::FromStr;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
@@ -185,9 +184,6 @@ pub struct GenerateArgs {
     packet_range: InclusiveRange<u16>,
 }
 
-// Static empty name for DataRecord fields
-static EMPTY_NAME: std::sync::LazyLock<Arc<str>> = std::sync::LazyLock::new(|| Arc::from(""));
-
 fn field_specifier(ie: InformationElement, length: u16) -> FieldSpecifier {
     FieldSpecifier {
         enterprise_bit: false,
@@ -261,84 +257,29 @@ struct Flow {
 
 fn create_flow_record(flow: &Flow) -> DataRecord {
     use InformationElement::*;
-    let name = EMPTY_NAME.clone();
 
-    let (source_ie, source_value) =
-        address_field(flow.src_ip, SourceIpv4Address, SourceIpv6Address);
-    let (destination_ie, destination_value) =
+    let (_, source_value) = address_field(flow.src_ip, SourceIpv4Address, SourceIpv6Address);
+    let (_, destination_value) =
         address_field(flow.dst_ip, DestinationIpv4Address, DestinationIpv6Address);
 
-    DataRecord(vec![
-        (None, source_ie.into(), name.clone(), source_value),
-        (None, destination_ie.into(), name.clone(), destination_value),
-        (
-            None,
-            ProtocolIdentifier.into(),
-            name.clone(),
-            FieldValue::Unsigned8(flow.protocol),
-        ),
-        (
-            None,
-            TcpControlBits.into(),
-            name.clone(),
-            FieldValue::Unsigned16(flow.tcp_flags),
-        ),
-        (
-            None,
-            SourceTransportPort.into(),
-            name.clone(),
-            FieldValue::Unsigned16(flow.src_port),
-        ),
-        (
-            None,
-            DestinationTransportPort.into(),
-            name.clone(),
-            FieldValue::Unsigned16(flow.dst_port),
-        ),
-        (
-            None,
-            OctetDeltaCount.into(),
-            name.clone(),
-            FieldValue::Unsigned64(u64::from(flow.octets)),
-        ),
-        (
-            None,
-            PacketDeltaCount.into(),
-            name.clone(),
-            FieldValue::Unsigned64(u64::from(flow.packets)),
-        ),
-        (
-            None,
-            FlowStartMilliseconds.into(),
-            name.clone(),
-            FieldValue::DateTimeMilliseconds(flow.flow_start),
-        ),
-        (
-            None,
-            FlowEndMilliseconds.into(),
-            name,
-            FieldValue::DateTimeMilliseconds(flow.flow_end),
-        ),
+    DataRecord::new(vec![
+        source_value,
+        destination_value,
+        FieldValue::Unsigned8(flow.protocol),
+        FieldValue::Unsigned16(flow.tcp_flags),
+        FieldValue::Unsigned16(flow.src_port),
+        FieldValue::Unsigned16(flow.dst_port),
+        FieldValue::Unsigned64(u64::from(flow.octets)),
+        FieldValue::Unsigned64(u64::from(flow.packets)),
+        FieldValue::DateTimeMilliseconds(flow.flow_start),
+        FieldValue::DateTimeMilliseconds(flow.flow_end),
     ])
 }
 
 fn create_options_record(observation_domain_id: u32, sampling_interval: u32) -> DataRecord {
-    use InformationElement::*;
-    let name = EMPTY_NAME.clone();
-
-    DataRecord(vec![
-        (
-            None,
-            ObservationDomainId.into(),
-            name.clone(),
-            FieldValue::Unsigned32(observation_domain_id),
-        ),
-        (
-            None,
-            SamplingPacketInterval.into(),
-            name,
-            FieldValue::Unsigned32(sampling_interval),
-        ),
+    DataRecord::new(vec![
+        FieldValue::Unsigned32(observation_domain_id),
+        FieldValue::Unsigned32(sampling_interval),
     ])
 }
 
