@@ -461,6 +461,7 @@ fn write_csv_record(
     put_opt!(flow.dst_vlan);
     put_opt!(flow.observation_domain_id);
     put_opt!(flow.template_id);
+    put_opt!(flow.selection_sequence_id);
 
     debug_assert_eq!(i, COMMON_FLOW_HEADERS.len());
 
@@ -687,6 +688,7 @@ const COMMON_FLOW_HEADERS: &[&str] = &[
     "dst_vlan",
     "observation_domain_id",
     "template_id",
+    "selection_sequence_id",
 ];
 
 #[cfg(test)]

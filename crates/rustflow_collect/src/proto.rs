@@ -90,6 +90,9 @@ pub struct CommonFlow {
 
     #[prost(map = "string, string", tag = "38")]
     pub enriched: HashMap<String, String>,
+
+    #[prost(uint64, optional, tag = "39")]
+    pub selection_sequence_id: Option<u64>,
 }
 
 /// An address on the wire: 4 bytes for IPv4, 16 for IPv6.
@@ -141,6 +144,7 @@ impl CommonFlow {
             observation_domain_id: flow.observation_domain_id,
             template_id: flow.template_id.map(u32::from),
             enriched: enriched.clone(),
+            selection_sequence_id: flow.selection_sequence_id,
         }
     }
 }

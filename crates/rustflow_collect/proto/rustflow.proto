@@ -50,4 +50,7 @@ message CommonFlow {
 
   // Fields added by --enrich, keyed by their output name.
   map<string, string> enriched = 38;
+
+  // PSAMP (RFC 5476): the Selection Sequence that selected this packet.
+  optional uint64 selection_sequence_id = 39;
 }

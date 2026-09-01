@@ -10,6 +10,7 @@ use rustflow_core::common::ie_registry::IERegistry;
 use rustflow_core::ipfix::parser::{
     IPFIX_VERSION, IpfixPacket, IpfixParser, Record as IpfixRecord,
 };
+use rustflow_core::ipfix::psamp::PsampCache;
 use rustflow_core::netflow_v5::parser::{NETFLOW_V5_VERSION, NetFlowV5Packet, NetFlowV5Parser};
 use rustflow_core::netflow_v9::parser::{
     NETFLOW_V9_VERSION, NetFlowV9Packet, NetflowV9Parser, Record as V9Record,
@@ -39,6 +40,7 @@ pub struct NetflowProcessor {
     pub v9_parsers: FxHashMap<IpAddr, NetflowV9Parser>,
     pub ipfix_parsers: FxHashMap<IpAddr, IpfixParser>,
     pub sampling_cache: SamplingRateCache,
+    pub psamp_cache: PsampCache,
 }
 
 impl NetflowProcessor {
@@ -50,6 +52,7 @@ impl NetflowProcessor {
             v9_parsers: FxHashMap::default(),
             ipfix_parsers: FxHashMap::default(),
             sampling_cache: SamplingRateCache::default(),
+            psamp_cache: PsampCache::default(),
         }
     }
 
@@ -108,14 +111,19 @@ impl NetflowProcessor {
                 });
 
                 if let Ok((_, parsed)) = parser.parse(payload) {
-                    // Update sampling cache from options data
+                    // Update sampling and PSAMP caches from options data
                     let cache_key = (src, parsed.header.observation_domain_id);
                     for set in &parsed.sets {
                         for record in &set.records {
-                            if let IpfixRecord::OptionsData(data_record) = record
-                                && let Some(rate) = extract_ipfix_sampling_rate(data_record)
-                            {
-                                self.sampling_cache.set(cache_key, rate);
+                            if let IpfixRecord::OptionsData(data_record) = record {
+                                if let Some(rate) = extract_ipfix_sampling_rate(data_record) {
+                                    self.sampling_cache.set(cache_key, rate);
+                                }
+                                self.psamp_cache.update_from_options_data(
+                                    src,
+                                    parsed.header.observation_domain_id,
+                                    data_record,
+                                );
                             }
                         }
                     }
@@ -128,6 +136,19 @@ impl NetflowProcessor {
                 log::warn!("Unknown NetFlow version: {}", version);
                 None
             }
+        }
+    }
+
+    /// For a PSAMP Packet Report, the effective sampling rate comes from the
+    /// Selection Sequence the record references, not the exporter-wide cache.
+    fn apply_psamp_sampling_rate(&self, src: IpAddr, flow: &mut CommonFlow) {
+        if let Some(sequence_id) = flow.selection_sequence_id
+            && let Some(observation_domain_id) = flow.observation_domain_id
+            && let Some(rate) =
+                self.psamp_cache
+                    .sequence_sampling_rate(&(src, observation_domain_id, sequence_id))
+        {
+            flow.sampling_rate = Some(rate);
         }
     }
 
@@ -184,6 +205,7 @@ impl NetflowProcessor {
                                 sampling_rate,
                             };
                             let mut flow = ctx.convert(data_record, set.id);
+                            self.apply_psamp_sampling_rate(src, &mut flow);
                             flow.time_received_ns = time_received_ns;
                             flows.push(flow);
                         }
@@ -287,6 +309,11 @@ impl NetflowProcessor {
                                         self.sampling_cache.set(cache_key, rate);
                                         sampling_rate = Some(rate);
                                     }
+                                    self.psamp_cache.update_from_options_data(
+                                        src,
+                                        parsed.header.observation_domain_id,
+                                        data_record,
+                                    );
                                 }
                                 IpfixRecord::Data(data_record) => {
                                     if let Some(rate) = extract_ipfix_sampling_rate(data_record) {
@@ -300,6 +327,7 @@ impl NetflowProcessor {
                                         sampling_rate,
                                     };
                                     let mut flow = ctx.convert(data_record, set.id);
+                                    self.apply_psamp_sampling_rate(src, &mut flow);
                                     flow.time_received_ns = time_received_ns;
                                     flows.push(flow);
                                 }

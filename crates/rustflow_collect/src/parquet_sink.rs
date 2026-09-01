@@ -110,6 +110,8 @@ impl ParquetSink {
         b.observation_domain_id
             .append_option(flow.observation_domain_id);
         b.template_id.append_option(flow.template_id);
+        b.selection_sequence_id
+            .append_option(flow.selection_sequence_id);
         for (builder, name) in b.enriched.iter_mut().zip(&self.enriched_fields) {
             builder.append_option(enriched.get(name));
         }
@@ -205,6 +207,7 @@ struct FlowBuilders {
     dst_vlan: UInt16Builder,
     observation_domain_id: UInt32Builder,
     template_id: UInt16Builder,
+    selection_sequence_id: UInt64Builder,
     enriched: Vec<StringBuilder>,
 }
 
@@ -249,6 +252,7 @@ impl FlowBuilders {
             dst_vlan: UInt16Builder::new(),
             observation_domain_id: UInt32Builder::new(),
             template_id: UInt16Builder::new(),
+            selection_sequence_id: UInt64Builder::new(),
             enriched: (0..enriched_count).map(|_| StringBuilder::new()).collect(),
         }
     }
@@ -292,6 +296,7 @@ impl FlowBuilders {
             Arc::new(self.dst_vlan.finish()),
             Arc::new(self.observation_domain_id.finish()),
             Arc::new(self.template_id.finish()),
+            Arc::new(self.selection_sequence_id.finish()),
         ];
         for builder in &mut self.enriched {
             columns.push(Arc::new(builder.finish()));
@@ -341,6 +346,7 @@ fn build_schema(enriched_fields: &[String]) -> Schema {
         Field::new("dst_vlan", DataType::UInt16, true),
         Field::new("observation_domain_id", DataType::UInt32, true),
         Field::new("template_id", DataType::UInt16, true),
+        Field::new("selection_sequence_id", DataType::UInt64, true),
     ];
 
     for field in enriched_fields {

@@ -62,11 +62,43 @@ pub enum InformationElement {
     IcmpCodeIpv4 = 177,
     IcmpTypeIpv6 = 178,
     IcmpCodeIpv6 = 179,
+    // PSAMP (RFC 5477)
+    SelectionSequenceId = 301,
+    SelectorId = 302,
+    SelectorAlgorithm = 304,
     SamplingPacketInterval = 305,
+    SamplingPacketSpace = 306,
+    SamplingTimeInterval = 307,
+    SamplingTimeSpace = 308,
+    SamplingSize = 309,
+    SamplingPopulation = 310,
+    SamplingProbability = 311,
+    DataLinkFrameSize = 312,
+    IpHeaderPacketSection = 313,
+    IpPayloadPacketSection = 314,
+    DataLinkFrameSection = 315,
+    MplsLabelStackSection = 316,
+    MplsPayloadPacketSection = 317,
+    SelectorIdTotalPktsObserved = 318,
+    SelectorIdTotalPktsSelected = 319,
+    ObservationTimeSeconds = 322,
+    ObservationTimeMilliseconds = 323,
+    ObservationTimeMicroseconds = 324,
+    ObservationTimeNanoseconds = 325,
+    DigestHashValue = 326,
+    HashIpPayloadOffset = 327,
+    HashIpPayloadSize = 328,
+    HashOutputRangeMin = 329,
+    HashOutputRangeMax = 330,
+    HashSelectedRangeMin = 331,
+    HashSelectedRangeMax = 332,
+    HashDigestOutput = 333,
+    HashInitialiserValue = 334,
+    SelectorName = 335,
 }
 
 /// Largest discriminant in [`InformationElement`].
-const MAX_IE_ID: u16 = 305;
+const MAX_IE_ID: u16 = 335;
 
 /// Identifier-indexed lookup table for [`InformationElement::from_id`].
 static IE_BY_ID: LazyLock<Box<[Option<InformationElement>]>> = LazyLock::new(|| {

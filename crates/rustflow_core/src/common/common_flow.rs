@@ -161,6 +161,11 @@ pub struct CommonFlow {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub template_id: Option<u16>,
+
+    /// PSAMP (RFC 5476): the Selection Sequence that selected this packet.
+    /// Set only for Packet Reports.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection_sequence_id: Option<u64>,
 }
 
 impl Default for CommonFlow {
@@ -203,6 +208,7 @@ impl Default for CommonFlow {
             dst_vlan: None,
             observation_domain_id: None,
             template_id: None,
+            selection_sequence_id: None,
         }
     }
 }
@@ -281,6 +287,7 @@ impl NetFlowV5Context<'_> {
             dst_vlan: None,
             observation_domain_id: None,
             template_id: None, // NetFlow v5 has no templates
+            selection_sequence_id: None,
         }
     }
 }
@@ -640,9 +647,56 @@ impl IpfixContext<'_> {
                             flow.dst_mac = Some(*mac);
                         }
                     }
+                    // PSAMP Packet Reports (RFC 5476 section 6.4)
+                    SelectionSequenceId => {
+                        flow.selection_sequence_id = ipfix_extract_u64_opt(value);
+                    }
+                    ObservationTimeSeconds
+                    | ObservationTimeMilliseconds
+                    | ObservationTimeMicroseconds
+                    | ObservationTimeNanoseconds => {
+                        // A Packet Report describes a single instant.
+                        let ns = ipfix_extract_datetime_ns(value);
+                        flow.time_flow_start_ns = ns;
+                        flow.time_flow_end_ns = ns;
+                    }
+                    DataLinkFrameSize => flow.bytes = ipfix_extract_u64(value),
+                    DataLinkFrameSection => {
+                        if let IpfixFieldValue::OctetArray(bytes) = value {
+                            flow.packets = 1;
+                            // The section may be truncated; dataLinkFrameSize
+                            // carries the original length when exported.
+                            if flow.bytes == 0 {
+                                flow.bytes = bytes.len() as u64;
+                            }
+                            if let Ok(sliced) = SlicedPacket::from_ethernet(bytes) {
+                                apply_sliced_packet(&mut flow, &sliced);
+                            }
+                        }
+                    }
+                    IpHeaderPacketSection => {
+                        if let IpfixFieldValue::OctetArray(bytes) = value {
+                            flow.packets = 1;
+                            if flow.bytes == 0 {
+                                flow.bytes = bytes.len() as u64;
+                            }
+                            if let Ok(sliced) = SlicedPacket::from_ip(bytes) {
+                                apply_sliced_packet(&mut flow, &sliced);
+                            }
+                        }
+                    }
+                    IpPayloadPacketSection | MplsLabelStackSection | MplsPayloadPacketSection => {
+                        flow.packets = 1;
+                    }
                     _ => {}
                 }
             }
+        }
+
+        // A Packet Report describes exactly one packet, even when it carries
+        // no packet section (Extended Packet Reports, RFC 5476 section 6.4.2).
+        if flow.selection_sequence_id.is_some() && flow.packets == 0 {
+            flow.packets = 1;
         }
 
         flow
@@ -675,6 +729,16 @@ fn ipfix_extract_u32(value: &IpfixFieldValue) -> Option<u32> {
         IpfixFieldValue::Unsigned16(v) => Some(*v as u32),
         IpfixFieldValue::Unsigned32(v) => Some(*v),
         IpfixFieldValue::Unsigned64(v) => Some(*v as u32),
+        _ => None,
+    }
+}
+
+fn ipfix_extract_u64_opt(value: &IpfixFieldValue) -> Option<u64> {
+    match value {
+        IpfixFieldValue::Unsigned8(v) => Some(*v as u64),
+        IpfixFieldValue::Unsigned16(v) => Some(*v as u64),
+        IpfixFieldValue::Unsigned32(v) => Some(*v as u64),
+        IpfixFieldValue::Unsigned64(v) => Some(*v),
         _ => None,
     }
 }
@@ -788,113 +852,117 @@ impl SFlowV5Context<'_> {
         match header.protocol {
             HeaderProtocol::EthernetIso8023 => {
                 if let Ok(sliced) = SlicedPacket::from_ethernet(&header.header) {
-                    self.apply_sliced_packet(flow, &sliced);
+                    apply_sliced_packet(flow, &sliced);
                 }
             }
             HeaderProtocol::Ipv4 => {
                 if let Ok(sliced) = SlicedPacket::from_ip(&header.header) {
                     flow.etype = Some(0x0800);
-                    self.apply_sliced_packet(flow, &sliced);
+                    apply_sliced_packet(flow, &sliced);
                 }
             }
             HeaderProtocol::Ipv6 => {
                 if let Ok(sliced) = SlicedPacket::from_ip(&header.header) {
                     flow.etype = Some(0x86dd);
-                    self.apply_sliced_packet(flow, &sliced);
+                    apply_sliced_packet(flow, &sliced);
                 }
             }
             _ => {}
         }
     }
+}
 
-    fn apply_sliced_packet(&self, flow: &mut CommonFlow, sliced: &SlicedPacket) {
-        if let Some(LinkSlice::Ethernet2(eth)) = &sliced.link {
-            let header = eth.to_header();
-            flow.src_mac = Some(MacAddr6::from(header.source));
-            flow.dst_mac = Some(MacAddr6::from(header.destination));
-            flow.etype = Some(header.ether_type.0);
-        }
-
-        match &sliced.net {
-            Some(InternetSlice::Ipv4(ipv4_slice)) => {
-                let ipv4_header = ipv4_slice.header();
-                flow.src_addr = Some(IpAddr::V4(ipv4_header.source_addr()));
-                flow.dst_addr = Some(IpAddr::V4(ipv4_header.destination_addr()));
-                flow.proto = Some(ipv4_header.protocol().0);
-                flow.ip_tos = Some(ipv4_header.dcp().value());
-                flow.ip_ttl = Some(ipv4_header.ttl());
-                flow.fragment_id = Some(ipv4_header.identification() as u32);
-                flow.fragment_offset = Some(ipv4_header.fragments_offset().value());
-                if flow.etype.is_none() {
-                    flow.etype = Some(0x0800);
-                }
-            }
-            Some(InternetSlice::Ipv6(ipv6_slice)) => {
-                let ipv6_header = ipv6_slice.header();
-                flow.src_addr = Some(IpAddr::V6(ipv6_header.source_addr()));
-                flow.dst_addr = Some(IpAddr::V6(ipv6_header.destination_addr()));
-                flow.proto = Some(ipv6_slice.payload().ip_number.0);
-                flow.ip_ttl = Some(ipv6_header.hop_limit());
-                flow.ipv6_flow_label = Some(ipv6_header.flow_label().value());
-                if flow.etype.is_none() {
-                    flow.etype = Some(0x86dd);
-                }
-            }
-            Some(InternetSlice::Arp(_)) | None => {}
-        }
-
-        match &sliced.transport {
-            Some(TransportSlice::Tcp(tcp_slice)) => {
-                flow.src_port = Some(tcp_slice.source_port());
-                flow.dst_port = Some(tcp_slice.destination_port());
-
-                let header = tcp_slice.to_header();
-                let mut flags: u16 = 0;
-                if header.fin {
-                    flags |= 0x01;
-                }
-                if header.syn {
-                    flags |= 0x02;
-                }
-                if header.rst {
-                    flags |= 0x04;
-                }
-                if header.psh {
-                    flags |= 0x08;
-                }
-                if header.ack {
-                    flags |= 0x10;
-                }
-                if header.urg {
-                    flags |= 0x20;
-                }
-                if header.ece {
-                    flags |= 0x40;
-                }
-                if header.cwr {
-                    flags |= 0x80;
-                }
-                if header.ns {
-                    flags |= 0x100;
-                }
-                flow.tcp_flags = Some(flags);
-            }
-            Some(TransportSlice::Udp(udp_slice)) => {
-                flow.src_port = Some(udp_slice.source_port());
-                flow.dst_port = Some(udp_slice.destination_port());
-            }
-            Some(TransportSlice::Icmpv4(icmp_slice)) => {
-                flow.icmp_type = Some(icmp_slice.type_u8());
-                flow.icmp_code = Some(icmp_slice.code_u8());
-            }
-            Some(TransportSlice::Icmpv6(icmp_slice)) => {
-                flow.icmp_type = Some(icmp_slice.type_u8());
-                flow.icmp_code = Some(icmp_slice.code_u8());
-            }
-            _ => {}
-        }
+/// Dissect a sliced packet header into the flow's link/network/transport
+/// fields. Shared by sFlow sampled headers and PSAMP packet sections.
+fn apply_sliced_packet(flow: &mut CommonFlow, sliced: &SlicedPacket) {
+    if let Some(LinkSlice::Ethernet2(eth)) = &sliced.link {
+        let header = eth.to_header();
+        flow.src_mac = Some(MacAddr6::from(header.source));
+        flow.dst_mac = Some(MacAddr6::from(header.destination));
+        flow.etype = Some(header.ether_type.0);
     }
 
+    match &sliced.net {
+        Some(InternetSlice::Ipv4(ipv4_slice)) => {
+            let ipv4_header = ipv4_slice.header();
+            flow.src_addr = Some(IpAddr::V4(ipv4_header.source_addr()));
+            flow.dst_addr = Some(IpAddr::V4(ipv4_header.destination_addr()));
+            flow.proto = Some(ipv4_header.protocol().0);
+            flow.ip_tos = Some(ipv4_header.dcp().value());
+            flow.ip_ttl = Some(ipv4_header.ttl());
+            flow.fragment_id = Some(ipv4_header.identification() as u32);
+            flow.fragment_offset = Some(ipv4_header.fragments_offset().value());
+            if flow.etype.is_none() {
+                flow.etype = Some(0x0800);
+            }
+        }
+        Some(InternetSlice::Ipv6(ipv6_slice)) => {
+            let ipv6_header = ipv6_slice.header();
+            flow.src_addr = Some(IpAddr::V6(ipv6_header.source_addr()));
+            flow.dst_addr = Some(IpAddr::V6(ipv6_header.destination_addr()));
+            flow.proto = Some(ipv6_slice.payload().ip_number.0);
+            flow.ip_ttl = Some(ipv6_header.hop_limit());
+            flow.ipv6_flow_label = Some(ipv6_header.flow_label().value());
+            if flow.etype.is_none() {
+                flow.etype = Some(0x86dd);
+            }
+        }
+        Some(InternetSlice::Arp(_)) | None => {}
+    }
+
+    match &sliced.transport {
+        Some(TransportSlice::Tcp(tcp_slice)) => {
+            flow.src_port = Some(tcp_slice.source_port());
+            flow.dst_port = Some(tcp_slice.destination_port());
+
+            let header = tcp_slice.to_header();
+            let mut flags: u16 = 0;
+            if header.fin {
+                flags |= 0x01;
+            }
+            if header.syn {
+                flags |= 0x02;
+            }
+            if header.rst {
+                flags |= 0x04;
+            }
+            if header.psh {
+                flags |= 0x08;
+            }
+            if header.ack {
+                flags |= 0x10;
+            }
+            if header.urg {
+                flags |= 0x20;
+            }
+            if header.ece {
+                flags |= 0x40;
+            }
+            if header.cwr {
+                flags |= 0x80;
+            }
+            if header.ns {
+                flags |= 0x100;
+            }
+            flow.tcp_flags = Some(flags);
+        }
+        Some(TransportSlice::Udp(udp_slice)) => {
+            flow.src_port = Some(udp_slice.source_port());
+            flow.dst_port = Some(udp_slice.destination_port());
+        }
+        Some(TransportSlice::Icmpv4(icmp_slice)) => {
+            flow.icmp_type = Some(icmp_slice.type_u8());
+            flow.icmp_code = Some(icmp_slice.code_u8());
+        }
+        Some(TransportSlice::Icmpv6(icmp_slice)) => {
+            flow.icmp_type = Some(icmp_slice.type_u8());
+            flow.icmp_code = Some(icmp_slice.code_u8());
+        }
+        _ => {}
+    }
+}
+
+impl SFlowV5Context<'_> {
     fn apply_sampled_ipv4(&self, flow: &mut CommonFlow, ipv4: &SampledIpv4) {
         flow.src_addr = Some(IpAddr::V4(ipv4.src_ip));
         flow.dst_addr = Some(IpAddr::V4(ipv4.dst_ip));
