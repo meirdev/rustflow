@@ -78,7 +78,7 @@ impl PacketCapture {
             libc::socket(
                 libc::AF_PACKET,
                 libc::SOCK_RAW,
-                (ETH_P_ALL as u16).to_be() as libc::c_int,
+                ETH_P_ALL.to_be() as libc::c_int,
             )
         };
         if fd < 0 {
@@ -158,7 +158,7 @@ impl PacketCapture {
         // Bind to interface
         let addr = libc::sockaddr_ll {
             sll_family: libc::AF_PACKET as u16,
-            sll_protocol: (ETH_P_ALL as u16).to_be(),
+            sll_protocol: ETH_P_ALL.to_be(),
             sll_ifindex: ifindex,
             sll_hatype: 0,
             sll_pkttype: 0,

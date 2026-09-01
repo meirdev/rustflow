@@ -60,7 +60,7 @@ impl NetflowPcapReader {
                 Some(Ok(packet)) => {
                     let time_received_ns = Some(pcap_ts_to_nanos(packet.timestamp));
 
-                    if let Ok((src, payload)) = parse_udp_packet(&packet.data) {
+                    if let Some((src, payload)) = parse_udp_packet(&packet.data) {
                         self.pending_flows.extend(self.processor.process(
                             src,
                             &payload,
@@ -128,7 +128,7 @@ impl SflowPcapReader {
                 Some(Ok(packet)) => {
                     let time_received_ns = Some(pcap_ts_to_nanos(packet.timestamp));
 
-                    if let Ok((_src, payload)) = parse_udp_packet(&packet.data) {
+                    if let Some((_src, payload)) = parse_udp_packet(&packet.data) {
                         self.pending_flows
                             .extend(self.processor.process(&payload, time_received_ns));
 

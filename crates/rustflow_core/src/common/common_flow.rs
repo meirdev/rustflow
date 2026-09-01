@@ -533,7 +533,8 @@ impl IpfixContext<'_> {
             flow.sampling_rate = Some(rate);
         }
 
-        for (_, field_type, _, value) in &record.0 {
+        for (field, _, value) in &record.0 {
+            let field_type = &field.information_element_identifier;
             if let Some(ie) = InformationElement::from_id(*field_type) {
                 match ie {
                     OctetDeltaCount => flow.bytes = ipfix_extract_u64(value),
@@ -702,7 +703,8 @@ pub fn extract_ipfix_sampling_rate(record: &IpfixDataRecord) -> Option<u32> {
     let sampling_interval_id: u16 = InformationElement::SamplingInterval.into();
     let sampling_packet_interval_id: u16 = InformationElement::SamplingPacketInterval.into();
     let sampler_random_interval_id: u16 = InformationElement::SamplerRandomInterval.into();
-    for (_, field_type, _, value) in &record.0 {
+    for (field, _, value) in &record.0 {
+        let field_type = &field.information_element_identifier;
         if *field_type == sampling_interval_id
             || *field_type == sampling_packet_interval_id
             || *field_type == sampler_random_interval_id
@@ -816,8 +818,8 @@ impl SFlowV5Context<'_> {
         match &sliced.net {
             Some(InternetSlice::Ipv4(ipv4_slice)) => {
                 let ipv4_header = ipv4_slice.header();
-                flow.src_addr = Some(IpAddr::V4(ipv4_header.source_addr().into()));
-                flow.dst_addr = Some(IpAddr::V4(ipv4_header.destination_addr().into()));
+                flow.src_addr = Some(IpAddr::V4(ipv4_header.source_addr()));
+                flow.dst_addr = Some(IpAddr::V4(ipv4_header.destination_addr()));
                 flow.proto = Some(ipv4_header.protocol().0);
                 flow.ip_tos = Some(ipv4_header.dcp().value());
                 flow.ip_ttl = Some(ipv4_header.ttl());
@@ -829,8 +831,8 @@ impl SFlowV5Context<'_> {
             }
             Some(InternetSlice::Ipv6(ipv6_slice)) => {
                 let ipv6_header = ipv6_slice.header();
-                flow.src_addr = Some(IpAddr::V6(ipv6_header.source_addr().into()));
-                flow.dst_addr = Some(IpAddr::V6(ipv6_header.destination_addr().into()));
+                flow.src_addr = Some(IpAddr::V6(ipv6_header.source_addr()));
+                flow.dst_addr = Some(IpAddr::V6(ipv6_header.destination_addr()));
                 flow.proto = Some(ipv6_slice.payload().ip_number.0);
                 flow.ip_ttl = Some(ipv6_header.hop_limit());
                 flow.ipv6_flow_label = Some(ipv6_header.flow_label().value());

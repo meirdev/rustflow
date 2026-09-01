@@ -22,3 +22,6 @@ rustc-hash = "2.1.1"
 serde = { version = "1.0.228", features = ["derive", "rc"] }
 strum = { version = "0.27.2", features = ["derive"] }
 strum_macros = "0.27.2"
+
+[dev-dependencies]
+hex-literal = "1.1.0"

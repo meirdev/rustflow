@@ -17,8 +17,8 @@ use crate::parquet_sink::ParquetSink;
 
 enum WriterKind {
     Ndjson(BufWriter<Box<dyn Write + Send>>),
-    Csv(CsvWriter<Box<dyn Write + Send>>),
-    Parquet(ParquetSink),
+    Csv(Box<CsvWriter<Box<dyn Write + Send>>>),
+    Parquet(Box<ParquetSink>),
     Protobuf(BufWriter<Box<dyn Write + Send>>),
     Discard,
 }
@@ -476,13 +476,18 @@ fn write_csv_record(
 
 /// Open the sink for the window containing `now` and return it together with
 /// the timestamp of the next rotation (`None` when rotation is disabled).
+/// A newly created writer: the writer itself, the timestamp of the next
+/// rotation (`None` when rotation is disabled), and the (temporary, final)
+/// path pair being written (`None` for non-file destinations).
+type CreatedWriter = (WriterKind, Option<i64>, Option<(PathBuf, PathBuf)>);
+
 fn create_writer(
     destination: &Destination,
     serialization: SerializationFormat,
     enriched_fields: &[String],
     interval_secs: Option<i64>,
     now: DateTime<Utc>,
-) -> io::Result<(WriterKind, Option<i64>, Option<(PathBuf, PathBuf)>)> {
+) -> io::Result<CreatedWriter> {
     let (path, rotate_at) = match destination {
         Destination::Stdout => (None, None),
         Destination::File(path) => (Some(path.clone()), None),
@@ -545,11 +550,11 @@ fn create_writer(
                 headers.push(field.as_str());
             }
             w.write_record(&headers)?;
-            WriterKind::Csv(w)
+            WriterKind::Csv(Box::new(w))
         }
-        SerializationFormat::Parquet => WriterKind::Parquet(
+        SerializationFormat::Parquet => WriterKind::Parquet(Box::new(
             ParquetSink::new(output, enriched_fields).map_err(io::Error::other)?,
-        ),
+        )),
         SerializationFormat::Protobuf => {
             WriterKind::Protobuf(BufWriter::with_capacity(WRITE_BUFFER_BYTES, output))
         }

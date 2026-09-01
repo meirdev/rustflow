@@ -151,7 +151,7 @@ impl Exporter {
 
             let mut encoded = Vec::new();
             packet.encode(&mut encoded);
-            self.socket.send_to(&encoded, &collector_addr)?;
+            self.socket.send_to(&encoded, collector_addr)?;
 
             self.sequence_number.fetch_add(chunk_len, Ordering::SeqCst);
             total_exported += chunk_len;

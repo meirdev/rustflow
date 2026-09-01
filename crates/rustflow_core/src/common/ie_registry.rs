@@ -606,7 +606,7 @@ impl IERegistry {
         ];
 
         elements.iter().for_each(|(id, name, data_type)| {
-            self.add_element(*id, None, name.to_string(), data_type.clone());
+            self.add_element(*id, None, name.to_string(), *data_type);
         });
     }
 }

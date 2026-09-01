@@ -140,11 +140,11 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        if let Some(entry) = self.map.get_mut(key) {
-            if entry.inserted_at.elapsed() < self.timeout {
-                entry.inserted_at = Instant::now();
-                return true;
-            }
+        if let Some(entry) = self.map.get_mut(key)
+            && entry.inserted_at.elapsed() < self.timeout
+        {
+            entry.inserted_at = Instant::now();
+            return true;
         }
         false
     }

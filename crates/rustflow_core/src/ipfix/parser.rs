@@ -1,7 +1,7 @@
 use std::fmt::{self, Display, Formatter};
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::ops::RangeInclusive;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use chrono::{DateTime, Utc};
 use macaddr::MacAddr6;
@@ -16,10 +16,11 @@ use primitive_types::U256;
 use serde::Serialize;
 use strum::EnumString;
 
+use crate::common::InformationElement;
 use crate::common::ie_registry::{DataType, IERegistry};
 use crate::common::parser::{
     ipv4_addr, ipv6_addr, macaddr6, string, timestamp_micros, timestamp_millis, timestamp_nanos,
-    timestamp_secs, vector,
+    timestamp_secs, vector, verify_version,
 };
 use crate::common::serializer::serialize_as_hex;
 use crate::common::timeout_map::TimeoutHashMap;
@@ -224,12 +225,7 @@ impl IpfixParser {
             let (input, field_length) = parse_field_length(field.field_length, remaining)?;
             let (input, value) =
                 self.parse_field_value(observation_domain_id, data_type, field_length, input)?;
-            values.push((
-                field.enterprise_number,
-                field.information_element_identifier,
-                name,
-                value,
-            ));
+            values.push((*field, name, value));
             remaining = input;
         }
 
@@ -441,6 +437,20 @@ pub struct IpfixPacket {
     pub sets: Vec<Set>,
 }
 
+impl IpfixPacket {
+    pub fn new(
+        export_time: DateTime<Utc>,
+        sequence_number: u32,
+        observation_domain_id: u32,
+        sets: Vec<Set>,
+    ) -> Self {
+        Self {
+            header: Header::new(export_time, sequence_number, observation_domain_id),
+            sets,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Header {
     pub version: u16,
@@ -450,8 +460,24 @@ pub struct Header {
     pub observation_domain_id: u32,
 }
 
+impl Header {
+    pub fn new(
+        export_time: DateTime<Utc>,
+        sequence_number: u32,
+        observation_domain_id: u32,
+    ) -> Self {
+        Self {
+            version: IPFIX_VERSION,
+            length: 0,
+            export_time,
+            sequence_number,
+            observation_domain_id,
+        }
+    }
+}
+
 fn parse_header(input: &[u8]) -> IResult<&[u8], Header> {
-    let (input, version) = be_u16(input)?;
+    let (input, version) = verify_version(input, IPFIX_VERSION)?;
     let (input, length) = be_u16(input)?;
     let (input, export_time) = timestamp_secs(input)?;
     let (input, sequence_number) = be_u32(input)?;
@@ -476,6 +502,16 @@ pub struct Set {
     pub records: Vec<Record>,
 }
 
+impl Set {
+    pub fn new(id: u16, records: Vec<Record>) -> Self {
+        Self {
+            id,
+            length: 0,
+            records,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SetHeader {
     pub set_id: u16,
@@ -496,6 +532,17 @@ pub struct TemplateRecord {
     pub template_id: u16,
     pub field_count: u16,
     pub fields: Vec<FieldSpecifier>,
+}
+
+impl TemplateRecord {
+    pub fn new(template_id: u16, fields: Vec<FieldSpecifier>) -> Self {
+        let field_count = fields.len() as u16;
+        Self {
+            template_id,
+            field_count,
+            fields,
+        }
+    }
 }
 
 fn parse_template_record(input: &[u8]) -> IResult<&[u8], TemplateRecord> {
@@ -522,6 +569,18 @@ pub struct OptionsTemplateRecord {
     pub fields: Vec<FieldSpecifier>,
 }
 
+impl OptionsTemplateRecord {
+    pub fn new(template_id: u16, scope_field_count: u16, fields: Vec<FieldSpecifier>) -> Self {
+        let field_count = fields.len() as u16;
+        Self {
+            template_id,
+            field_count,
+            scope_field_count,
+            fields,
+        }
+    }
+}
+
 fn parse_options_template_record(input: &[u8]) -> IResult<&[u8], OptionsTemplateRecord> {
     let (input, template_id) =
         verify(be_u16, |i| IPFIX_VALID_TEMPLATE_ID.contains(i)).parse(input)?;
@@ -540,12 +599,43 @@ fn parse_options_template_record(input: &[u8]) -> IResult<&[u8], OptionsTemplate
     ))
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 pub struct FieldSpecifier {
     pub enterprise_bit: bool,
     pub information_element_identifier: u16,
     pub field_length: u16,
     pub enterprise_number: Option<u32>,
+}
+
+impl FieldSpecifier {
+    /// A field specifier for an IANA-registered Information Element
+    pub fn iana(information_element_identifier: u16, field_length: u16) -> Self {
+        Self {
+            enterprise_bit: false,
+            information_element_identifier,
+            field_length,
+            enterprise_number: None,
+        }
+    }
+
+    /// A field specifier for a known IANA [`InformationElement`].
+    pub fn from_ie(information_element: InformationElement, field_length: u16) -> Self {
+        Self::iana(information_element.into(), field_length)
+    }
+
+    /// A field specifier for an enterprise-specific Information Element
+    pub fn enterprise(
+        information_element_identifier: u16,
+        field_length: u16,
+        enterprise_number: u32,
+    ) -> Self {
+        Self {
+            enterprise_bit: true,
+            information_element_identifier,
+            field_length,
+            enterprise_number: Some(enterprise_number),
+        }
+    }
 }
 
 fn parse_field_specifier(input: &[u8]) -> IResult<&[u8], FieldSpecifier> {
@@ -569,7 +659,20 @@ fn parse_field_specifier(input: &[u8]) -> IResult<&[u8], FieldSpecifier> {
 }
 
 #[derive(Debug, Clone)]
-pub struct DataRecord(pub Vec<(Option<u32>, u16, Arc<str>, FieldValue)>);
+pub struct DataRecord(pub Vec<(FieldSpecifier, Arc<str>, FieldValue)>);
+
+static EMPTY_NAME: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from(""));
+
+impl DataRecord {
+    pub fn new(values: Vec<FieldValue>) -> Self {
+        Self(
+            values
+                .into_iter()
+                .map(|value| (FieldSpecifier::iana(0, 0), EMPTY_NAME.clone(), value))
+                .collect(),
+        )
+    }
+}
 
 impl Serialize for DataRecord {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -579,7 +682,7 @@ impl Serialize for DataRecord {
         use serde::ser::SerializeMap;
 
         let mut map = serializer.serialize_map(Some(self.0.len()))?;
-        for (_, _, key, value) in &self.0 {
+        for (_, key, value) in &self.0 {
             map.serialize_entry(key, value)?;
         }
 
