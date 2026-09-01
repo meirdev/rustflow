@@ -46,7 +46,7 @@ impl NetflowProcessor {
         Self {
             ie_registry: IERegistry::new_with_iana_elements(),
             template_timeout: Duration::from_secs(600),
-            v5_parser: NetFlowV5Parser::default(),
+            v5_parser: NetFlowV5Parser,
             v9_parsers: FxHashMap::default(),
             ipfix_parsers: FxHashMap::default(),
             sampling_cache: SamplingRateCache::default(),
@@ -90,10 +90,10 @@ impl NetflowProcessor {
                     let cache_key = (src, parsed.header.source_id);
                     for flow_set in &parsed.flow_sets {
                         for record in &flow_set.records {
-                            if let V9Record::OptionsData(data_record) = record {
-                                if let Some(rate) = extract_v9_sampling_rate(data_record) {
-                                    self.sampling_cache.set(cache_key, rate);
-                                }
+                            if let V9Record::OptionsData(data_record) = record
+                                && let Some(rate) = extract_v9_sampling_rate(data_record)
+                            {
+                                self.sampling_cache.set(cache_key, rate);
                             }
                         }
                     }
@@ -112,10 +112,10 @@ impl NetflowProcessor {
                     let cache_key = (src, parsed.header.observation_domain_id);
                     for set in &parsed.sets {
                         for record in &set.records {
-                            if let IpfixRecord::OptionsData(data_record) = record {
-                                if let Some(rate) = extract_ipfix_sampling_rate(data_record) {
-                                    self.sampling_cache.set(cache_key, rate);
-                                }
+                            if let IpfixRecord::OptionsData(data_record) = record
+                                && let Some(rate) = extract_ipfix_sampling_rate(data_record)
+                            {
+                                self.sampling_cache.set(cache_key, rate);
                             }
                         }
                     }
@@ -138,8 +138,7 @@ impl NetflowProcessor {
         packet: &NetflowPacket,
         time_received_ns: Option<i64>,
     ) -> Vec<CommonFlow> {
-        let mut flows = Vec::new();
-        flows.reserve(estimated_flow_count(packet));
+        let mut flows = Vec::with_capacity(estimated_flow_count(packet));
 
         match packet {
             NetflowPacket::V5(parsed) => {
@@ -333,7 +332,7 @@ pub struct SflowProcessor {
 impl SflowProcessor {
     pub fn new() -> Self {
         Self {
-            parser: SflowV5Parser::default(),
+            parser: SflowV5Parser,
         }
     }
 

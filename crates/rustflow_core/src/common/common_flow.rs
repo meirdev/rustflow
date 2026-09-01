@@ -818,8 +818,8 @@ impl SFlowV5Context<'_> {
         match &sliced.net {
             Some(InternetSlice::Ipv4(ipv4_slice)) => {
                 let ipv4_header = ipv4_slice.header();
-                flow.src_addr = Some(IpAddr::V4(ipv4_header.source_addr().into()));
-                flow.dst_addr = Some(IpAddr::V4(ipv4_header.destination_addr().into()));
+                flow.src_addr = Some(IpAddr::V4(ipv4_header.source_addr()));
+                flow.dst_addr = Some(IpAddr::V4(ipv4_header.destination_addr()));
                 flow.proto = Some(ipv4_header.protocol().0);
                 flow.ip_tos = Some(ipv4_header.dcp().value());
                 flow.ip_ttl = Some(ipv4_header.ttl());
@@ -831,8 +831,8 @@ impl SFlowV5Context<'_> {
             }
             Some(InternetSlice::Ipv6(ipv6_slice)) => {
                 let ipv6_header = ipv6_slice.header();
-                flow.src_addr = Some(IpAddr::V6(ipv6_header.source_addr().into()));
-                flow.dst_addr = Some(IpAddr::V6(ipv6_header.destination_addr().into()));
+                flow.src_addr = Some(IpAddr::V6(ipv6_header.source_addr()));
+                flow.dst_addr = Some(IpAddr::V6(ipv6_header.destination_addr()));
                 flow.proto = Some(ipv6_slice.payload().ip_number.0);
                 flow.ip_ttl = Some(ipv6_header.hop_limit());
                 flow.ipv6_flow_label = Some(ipv6_header.flow_label().value());

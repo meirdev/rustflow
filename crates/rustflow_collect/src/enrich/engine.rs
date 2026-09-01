@@ -672,7 +672,7 @@ mod tests {
         let tries = PrefixEnrichment::load_from_csv(&path, "prefix").unwrap();
         let net = Ipv4Net::new(Ipv4Addr::new(10, 0, 0, 1), 32).unwrap();
         let (_, data) = tries.ipv4.get_lpm(&net).unwrap();
-        assert!(data.fields.get("asn").is_none());
+        assert!(!data.fields.contains_key("asn"));
         assert_eq!(data.fields.get("org").map(String::as_str), Some("ACME"));
         std::fs::remove_file(&path).ok();
     }

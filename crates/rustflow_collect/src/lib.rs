@@ -183,10 +183,10 @@ fn read_netflow_pcap_raw(
     while let Some(pkt) = reader.next_packet() {
         match pkt {
             Ok(packet) => {
-                if let Ok((src, payload)) = parse_udp_packet(&packet.data) {
-                    if let Some(parsed) = processor.parse_raw(src, &payload) {
-                        write_netflow_packet_raw(&parsed, output);
-                    }
+                if let Some((src, payload)) = parse_udp_packet(&packet.data)
+                    && let Some(parsed) = processor.parse_raw(src, &payload)
+                {
+                    write_netflow_packet_raw(&parsed, output);
                 }
             }
             Err(err) => {
@@ -347,6 +347,9 @@ impl Encoder {
     }
 }
 
+// One socket-reader setup call; the parameters are all distinct wiring, not a
+// bag worth its own struct for a single extra argument.
+#[allow(clippy::too_many_arguments)]
 fn read_netflow_socket(
     host: &str,
     port: u16,
@@ -478,10 +481,10 @@ fn read_sflow_pcap_raw(file_path: &str, output: &Arc<OutputWriter>) {
     while let Some(pkt) = reader.next_packet() {
         match pkt {
             Ok(packet) => {
-                if let Ok((_src, payload)) = parse_udp_packet(&packet.data) {
-                    if let Some(parsed) = processor.parse_raw(&payload) {
-                        write_sflow_packet_raw(&parsed, output);
-                    }
+                if let Some((_src, payload)) = parse_udp_packet(&packet.data)
+                    && let Some(parsed) = processor.parse_raw(&payload)
+                {
+                    write_sflow_packet_raw(&parsed, output);
                 }
             }
             Err(err) => {

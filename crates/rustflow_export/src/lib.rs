@@ -130,10 +130,10 @@ pub fn run(args: ExportArgs) -> Result<()> {
         if last_check.elapsed() >= check_interval {
             // Check for expired flows
             let expired_flows = flow_cache.check_expired_flows();
-            if !expired_flows.is_empty() {
-                if let Err(e) = exporter.send_flows(expired_flows) {
-                    error!("Failed to export flows: {}", e);
-                }
+            if !expired_flows.is_empty()
+                && let Err(e) = exporter.send_flows(expired_flows)
+            {
+                error!("Failed to export flows: {}", e);
             }
 
             // Check if we need to refresh templates

@@ -1,8 +1,6 @@
 use std::net::Ipv4Addr;
-use std::sync::{Arc, LazyLock};
 
 use chrono::{DateTime, Utc};
-use rustflow_core::common::InformationElement;
 use rustflow_core::ipfix::parser::{DataRecord, FieldValue};
 
 #[derive(Debug, Clone)]
@@ -27,8 +25,8 @@ impl FlowData {
             FieldValue::Unsigned8(self.protocol),
             FieldValue::Unsigned16(self.source_port),
             FieldValue::Unsigned16(self.destination_port),
-            FieldValue::Unsigned64(self.octets),
-            FieldValue::Unsigned64(self.packets),
+            FieldValue::Unsigned64(self.octet_count),
+            FieldValue::Unsigned64(self.packet_count),
             FieldValue::Unsigned16(self.tcp_flags),
             FieldValue::DateTimeMilliseconds(self.flow_start),
             FieldValue::DateTimeMilliseconds(self.flow_end),

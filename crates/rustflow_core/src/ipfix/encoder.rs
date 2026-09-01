@@ -153,7 +153,7 @@ impl Encode for FieldValue {
             FieldValue::Float32(v) => buf.put_f32(*v),
             FieldValue::Float64(v) => buf.put_f64(*v),
             FieldValue::Boolean(v) => buf.put_u8(if *v { 1 } else { 2 }),
-            FieldValue::MacAddress(v) => buf.put_slice(&v.as_bytes()),
+            FieldValue::MacAddress(v) => buf.put_slice(v.as_bytes()),
             FieldValue::OctetArray(v) => buf.put_slice(v),
             FieldValue::String(v) => buf.put_slice(v.as_bytes()),
             FieldValue::DateTimeSeconds(v) => buf.put_u32(v.timestamp() as u32),
