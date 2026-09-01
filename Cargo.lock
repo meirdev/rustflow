@@ -1443,7 +1443,6 @@ dependencies = [
  "anyhow",
  "clap",
  "ctrlc",
- "ipnet",
  "libc",
  "prometheus",
  "socket2",

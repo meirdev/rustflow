@@ -1,7 +1,7 @@
 //! High-throughput UDP relay with optional exporter source preservation.
 
 use std::collections::HashMap;
-use std::net::{IpAddr, SocketAddr, UdpSocket};
+use std::net::{SocketAddr, UdpSocket};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -9,7 +9,6 @@ use std::{io, thread};
 
 use anyhow::{Context, Result, bail};
 use clap::Args as ClapArgs;
-use ipnet::IpNet;
 use prometheus::{Encoder, IntCounter, IntCounterVec, Opts, Registry, TextEncoder};
 use tiny_http::{Header, Response, Server};
 
@@ -27,10 +26,6 @@ pub struct RelayArgs {
     /// (non-local addresses require Linux and CAP_NET_RAW)
     #[arg(long, short = 's')]
     preserve_source: bool,
-
-    /// Only accept exporter IPs in this CIDR; may be specified more than once
-    #[arg(long = "allow-source", value_name = "CIDR")]
-    allow_sources: Vec<IpNet>,
 
     /// Prometheus metrics HTTP bind address
     #[arg(long, default_value = "0.0.0.0:9090")]
@@ -58,7 +53,6 @@ struct Metrics {
     socket_errors_total: IntCounterVec,
     target: String,
     receive: SocketStats,
-    rejected: IntCounter,
 }
 
 impl Metrics {
@@ -94,19 +88,11 @@ impl Metrics {
             ),
             LABELS,
         )?;
-        let rejected_packets_total = IntCounterVec::new(
-            Opts::new(
-                "rustflow_relay_rejected_packets_total",
-                "UDP datagrams rejected by the source allowlist",
-            ),
-            &["socket", "target"],
-        )?;
 
         registry.register(Box::new(packets_total.clone()))?;
         registry.register(Box::new(bytes_total.clone()))?;
         registry.register(Box::new(dropped_packets_total.clone()))?;
         registry.register(Box::new(socket_errors_total.clone()))?;
-        registry.register(Box::new(rejected_packets_total.clone()))?;
 
         let target = target.to_string();
         let receive = socket_stats(
@@ -118,7 +104,6 @@ impl Metrics {
             listen,
             &target,
         );
-        let rejected = rejected_packets_total.with_label_values(&[&listen.to_string(), &target]);
         Ok(Metrics {
             registry,
             packets_total,
@@ -127,7 +112,6 @@ impl Metrics {
             socket_errors_total,
             target,
             receive,
-            rejected,
         })
     }
 
@@ -224,11 +208,6 @@ pub fn run(args: RelayArgs) -> Result<()> {
         };
         metrics.receive.packets.inc();
         metrics.receive.bytes.inc_by(len as u64);
-        if !allowed(source.ip(), &args.allow_sources) {
-            metrics.rejected.inc();
-            continue;
-        }
-
         let output = if let Some(output) = shared_output.as_mut() {
             output
         } else {
@@ -263,10 +242,6 @@ pub fn run(args: RelayArgs) -> Result<()> {
         }
     }
     Ok(())
-}
-
-fn allowed(source: IpAddr, networks: &[IpNet]) -> bool {
-    networks.is_empty() || networks.iter().any(|network| network.contains(&source))
 }
 
 fn create_output(
@@ -409,16 +384,4 @@ fn start_metrics_server(metrics: Arc<Metrics>, address: SocketAddr) -> Result<()
             }
         })?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn source_allowlist_defaults_open_and_matches_cidrs() {
-        let source = "192.0.2.3".parse().unwrap();
-        assert!(allowed(source, &[]));
-        assert!(allowed(source, &["192.0.2.0/24".parse().unwrap()]));
-        assert!(!allowed(source, &["198.51.100.0/24".parse().unwrap()]));
-    }
 }
