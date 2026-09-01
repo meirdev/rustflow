@@ -1,0 +1,16 @@
+[package]
+name = "rustflow_relay"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "High-performance UDP relay for RustFlow"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+ctrlc = { version = "3.5.2", features = ["termination"] }
+libc = "0.2"
+prometheus = "0.14.0"
+socket2 = "0.6"
+tiny_http = "0.12"

@@ -77,6 +77,7 @@ rustflow collect -t netflow --pcap capture.pcap
 | `rustflow collect`  | Collect NetFlow, IPFIX, or sFlow traffic       |
 | `rustflow export`   | Capture network traffic and export it as IPFIX |
 | `rustflow generate` | Generate synthetic IPFIX traffic               |
+| `rustflow relay`    | Relay UDP flow traffic to another collector    |
 
 Run:
 
