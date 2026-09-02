@@ -9,7 +9,7 @@ use nom::bytes::complete::take;
 use nom::combinator::{cond, map, map_parser, verify};
 use nom::multi::{count, many0};
 use nom::number::complete::{
-    be_f32, be_f64, be_i8, be_i16, be_i32, be_i64, be_u8, be_u16, be_u32, be_u64,
+    be_f32, be_f64, be_i8, be_i16, be_i24, be_i32, be_i64, be_u8, be_u16, be_u24, be_u32, be_u64,
 };
 use nom::{IResult, Parser, ToUsize};
 use primitive_types::U256;
@@ -94,21 +94,15 @@ impl IpfixParser {
 
         if let Some(t) = self.templates.get(&key) {
             let (input, records) =
-                many0(|i| self.parse_record_from_fields(observation_domain_id, &t.fields, 0, i))
+                many0(|i| self.parse_record_from_fields(observation_domain_id, &t.fields, i))
                     .parse(input)?;
             return Ok((input, records.into_iter().map(Record::Data).collect()));
         }
 
         if let Some(t) = self.options_templates.get(&key) {
-            let (input, records) = many0(|i| {
-                self.parse_record_from_fields(
-                    observation_domain_id,
-                    &t.fields,
-                    t.scope_field_count as usize,
-                    i,
-                )
-            })
-            .parse(input)?;
+            let (input, records) =
+                many0(|i| self.parse_record_from_fields(observation_domain_id, &t.fields, i))
+                    .parse(input)?;
             return Ok((
                 input,
                 records.into_iter().map(Record::OptionsData).collect(),
@@ -206,21 +200,15 @@ impl IpfixParser {
         &self,
         observation_domain_id: u32,
         fields: &[FieldSpecifier],
-        scope_count: usize,
         input: &'a [u8],
     ) -> IResult<&'a [u8], DataRecord> {
         let mut values = Vec::with_capacity(fields.len());
         let mut remaining = input;
 
-        for (idx, field) in fields.iter().enumerate() {
-            let (data_type, name): (DataType, Arc<str>) = if idx < scope_count {
-                (
-                    DataType::Unsigned,
-                    Arc::from(field.information_element_identifier.to_string()),
-                )
-            } else {
-                self.lookup_field_info(field)
-            };
+        for field in fields {
+            // RFC 7011 section 3.4.2.1: scope fields are ordinary Information
+            // Elements, so they resolve through the registry like any other field.
+            let (data_type, name): (DataType, Arc<str>) = self.lookup_field_info(field);
 
             let (input, field_length) = parse_field_length(field.field_length, remaining)?;
             let (input, value) =
@@ -245,10 +233,17 @@ impl IpfixParser {
             (DataType::Unsigned, 2) => map(be_u16, FieldValue::Unsigned16).parse(input),
             (DataType::Unsigned, 4) => map(be_u32, FieldValue::Unsigned32).parse(input),
             (DataType::Unsigned, 8) => map(be_u64, FieldValue::Unsigned64).parse(input),
+            // RFC 7011 section 6.2: reduced-size encoding
+            (DataType::Unsigned, 3) => map(be_u24, FieldValue::Unsigned32).parse(input),
+            (DataType::Unsigned, len @ 5..=7) => {
+                map(be_uint(len), FieldValue::Unsigned64).parse(input)
+            }
             (DataType::Signed, 1) => map(be_i8, FieldValue::Signed8).parse(input),
             (DataType::Signed, 2) => map(be_i16, FieldValue::Signed16).parse(input),
             (DataType::Signed, 4) => map(be_i32, FieldValue::Signed32).parse(input),
             (DataType::Signed, 8) => map(be_i64, FieldValue::Signed64).parse(input),
+            (DataType::Signed, 3) => map(be_i24, FieldValue::Signed32).parse(input),
+            (DataType::Signed, len @ 5..=7) => map(be_int(len), FieldValue::Signed64).parse(input),
             (DataType::Float, 4) => map(be_f32, FieldValue::Float32).parse(input),
             (DataType::Float, 8) => map(be_f64, FieldValue::Float64).parse(input),
             (DataType::MacAddress, 6) => map(macaddr6, FieldValue::MacAddress).parse(input),
@@ -816,6 +811,29 @@ fn boolean(input: &[u8]) -> IResult<&[u8], bool> {
     map(verify(be_u8, |v| *v == 1 || *v == 2), |v| v == 1).parse(input)
 }
 
+/// Big-endian unsigned integer of a reduced size (RFC 7011 section 6.2), for
+/// the 5-7 byte widths nom has no built-in parser for.
+fn be_uint(length: usize) -> impl Fn(&[u8]) -> IResult<&[u8], u64> {
+    move |input| {
+        map(take(length), |bytes: &[u8]| {
+            bytes.iter().fold(0u64, |acc, b| (acc << 8) | u64::from(*b))
+        })
+        .parse(input)
+    }
+}
+
+/// Big-endian two's-complement signed integer of a reduced size (RFC 7011
+/// section 6.2): the most significant bit of the encoded value is the sign bit.
+fn be_int(length: usize) -> impl Fn(&[u8]) -> IResult<&[u8], i64> {
+    move |input| {
+        map(be_uint(length), |v| {
+            let shift = 64 - length * 8;
+            ((v << shift) as i64) >> shift
+        })
+        .parse(input)
+    }
+}
+
 fn parse_field_length(field_length: u16, input: &[u8]) -> IResult<&[u8], usize> {
     if field_length != IPFIX_VARIABLE_LENGTH {
         return Ok((input, field_length as usize));
@@ -827,5 +845,108 @@ fn parse_field_length(field_length: u16, input: &[u8]) -> IResult<&[u8], usize> 
         Ok((input, first_byte as usize))
     } else {
         map(be_u16, |l| l as usize).parse(input)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn message(sets: &[Vec<u8>]) -> Vec<u8> {
+        let length = IPFIX_HEADER_SIZE + sets.iter().map(Vec::len).sum::<usize>();
+        let mut buf = Vec::with_capacity(length);
+        buf.extend_from_slice(&IPFIX_VERSION.to_be_bytes());
+        buf.extend_from_slice(&(length as u16).to_be_bytes());
+        buf.extend_from_slice(&0u32.to_be_bytes()); // export_time
+        buf.extend_from_slice(&0u32.to_be_bytes()); // sequence_number
+        buf.extend_from_slice(&1u32.to_be_bytes()); // observation_domain_id
+        for set in sets {
+            buf.extend_from_slice(set);
+        }
+        buf
+    }
+
+    fn set(set_id: u16, payload: &[u8]) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(SET_HEADER_SIZE + payload.len());
+        buf.extend_from_slice(&set_id.to_be_bytes());
+        buf.extend_from_slice(&((SET_HEADER_SIZE + payload.len()) as u16).to_be_bytes());
+        buf.extend_from_slice(payload);
+        buf
+    }
+
+    fn field(id: u16, length: u16) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(4);
+        buf.extend_from_slice(&id.to_be_bytes());
+        buf.extend_from_slice(&length.to_be_bytes());
+        buf
+    }
+
+    #[test]
+    fn reduced_size_unsigned_and_signed() {
+        let mut registry = IERegistry::new();
+        registry.add_element(100, None, "testUnsigned", DataType::Unsigned);
+        registry.add_element(101, None, "testSigned", DataType::Signed);
+        let mut parser = IpfixParser::new(registry, std::time::Duration::from_mins(10));
+
+        let mut template = Vec::new();
+        template.extend_from_slice(&256u16.to_be_bytes());
+        template.extend_from_slice(&4u16.to_be_bytes());
+        template.extend_from_slice(&field(100, 3));
+        template.extend_from_slice(&field(100, 7));
+        template.extend_from_slice(&field(101, 3));
+        template.extend_from_slice(&field(101, 5));
+
+        let data = [
+            &[0x01, 0x02, 0x03][..],                     // 0x010203
+            &[0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00], // 256
+            &[0xff, 0xff, 0xff],                         // -1
+            &[0xff, 0xff, 0xff, 0xff, 0xfe],             // -2
+        ]
+        .concat();
+
+        let msg = message(&[set(IPFIX_TEMPLATE_SET_ID, &template), set(256, &data)]);
+        let (rest, packet) = parser.parse(&msg).unwrap();
+        assert!(rest.is_empty());
+
+        let Record::Data(record) = &packet.sets[1].records[0] else {
+            panic!("expected data record");
+        };
+        assert!(matches!(record.0[0].2, FieldValue::Unsigned32(0x010203)));
+        assert!(matches!(record.0[1].2, FieldValue::Unsigned64(256)));
+        assert!(matches!(record.0[2].2, FieldValue::Signed32(-1)));
+        assert!(matches!(record.0[3].2, FieldValue::Signed64(-2)));
+    }
+
+    #[test]
+    fn options_scope_fields_resolve_via_registry() {
+        let mut parser = IpfixParser::default();
+
+        let mut template = Vec::new();
+        template.extend_from_slice(&257u16.to_be_bytes());
+        template.extend_from_slice(&2u16.to_be_bytes()); // field_count
+        template.extend_from_slice(&1u16.to_be_bytes()); // scope_field_count
+        template.extend_from_slice(&field(302, 2)); // selectorId, reduced-size
+        template.extend_from_slice(&field(305, 4)); // samplingPacketInterval
+
+        let data = [
+            &7u16.to_be_bytes()[..],    // selectorId = 7
+            &1000u32.to_be_bytes()[..], // samplingPacketInterval = 1000
+        ]
+        .concat();
+
+        let msg = message(&[
+            set(IPFIX_OPTIONS_TEMPLATE_SET_ID, &template),
+            set(257, &data),
+        ]);
+        let (rest, packet) = parser.parse(&msg).unwrap();
+        assert!(rest.is_empty());
+
+        let Record::OptionsData(record) = &packet.sets[1].records[0] else {
+            panic!("expected options data record");
+        };
+        assert_eq!(&*record.0[0].1, "selectorId");
+        assert!(matches!(record.0[0].2, FieldValue::Unsigned16(7)));
+        assert_eq!(&*record.0[1].1, "samplingPacketInterval");
+        assert!(matches!(record.0[1].2, FieldValue::Unsigned32(1000)));
     }
 }
