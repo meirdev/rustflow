@@ -48,11 +48,8 @@ impl NetflowV9Parser {
 
     pub fn parse<'a>(&mut self, input: &'a [u8]) -> IResult<&'a [u8], NetFlowV9Packet> {
         let (input, header) = parse_header(input)?;
-        let (input, flow_sets) = count(
-            |i| self.parse_flow_set(header.source_id, i),
-            header.count.to_usize(),
-        )
-        .parse(input)?;
+        let (input, flow_sets) =
+            many0(|i| self.parse_flow_set(header.source_id, i)).parse(input)?;
 
         Ok((input, NetFlowV9Packet { header, flow_sets }))
     }
