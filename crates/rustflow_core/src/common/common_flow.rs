@@ -933,8 +933,8 @@ impl SFlowV5Context<'_> {
 
     fn apply_extended_gateway(&self, flow: &mut CommonFlow, gateway: &ExtendedGateway) {
         flow.src_as = Some(gateway.src_as);
-        flow.dst_as = match &gateway.dst_as_path {
-            AsPathType::AsSequence(as_seq) => as_seq.last().copied(),
+        flow.dst_as = match gateway.dst_as_path.last() {
+            Some(AsPathType::AsSequence(as_seq)) => as_seq.last().copied(),
             _ => None,
         };
     }

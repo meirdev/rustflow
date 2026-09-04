@@ -57,20 +57,7 @@ pub struct SFlowV5 {
 
 fn parse_sflow_v5(input: &[u8]) -> IResult<&[u8], SFlowV5> {
     let (input, version) = verify(be_u32, |i| *i == SFLOW_V5_VERSION).parse(input)?;
-    let (input, agent_address_type) = be_u32(input)?;
-
-    let (input, agent_address) = match agent_address_type {
-        IPV4 => {
-            let (input, addr) = be_u32(input)?;
-            (input, IpAddr::V4(Ipv4Addr::from(addr)))
-        }
-        IPV6 => {
-            let (input, addr) = be_u128(input)?;
-            (input, IpAddr::V6(Ipv6Addr::from(addr)))
-        }
-        _ => fail().parse(input)?,
-    };
-
+    let (input, agent_address) = parse_address(input)?;
     let (input, sub_agent_id) = be_u32(input)?;
     let (input, sequence_number) = be_u32(input)?;
     let (input, uptime) = be_u32(input)?;
@@ -94,8 +81,14 @@ fn parse_sflow_v5(input: &[u8]) -> IResult<&[u8], SFlowV5> {
                     Ok((input, Sample::ExpandedFlow(v)))
                 }
                 Ok(SampleFormat::ExpandedCounter) | Ok(SampleFormat::Drop) | Err(_) => {
-                    let (input, header) = parse_sample_header(input)?;
-                    let (input, data) = take(header.length as usize)(input)?;
+                    // Every sample is `data_format` + `opaque sample_data<>`,
+                    // so an unsupported format is skipped by reading only
+                    // the format and length words: `length` already covers
+                    // everything after it, sequence number and source id
+                    // included.
+                    let (input, _format) = be_u32(input)?;
+                    let (input, length) = be_u32(input)?;
+                    let (input, data) = take(length as usize)(input)?;
                     Ok((input, Sample::Unknown(data.to_vec())))
                 }
             }
@@ -435,8 +428,7 @@ pub struct CounterRecord {
 
 fn parse_counter_record(input: &[u8]) -> IResult<&[u8], CounterRecord> {
     let (input, header) = parse_record_header(input)?;
-    let (input, data_length) = be_u32(input)?;
-    let (input, data) = take(data_length as usize)(input)?;
+    let (input, data) = take(header.length as usize)(input)?;
 
     let (_, records) = many1(|v| match CounterType::try_from(header.data_format) {
         Ok(CounterType::IfCounters) => {
@@ -464,7 +456,7 @@ fn parse_counter_record(input: &[u8]) -> IResult<&[u8], CounterRecord> {
             Ok((input, CounterRecordType::Processor(v)))
         }
         Err(_) => {
-            let (input, data) = take(data_length as usize)(v)?;
+            let (input, data) = take(v.len())(v)?;
             Ok((input, CounterRecordType::Unknown(data.to_vec())))
         }
     })
@@ -749,19 +741,23 @@ pub struct ExtendedRouter {
     pub dst_mask: u32,
 }
 
-fn parse_extended_router(input: &[u8]) -> IResult<&[u8], ExtendedRouter> {
-    let (input, nexthop_ip_version) = be_u32(input)?;
-    let (input, nexthop) = match nexthop_ip_version {
+fn parse_address(input: &[u8]) -> IResult<&[u8], IpAddr> {
+    let (input, address_type) = be_u32(input)?;
+    match address_type {
         IPV4 => {
             let (input, addr) = be_u32(input)?;
-            (input, IpAddr::V4(Ipv4Addr::from(addr)))
+            Ok((input, IpAddr::V4(Ipv4Addr::from(addr))))
         }
         IPV6 => {
             let (input, addr) = be_u128(input)?;
-            (input, IpAddr::V6(Ipv6Addr::from(addr)))
+            Ok((input, IpAddr::V6(Ipv6Addr::from(addr))))
         }
-        _ => fail().parse(input)?,
-    };
+        _ => fail().parse(input),
+    }
+}
+
+fn parse_extended_router(input: &[u8]) -> IResult<&[u8], ExtendedRouter> {
+    let (input, nexthop) = parse_address(input)?;
     let (input, src_mask) = be_u32(input)?;
     let (input, dst_mask) = be_u32(input)?;
 
@@ -790,30 +786,37 @@ pub enum AsPathType {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ExtendedGateway {
+    pub nexthop: IpAddr,
     pub r#as: u32,
     pub src_as: u32,
     pub src_peer_as: u32,
-    pub dst_as_path: AsPathType,
+    pub dst_as_path: Vec<AsPathType>,
     pub communities: Vec<u32>,
     pub localpref: u32,
 }
 
+fn parse_as_path_segment(input: &[u8]) -> IResult<&[u8], AsPathType> {
+    let (input, segment_type) = map_res(be_u32, AsPathSegmentType::try_from).parse(input)?;
+    let (input, length) = be_u32(input)?;
+    let (input, ases) = count(be_u32, length.to_usize()).parse(input)?;
+
+    let segment = match segment_type {
+        AsPathSegmentType::AsSet => AsPathType::AsSet(ases.into_iter().collect()),
+        AsPathSegmentType::AsSequence => AsPathType::AsSequence(ases),
+    };
+
+    Ok((input, segment))
+}
+
 fn parse_extended_gateway(input: &[u8]) -> IResult<&[u8], ExtendedGateway> {
+    let (input, nexthop) = parse_address(input)?;
     let (input, as_) = be_u32(input)?;
     let (input, src_as) = be_u32(input)?;
     let (input, src_peer_as) = be_u32(input)?;
 
-    let (input, dst_as_path_type) = map_res(be_u32, |v| v.try_into()).parse(input)?;
     let (input, dst_as_path_length) = be_u32(input)?;
-
-    let (input, dst_as_path) = map(
-        count(be_u32, dst_as_path_length.to_usize()),
-        |v: Vec<u32>| match dst_as_path_type {
-            AsPathSegmentType::AsSet => AsPathType::AsSet(v.into_iter().collect()),
-            AsPathSegmentType::AsSequence => AsPathType::AsSequence(v.into_iter().collect()),
-        },
-    )
-    .parse(input)?;
+    let (input, dst_as_path) =
+        count(parse_as_path_segment, dst_as_path_length.to_usize()).parse(input)?;
 
     let (input, communities_length) = be_u32(input)?;
     let (input, communities) = count(be_u32, communities_length.to_usize()).parse(input)?;
@@ -823,6 +826,7 @@ fn parse_extended_gateway(input: &[u8]) -> IResult<&[u8], ExtendedGateway> {
     Ok((
         input,
         ExtendedGateway {
+            nexthop,
             r#as: as_,
             src_as,
             src_peer_as,
@@ -835,15 +839,27 @@ fn parse_extended_gateway(input: &[u8]) -> IResult<&[u8], ExtendedGateway> {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ExtendedUser {
+    pub src_charset: u32,
     pub src_user: String,
+    pub dst_charset: u32,
     pub dst_user: String,
 }
 
 fn parse_extended_user(input: &[u8]) -> IResult<&[u8], ExtendedUser> {
+    let (input, src_charset) = be_u32(input)?;
     let (input, src_user) = parse_string(input)?;
+    let (input, dst_charset) = be_u32(input)?;
     let (input, dst_user) = parse_string(input)?;
 
-    Ok((input, ExtendedUser { src_user, dst_user }))
+    Ok((
+        input,
+        ExtendedUser {
+            src_charset,
+            src_user,
+            dst_charset,
+            dst_user,
+        },
+    ))
 }
 
 #[derive(Debug, Clone, Serialize, TryFromPrimitive)]
@@ -1250,6 +1266,10 @@ fn parse_string(input: &[u8]) -> IResult<&[u8], String> {
         String::from_utf8_lossy(v).to_string()
     })
     .parse(input)?;
+
+    // RFC 4506 sections 4.10 and 4.11: pad to a multiple of four bytes.
+    let padding = (4 - (length as usize) % 4) % 4;
+    let (input, _) = take(padding.min(input.len()))(input)?;
 
     Ok((input, string))
 }
