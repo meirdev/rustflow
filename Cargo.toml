@@ -3,17 +3,17 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.12.0"
+version = "0.13.0"
 edition = "2024"
 license = "BSD-3-Clause"
 repository = "https://github.com/meirdev/rustflow"
 
 [workspace.dependencies]
-rustflow_core = { path = "crates/rustflow_core", version = "0.12.0" }
-rustflow = { path = "crates/rustflow", package = "rustflow_lib", version = "0.12.0" }
-rustflow_collect = { path = "crates/rustflow_collect", version = "0.12.0" }
-rustflow_generate = { path = "crates/rustflow_generate", version = "0.12.0" }
-rustflow_export = { path = "crates/rustflow_export", version = "0.12.0" }
+rustflow_core = { path = "crates/rustflow_core", version = "0.13.0" }
+rustflow = { path = "crates/rustflow", package = "rustflow_lib", version = "0.13.0" }
+rustflow_collect = { path = "crates/rustflow_collect", version = "0.13.0" }
+rustflow_generate = { path = "crates/rustflow_generate", version = "0.13.0" }
+rustflow_export = { path = "crates/rustflow_export", version = "0.13.0" }
 
 [profile.release]
 lto = true

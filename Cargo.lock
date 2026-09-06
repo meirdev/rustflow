@@ -1343,7 +1343,7 @@ dependencies = [
 
 [[package]]
 name = "rustflow_cli"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1355,7 +1355,7 @@ dependencies = [
 
 [[package]]
 name = "rustflow_collect"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -1384,7 +1384,7 @@ dependencies = [
 
 [[package]]
 name = "rustflow_core"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "byteorder",
  "bytes",
@@ -1406,7 +1406,7 @@ dependencies = [
 
 [[package]]
 name = "rustflow_export"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1421,7 +1421,7 @@ dependencies = [
 
 [[package]]
 name = "rustflow_generate"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "chrono",
  "clap",
@@ -1432,7 +1432,7 @@ dependencies = [
 
 [[package]]
 name = "rustflow_lib"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "chrono",
  "log",
