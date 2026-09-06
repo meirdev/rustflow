@@ -48,12 +48,6 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-      # `rustflow relay`
-      - name: Publish rustflow_relay
-        run: cargo publish -p rustflow_relay
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
       # the `rustflow` binary
       - name: Publish rustflow_cli
         run: cargo publish -p rustflow_cli

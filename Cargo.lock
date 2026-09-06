@@ -1351,7 +1351,6 @@ dependencies = [
  "rustflow_collect",
  "rustflow_export",
  "rustflow_generate",
- "rustflow_relay",
 ]
 
 [[package]]
@@ -1441,19 +1440,6 @@ dependencies = [
  "rustc-hash",
  "rustflow_core",
  "tokio",
-]
-
-[[package]]
-name = "rustflow_relay"
-version = "0.12.0"
-dependencies = [
- "anyhow",
- "clap",
- "ctrlc",
- "libc",
- "prometheus",
- "socket2",
- "tiny_http",
 ]
 
 [[package]]

@@ -7,7 +7,6 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use rustflow_collect::CollectArgs;
 use rustflow_generate::GenerateArgs;
-use rustflow_relay::RelayArgs;
 
 #[derive(Parser)]
 #[command(name = "rustflow", version)]
@@ -24,9 +23,6 @@ enum Command {
 
     /// Generate synthetic IPFIX traffic for testing a collector
     Generate(Box<GenerateArgs>),
-
-    /// Relay UDP flow datagrams to another collector
-    Relay(Box<RelayArgs>),
 
     /// Capture packets on an interface and export them as IPFIX (Linux only)
     #[cfg(target_os = "linux")]
@@ -55,7 +51,6 @@ fn main() -> Result<()> {
             rustflow_generate::run(*args)?;
             Ok(())
         }
-        Command::Relay(args) => rustflow_relay::run(*args),
         #[cfg(target_os = "linux")]
         Command::Export(args) => rustflow_export::run(*args),
         #[cfg(not(target_os = "linux"))]
