@@ -1,0 +1,21 @@
+[package]
+name = "rustflow_enrich"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Standalone typed flow enrichment with CSV/MMDB sources and reload policies"
+
+[dependencies]
+hashbrown = { version = "0.16", default-features = false }
+csv = "1.4.0"
+ipnet = "2.12.2"
+prefix-trie = "0.10.1"
+maxminddb = "0.30.3"
+duration-str = "0.21.0"
+notify-debouncer-full = "0.7.0"
+serde_json = "1.0.151"
+thiserror = "2.0.20"
+
+[dev-dependencies]
+tempfile = "3"
