@@ -1443,6 +1443,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustflow_sink"
+version = "0.13.0"
+dependencies = [
+ "arrow-array",
+ "arrow-schema",
+ "chrono",
+ "csv",
+ "itoa",
+ "macaddr",
+ "parquet",
+ "prometheus",
+ "prost",
+ "rustflow_core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "rustversion"
 version = "1.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"

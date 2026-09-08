@@ -1,7 +1,7 @@
 //! IPFIX flow generator for testing collectors under load.
 
 use std::fmt;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::str::FromStr;
 use std::time::{Duration, Instant};
 
@@ -309,8 +309,21 @@ impl IpfixGenerator {
             ));
         }
 
-        let socket = UdpSocket::bind("0.0.0.0:0")?;
-        let target: SocketAddr = format!("{}:{}", args.host, args.port).parse().unwrap();
+        // `--host` may be an IP address or a hostname (e.g. a compose service).
+        let target: SocketAddr = (args.host.as_str(), args.port)
+            .to_socket_addrs()?
+            .next()
+            .ok_or_else(|| {
+                invalid_input(format!(
+                    "cannot resolve collector address {}:{}",
+                    args.host, args.port
+                ))
+            })?;
+        let socket = UdpSocket::bind(if target.is_ipv6() {
+            "[::]:0"
+        } else {
+            "0.0.0.0:0"
+        })?;
 
         Ok(Self {
             socket,

@@ -6,7 +6,7 @@ use std::sync::{Arc, LazyLock};
 use chrono::{DateTime, Utc};
 use macaddr::MacAddr6;
 use nom::bytes::complete::take;
-use nom::combinator::{cond, map, map_parser, verify};
+use nom::combinator::{cond, fail, map, map_parser, verify};
 use nom::multi::{count, many0};
 use nom::number::complete::{
     be_f32, be_f64, be_i8, be_i16, be_i24, be_i32, be_i64, be_u8, be_u16, be_u24, be_u32, be_u64,
@@ -92,24 +92,51 @@ impl IpfixParser {
     ) -> IResult<&'a [u8], Vec<Record>> {
         let key = (observation_domain_id, template_id);
 
-        if let Some(t) = self.templates.get(&key) {
-            let (input, records) =
-                many0(|i| self.parse_record_from_fields(observation_domain_id, &t.fields, i))
-                    .parse(input)?;
-            return Ok((input, records.into_iter().map(Record::Data).collect()));
+        let (fields, wrap): (&[FieldSpecifier], fn(DataRecord) -> Record) =
+            if let Some(t) = self.templates.get(&key) {
+                (&t.fields, Record::Data)
+            } else if let Some(t) = self.options_templates.get(&key) {
+                (&t.fields, Record::OptionsData)
+            } else {
+                return Ok((input, vec![]));
+            };
+
+        // A record parser that consumes nothing makes `many0` fail, which
+        // would discard every remaining set in the message.
+        if fields.is_empty() {
+            return Ok((input, vec![]));
         }
 
-        if let Some(t) = self.options_templates.get(&key) {
-            let (input, records) =
-                many0(|i| self.parse_record_from_fields(observation_domain_id, &t.fields, i))
-                    .parse(input)?;
-            return Ok((
-                input,
-                records.into_iter().map(Record::OptionsData).collect(),
-            ));
-        }
+        let (input, records) =
+            many0(|i| self.parse_record_from_fields(observation_domain_id, fields, i))
+                .parse(input)?;
+        Ok((input, records.into_iter().map(wrap).collect()))
+    }
 
-        Ok((input, vec![]))
+    /// Apply a Template Withdrawal (RFC 7011 section 8.1): a template record
+    /// with a field count of zero withdraws that template, and one carrying
+    /// the set ID itself (2 or 3) withdraws every template of that kind for
+    /// the observation domain.
+    fn withdraw_templates<V>(
+        map: &mut TimeoutHashMap<TemplateKey, V>,
+        observation_domain_id: u32,
+        template_id: u16,
+        all_id: u16,
+    ) {
+        if template_id == all_id {
+            log::debug!(
+                "Withdrawing all templates for observation_domain_id: {}",
+                observation_domain_id
+            );
+            map.retain(|(odid, _), _| *odid != observation_domain_id);
+        } else {
+            log::debug!(
+                "Withdrawing template for observation_domain_id: {}, template_id: {}",
+                observation_domain_id,
+                template_id
+            );
+            map.remove(&(observation_domain_id, template_id));
+        }
     }
 
     fn parse_set<'a>(
@@ -147,10 +174,19 @@ impl IpfixParser {
                 let (input, templates) = many0(parse_template_record).parse(input)?;
 
                 for template in &templates {
-                    self.templates.insert(
-                        (observation_domain_id, template.template_id),
-                        template.clone(),
-                    );
+                    if template.fields.is_empty() {
+                        Self::withdraw_templates(
+                            &mut self.templates,
+                            observation_domain_id,
+                            template.template_id,
+                            IPFIX_TEMPLATE_SET_ID,
+                        );
+                    } else {
+                        self.templates.insert(
+                            (observation_domain_id, template.template_id),
+                            template.clone(),
+                        );
+                    }
                 }
 
                 Ok((input, templates.into_iter().map(Record::Template).collect()))
@@ -160,10 +196,19 @@ impl IpfixParser {
                     many0(parse_options_template_record).parse(input)?;
 
                 for template in &options_templates {
-                    self.options_templates.insert(
-                        (observation_domain_id, template.template_id),
-                        template.clone(),
-                    );
+                    if template.fields.is_empty() {
+                        Self::withdraw_templates(
+                            &mut self.options_templates,
+                            observation_domain_id,
+                            template.template_id,
+                            IPFIX_OPTIONS_TEMPLATE_SET_ID,
+                        );
+                    } else {
+                        self.options_templates.insert(
+                            (observation_domain_id, template.template_id),
+                            template.clone(),
+                        );
+                    }
                 }
 
                 Ok((
@@ -540,10 +585,25 @@ impl TemplateRecord {
     }
 }
 
-fn parse_template_record(input: &[u8]) -> IResult<&[u8], TemplateRecord> {
-    let (input, template_id) =
-        verify(be_u16, |i| IPFIX_VALID_TEMPLATE_ID.contains(i)).parse(input)?;
+/// Template ID and field count of a (Options) Template Record. A field count
+/// of zero is a Template Withdrawal (RFC 7011 section 8.1), which may also
+/// carry the set ID itself (`all_id`) to withdraw every template of that kind.
+fn parse_template_id_and_count(all_id: u16, input: &[u8]) -> IResult<&[u8], (u16, u16)> {
+    let (input, template_id) = be_u16(input)?;
     let (input, field_count) = be_u16(input)?;
+
+    let valid = IPFIX_VALID_TEMPLATE_ID.contains(&template_id)
+        || (field_count == 0 && template_id == all_id);
+    if !valid {
+        return fail().parse(input);
+    }
+
+    Ok((input, (template_id, field_count)))
+}
+
+fn parse_template_record(input: &[u8]) -> IResult<&[u8], TemplateRecord> {
+    let (input, (template_id, field_count)) =
+        parse_template_id_and_count(IPFIX_TEMPLATE_SET_ID, input)?;
     let (input, fields) = count(parse_field_specifier, field_count.to_usize()).parse(input)?;
 
     Ok((
@@ -577,10 +637,15 @@ impl OptionsTemplateRecord {
 }
 
 fn parse_options_template_record(input: &[u8]) -> IResult<&[u8], OptionsTemplateRecord> {
-    let (input, template_id) =
-        verify(be_u16, |i| IPFIX_VALID_TEMPLATE_ID.contains(i)).parse(input)?;
-    let (input, field_count) = be_u16(input)?;
-    let (input, scope_field_count) = be_u16(input)?;
+    let (input, (template_id, field_count)) =
+        parse_template_id_and_count(IPFIX_OPTIONS_TEMPLATE_SET_ID, input)?;
+    // RFC 7011 section 8.1: a withdrawal record is only template ID + field
+    // count; the scope field count is not present.
+    let (input, scope_field_count) = if field_count == 0 {
+        (input, 0)
+    } else {
+        be_u16(input)?
+    };
     let (input, fields) = count(parse_field_specifier, field_count.to_usize()).parse(input)?;
 
     Ok((
@@ -948,5 +1013,191 @@ mod tests {
         assert!(matches!(record.0[0].2, FieldValue::Unsigned16(7)));
         assert_eq!(&*record.0[1].1, "samplingPacketInterval");
         assert!(matches!(record.0[1].2, FieldValue::Unsigned32(1000)));
+    }
+
+    fn template(id: u16, fields: &[(u16, u16)]) -> Vec<u8> {
+        let mut buf = [id.to_be_bytes(), (fields.len() as u16).to_be_bytes()].concat();
+        for (ie, length) in fields {
+            buf.extend_from_slice(&field(*ie, *length));
+        }
+        buf
+    }
+
+    #[test]
+    fn withdrawal_removes_template_and_keeps_parsing_later_sets() {
+        let mut parser = IpfixParser::default();
+
+        // octetDeltaCount(1) as a 4-byte field, plus one data record.
+        let msg = message(&[
+            set(IPFIX_TEMPLATE_SET_ID, &template(256, &[(1, 4)])),
+            set(256, &7u32.to_be_bytes()),
+        ]);
+        parser.parse(&msg).unwrap();
+        assert!(parser.templates.contains_key(&(1, 256)));
+
+        // Withdraw 256, then a stale data set for it, then a new template
+        // and its data: the stale set must not take the rest down.
+        let msg = message(&[
+            set(IPFIX_TEMPLATE_SET_ID, &template(256, &[])),
+            set(256, &9u32.to_be_bytes()),
+            set(IPFIX_TEMPLATE_SET_ID, &template(257, &[(2, 4)])),
+            set(257, &5u32.to_be_bytes()),
+        ]);
+        let (rest, packet) = parser.parse(&msg).unwrap();
+        assert!(rest.is_empty());
+        assert_eq!(packet.sets.len(), 4);
+        assert!(!parser.templates.contains_key(&(1, 256)));
+
+        assert!(matches!(
+            &packet.sets[0].records[0],
+            Record::Template(t) if t.template_id == 256 && t.field_count == 0 && t.fields.is_empty()
+        ));
+        assert!(packet.sets[1].records.is_empty());
+        let Record::Data(record) = &packet.sets[3].records[0] else {
+            panic!("expected data record");
+        };
+        assert!(matches!(record.0[0].2, FieldValue::Unsigned32(5)));
+    }
+
+    #[test]
+    fn all_templates_withdrawal_clears_the_observation_domain() {
+        let mut parser = IpfixParser::default();
+        let msg = message(&[set(
+            IPFIX_TEMPLATE_SET_ID,
+            &[template(256, &[(1, 4)]), template(257, &[(2, 4)])].concat(),
+        )]);
+        parser.parse(&msg).unwrap();
+        assert_eq!(parser.templates.len(), 2);
+
+        let msg = message(&[set(
+            IPFIX_TEMPLATE_SET_ID,
+            &template(IPFIX_TEMPLATE_SET_ID, &[]),
+        )]);
+        let (_, packet) = parser.parse(&msg).unwrap();
+        assert!(matches!(
+            &packet.sets[0].records[0],
+            Record::Template(t) if t.template_id == IPFIX_TEMPLATE_SET_ID
+        ));
+        assert!(parser.templates.is_empty());
+    }
+
+    #[test]
+    fn options_template_withdrawal_carries_no_scope_field_count() {
+        let mut parser = IpfixParser::default();
+
+        let options_template = |id: u16| {
+            [
+                &id.to_be_bytes()[..],
+                &1u16.to_be_bytes(), // field_count
+                &1u16.to_be_bytes(), // scope_field_count
+                &field(302, 2),
+            ]
+            .concat()
+        };
+        let msg = message(&[set(IPFIX_OPTIONS_TEMPLATE_SET_ID, &options_template(257))]);
+        parser.parse(&msg).unwrap();
+        assert!(parser.options_templates.contains_key(&(1, 257)));
+
+        // A 4-byte withdrawal record directly followed by a full record: if
+        // the parser read a scope count from the withdrawal, the second
+        // record would be misaligned.
+        let msg = message(&[set(
+            IPFIX_OPTIONS_TEMPLATE_SET_ID,
+            &[template(257, &[]), options_template(258)].concat(),
+        )]);
+        let (_, packet) = parser.parse(&msg).unwrap();
+        assert_eq!(packet.sets[0].records.len(), 2);
+        assert!(!parser.options_templates.contains_key(&(1, 257)));
+        let t = parser
+            .options_templates
+            .get(&(1, 258))
+            .expect("258 installed");
+        assert_eq!(t.scope_field_count, 1);
+        assert_eq!(t.fields.len(), 1);
+    }
+
+    #[test]
+    fn reduced_size_fields_round_trip_through_the_encoder() {
+        use crate::ipfix::encoder::Encode;
+
+        let mut registry = IERegistry::new();
+        registry.add_element(100, None, "testUnsigned", DataType::Unsigned);
+        registry.add_element(101, None, "testSigned", DataType::Signed);
+        let mut parser = IpfixParser::new(registry, std::time::Duration::from_mins(10));
+
+        let template = template(256, &[(100, 3), (100, 7), (101, 3), (101, 5), (100, 2)]);
+        let data = [
+            &[0x01, 0x02, 0x03][..],
+            &[0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00],
+            &[0xff, 0xff, 0xff],
+            &[0xff, 0xff, 0xff, 0xff, 0xfe],
+            &[0x12, 0x34],
+        ]
+        .concat();
+
+        let msg = message(&[set(IPFIX_TEMPLATE_SET_ID, &template), set(256, &data)]);
+        let (_, packet) = parser.parse(&msg).unwrap();
+        let Record::Data(record) = &packet.sets[1].records[0] else {
+            panic!("expected data record");
+        };
+
+        let mut encoded = Vec::new();
+        record.encode(&mut encoded);
+        assert_eq!(encoded, data);
+    }
+
+    #[test]
+    fn basic_list_elements_round_trip_at_the_declared_width() {
+        use crate::ipfix::encoder::Encode;
+
+        // basicList(291) as a variable-length field whose elements are
+        // 3-byte octetDeltaCount(1) values.
+        let mut parser = IpfixParser::default();
+        let template = template(256, &[(291, IPFIX_VARIABLE_LENGTH)]);
+        let list = [
+            &[Semantic::AllOf as u8][..],
+            &field(1, 3),
+            &[0x01, 0x02, 0x03],
+            &[0x00, 0x00, 0x04],
+            &[0xff, 0xff, 0xff],
+        ]
+        .concat();
+        let data = [&[list.len() as u8][..], &list].concat();
+
+        let msg = message(&[set(IPFIX_TEMPLATE_SET_ID, &template), set(256, &data)]);
+        let (_, packet) = parser.parse(&msg).unwrap();
+        let Record::Data(record) = &packet.sets[1].records[0] else {
+            panic!("expected data record");
+        };
+        let FieldValue::BasicList(parsed) = &record.0[0].2 else {
+            panic!("expected basicList, got {:?}", record.0[0].2);
+        };
+        assert_eq!(parsed.content.len(), 3);
+        assert!(matches!(
+            parsed.content[0],
+            FieldValue::Unsigned32(0x010203)
+        ));
+
+        let mut encoded = Vec::new();
+        record.encode(&mut encoded);
+        assert_eq!(encoded, data);
+    }
+
+    #[test]
+    fn records_built_without_a_template_encode_at_natural_width() {
+        use crate::ipfix::encoder::Encode;
+
+        let record = DataRecord::new(vec![
+            FieldValue::Unsigned8(1),
+            FieldValue::Unsigned16(2),
+            FieldValue::Unsigned32(3),
+            FieldValue::Unsigned64(4),
+            FieldValue::Signed32(-1),
+        ]);
+        let mut encoded = Vec::new();
+        record.encode(&mut encoded);
+        assert_eq!(encoded.len(), 1 + 2 + 4 + 8 + 4);
+        assert_eq!(&encoded[..3], &[1, 0, 2]);
+        assert_eq!(&encoded[15..], &[0xff; 4]);
     }
 }

@@ -126,12 +126,21 @@ impl NetflowV9Parser {
         template_id: u16,
         input: &'a [u8],
     ) -> IResult<&'a [u8], Vec<Record>> {
+        // A record parser that consumes nothing makes `many0` fail and takes
+        // the whole packet with it, so templates without fields yield no
+        // records instead.
         if let Some(template) = self.templates.get(&(source_id, template_id)) {
+            if template.fields.is_empty() {
+                return Ok((input, vec![]));
+            }
             let (input, records) = many0(|i| self.parse_data_record(template, i)).parse(input)?;
             return Ok((input, records.into_iter().map(Record::Data).collect()));
         }
 
         if let Some(template) = self.options_templates.get(&(source_id, template_id)) {
+            if template.scope_fields.is_empty() && template.option_fields.is_empty() {
+                return Ok((input, vec![]));
+            }
             let (input, records) =
                 many0(|i| self.parse_options_data_record(template, i)).parse(input)?;
             return Ok((
