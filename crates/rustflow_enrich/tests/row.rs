@@ -11,8 +11,6 @@ fn get_distinguishes_missing_columns_from_empty_cells() {
     assert_eq!(row.get("b"), None);
     assert_eq!(row.get("c"), Some("3"));
     assert_eq!(row.get("missing"), None);
-    assert_eq!(row.schema().index_of("c"), Some(2));
-    assert_eq!(row.schema().index_of("missing"), None);
     assert_eq!(row.values()[2].as_deref(), Some("3"));
 }
 
@@ -21,19 +19,6 @@ fn iter_and_debug_skip_empty_cells() {
     let row = sample();
     assert_eq!(row.iter().collect::<Vec<_>>(), [("a", "1"), ("c", "3")]);
     assert_eq!(format!("{row:?}"), r#"{"a": "1", "c": "3"}"#);
-}
-
-#[test]
-fn index_returns_present_values() {
-    let row = sample();
-    assert_eq!(row["a"], "1");
-    assert_eq!(&row["c"], "3");
-}
-
-#[test]
-#[should_panic(expected = "no value for column 'b'")]
-fn index_panics_on_empty_cell() {
-    let _ = &sample()["b"];
 }
 
 #[test]
@@ -47,9 +32,7 @@ fn rows_share_one_schema() {
     let schema = Schema::new(["a"]);
     let first = schema.row([Some("x".to_owned())]);
     let second = schema.row([Some("y".to_owned())]);
-    assert_eq!(first.schema(), second.schema());
-    assert_eq!(schema.len(), 1);
-    assert!(!schema.is_empty());
+    assert_eq!(schema.columns(), ["a"]);
     assert_ne!(first, second);
     assert_eq!(first, first.clone());
 }

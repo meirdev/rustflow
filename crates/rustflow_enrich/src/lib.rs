@@ -1,16 +1,14 @@
-//! Typed source lookup and reload. Readers, lookup indexes, and reload
-//! scheduling are independent.
 pub mod config;
 pub mod engine;
-pub mod formats;
-pub mod loader;
-pub mod lookup;
-pub mod reload;
+pub mod key;
+pub mod row;
+pub mod source;
 
 pub use config::{CsvLookup, EnrichmentConfig, SourceFormat, parse_enrich_arg};
-pub use engine::{Enrichment, LoadStats, LookupSnapshot};
-pub use lookup::{Key, KeyType, Row, Schema};
-pub use reload::ReloadPolicy;
+pub use engine::{Enrichment, LoadStats, LookupSnapshot, ReloadPolicy};
+pub use key::{Key, KeyType};
+pub use row::{Row, Schema};
+pub use source::{ExactTable, MmdbSource, PrefixTable, Source};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -18,20 +16,18 @@ pub enum Error {
     Config(String),
     #[error("Invalid source data: {0}")]
     Data(String),
-    /// A load failed; `error` says why and `path` says which source.
     #[error("Failed to load {}: {error}", path.display())]
     Load {
         path: std::path::PathBuf,
         #[source]
         error: Box<Error>,
     },
-    /// The filesystem watcher reported a runtime failure.
     #[error("Watcher error: {0}")]
     Watcher(String),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
-    Csv(#[from] csv::Error),
+    Csv(#[from] ::csv::Error),
     #[error(transparent)]
     Mmdb(#[from] maxminddb::MaxMindDbError),
     #[error(transparent)]

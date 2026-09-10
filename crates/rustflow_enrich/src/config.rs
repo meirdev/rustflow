@@ -1,8 +1,7 @@
-//! Parse the CLI syntax into a configuration that scopes options to valid
-//! combinations.
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::time::Duration;
 
 use crate::{Error, KeyType, ReloadPolicy, Result};
 
@@ -16,6 +15,7 @@ pub enum CsvLookup {
         key_type: KeyType,
     },
 }
+
 impl CsvLookup {
     pub fn column(&self) -> &str {
         match self {
@@ -24,25 +24,22 @@ impl CsvLookup {
         }
     }
 }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourceFormat {
     Csv(CsvLookup),
     Mmdb,
 }
-/// Validated, immutable source configuration. Construct with `new` or
-/// `parse_enrich_arg`.
+
 #[derive(Debug, Clone)]
 pub struct EnrichmentConfig {
     source: PathBuf,
     format: SourceFormat,
     reload: ReloadPolicy,
-    /// Source columns or MMDB dotted paths to load; output mapping belongs to
-    /// the caller.
     columns: Vec<String>,
 }
+
 impl EnrichmentConfig {
-    /// Validate options once and freeze relative paths against later changes to
-    /// the working directory. The source file is opened only when loading.
     pub fn new(
         source: PathBuf,
         format: SourceFormat,
@@ -52,11 +49,13 @@ impl EnrichmentConfig {
         if source.as_os_str().is_empty() {
             return Err(Error::Config("Empty source".into()));
         }
+
         if columns.is_empty() {
             return Err(Error::Config(
                 "At least one source column is required".into(),
             ));
         }
+
         let mut seen = HashSet::new();
         for column in &columns {
             if column.trim().is_empty() || !seen.insert(column) {
@@ -65,11 +64,13 @@ impl EnrichmentConfig {
                 ));
             }
         }
+
         if let SourceFormat::Csv(options) = &format
             && options.column().trim().is_empty()
         {
             return Err(Error::Config("Empty CSV key column".into()));
         }
+
         Ok(Self {
             source: std::path::absolute(source)?,
             format,
@@ -89,6 +90,47 @@ impl EnrichmentConfig {
     }
     pub fn reload(&self) -> ReloadPolicy {
         self.reload
+    }
+}
+
+pub const DEFAULT_DEBOUNCE: Duration = Duration::from_millis(250);
+
+pub const MIN_INTERVAL: Duration = Duration::from_secs(10);
+
+impl FromStr for ReloadPolicy {
+    type Err = Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        Ok(match value {
+            "never" => Self::Never,
+            "watch" => Self::Watch {
+                debounce: DEFAULT_DEBOUNCE,
+            },
+            _ => {
+                let interval = duration_str::parse(value).map_err(|e| {
+                    Error::Config(format!("Invalid reload duration '{value}': {e}"))
+                })?;
+                if interval < MIN_INTERVAL {
+                    return Err(Error::Config(format!(
+                        "Reload interval '{value}' must be at least {MIN_INTERVAL:?}"
+                    )));
+                }
+                Self::Interval(interval)
+            }
+        })
+    }
+}
+
+impl FromStr for KeyType {
+    type Err = Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "ip" => Ok(Self::Ip),
+            "number" => Ok(Self::Number),
+            "text" => Ok(Self::Text),
+            other => Err(Error::Config(format!("Unknown key_type '{other}'"))),
+        }
     }
 }
 
@@ -148,6 +190,7 @@ pub fn parse_enrich_arg(arg: &str) -> Result<EnrichmentConfig> {
             .split_once('=')
             .ok_or_else(|| Error::Config(format!("Expected key=value: '{part}'")))?;
         let (key, value) = (key.trim(), value.trim());
+
         if value.is_empty() {
             return Err(Error::Config(format!("Empty '{key}' parameter")));
         }
@@ -158,17 +201,20 @@ pub fn parse_enrich_arg(arg: &str) -> Result<EnrichmentConfig> {
             return Err(Error::Config(format!("Duplicate parameter '{key}'")));
         }
     }
+
     let required = |key: &str| {
         params
             .get(key)
             .copied()
             .ok_or_else(|| Error::Config(format!("Missing '{key}' parameter")))
     };
+
     let forbid =
         |keys: &[&str], context: &str| match keys.iter().find(|key| params.contains_key(*key)) {
             Some(key) => Err(Error::Config(format!("'{key}' is not valid for {context}"))),
             None => Ok(()),
         };
+
     let kind: Kind = required("type")?.parse()?;
     let source = PathBuf::from(required("source")?);
     let format: Format = params
@@ -201,11 +247,13 @@ pub fn parse_enrich_arg(arg: &str) -> Result<EnrichmentConfig> {
             return Err(Error::Config("MMDB supports only prefix_lookup".into()));
         }
     };
+
     let reload = params
         .get("reload")
         .map(|v| v.parse())
         .transpose()?
         .unwrap_or_default();
+
     EnrichmentConfig::new(
         source,
         format,

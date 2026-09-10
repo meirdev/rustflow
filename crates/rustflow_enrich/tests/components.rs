@@ -1,43 +1,70 @@
 use std::fs;
+use std::path::{Path, PathBuf};
 
-use rustflow_enrich::lookup::{ExactTable, Lookup, PrefixTable, parse_prefix};
-use rustflow_enrich::{formats, *};
+use rustflow_enrich::*;
 
 fn schema(columns: &[&str]) -> Schema {
     Schema::new(columns.iter().copied())
 }
-fn row(value: &str) -> Row {
-    schema(&["name"]).row([Some(value.to_owned())])
+
+fn csv_file(dir: &Path, content: &str) -> PathBuf {
+    let path = dir.join("source.csv");
+    fs::write(&path, content).unwrap();
+    path
+}
+
+fn exact(key_column: &str, key_type: KeyType) -> CsvLookup {
+    CsvLookup::Exact {
+        key_column: key_column.into(),
+        key_type,
+    }
+}
+
+fn prefix(prefix_column: &str) -> CsvLookup {
+    CsvLookup::Prefix {
+        prefix_column: prefix_column.into(),
+    }
 }
 
 #[test]
 fn exact_keys_are_typed_and_duplicates_replace_previous_rows() {
-    let mut table = ExactTable::default();
-    table.insert(KeyType::Number.parse("017").unwrap(), row("old"));
-    table.insert(KeyType::Number.parse("17").unwrap(), row("udp"));
-    assert_eq!(table.len(), 1);
-    assert_eq!(table.lookup(Key::Number(17)).unwrap()["name"], "udp");
-    assert!(table.lookup(Key::Text("17".into())).is_none());
+    let dir = tempfile::tempdir().unwrap();
+    let path = csv_file(dir.path(), "number,name\n017,old\n17,udp\n");
+    let source =
+        source::csv::open(&path, &exact("number", KeyType::Number), &schema(&["name"])).unwrap();
+    assert_eq!(source.len(), 1);
+    assert_eq!(
+        source.lookup(Key::Number(17)).unwrap().get("name").unwrap(),
+        "udp"
+    );
+    assert!(source.lookup(Key::Text("17".into())).is_none());
+    assert!(source.lookup(Key::Number(6)).is_none());
     assert!(KeyType::Number.parse("-1").is_err());
     assert!(KeyType::Number.parse("18446744073709551616").is_err());
-    assert!(table.lookup(Key::Number(6)).is_none());
+
+    // An unparsable key fails the whole load.
+    let path = csv_file(dir.path(), "number,name\n17,udp\nx,bad\n");
+    assert!(
+        source::csv::open(&path, &exact("number", KeyType::Number), &schema(&["name"])).is_err()
+    );
 }
 
 #[test]
 fn exact_ip_keys_normalize_ipv6_and_do_not_match_subnets() {
-    let mut table = ExactTable::default();
-    table.insert(
-        KeyType::Ip.parse("2001:0db8:0:0:0:0:0:1").unwrap(),
-        row("host"),
-    );
+    let dir = tempfile::tempdir().unwrap();
+    let path = csv_file(dir.path(), "address,name\n2001:0db8:0:0:0:0:0:1,host\n");
+    let source =
+        source::csv::open(&path, &exact("address", KeyType::Ip), &schema(&["name"])).unwrap();
     assert_eq!(
-        table
+        source
             .lookup(Key::Ip("2001:db8::1".parse().unwrap()))
-            .unwrap()["name"],
+            .unwrap()
+            .get("name")
+            .unwrap(),
         "host"
     );
     assert!(
-        table
+        source
             .lookup(Key::Ip("2001:db8::2".parse().unwrap()))
             .is_none()
     );
@@ -45,15 +72,17 @@ fn exact_ip_keys_normalize_ipv6_and_do_not_match_subnets() {
 }
 
 #[test]
-fn exact_text_preserves_text_identity_without_allocating_on_lookup() {
-    let mut table = ExactTable::default();
-    table.insert(Key::Text("017".into()), row("text"));
-    let probe = String::from("017");
-    assert!(table.lookup(Key::Text("17".into())).is_none());
-    assert_eq!(
-        table.lookup(Key::Text(probe.as_str().into())).unwrap()["name"],
-        "text"
-    );
+fn exact_text_preserves_text_identity_and_borrowed_probes_do_not_limit_row_lifetime() {
+    use std::borrow::Cow;
+    let dir = tempfile::tempdir().unwrap();
+    let path = csv_file(dir.path(), "id,name\n017,text\n");
+    let source = source::csv::open(&path, &exact("id", KeyType::Text), &schema(&["name"])).unwrap();
+    assert!(source.lookup(Key::Text("17".into())).is_none());
+    let found = {
+        let probe = String::from("017");
+        source.lookup(Key::Text(Cow::Borrowed(&probe))).unwrap()
+    };
+    assert_eq!(found.get("name").unwrap(), "text");
 }
 
 #[test]
@@ -71,16 +100,13 @@ fn key_type_parses_into_the_matching_key_variant() {
 
 #[test]
 fn prefix_matches_longest_network_in_both_families() {
-    let mut table = PrefixTable::default();
-    for (net, value) in [
-        ("0.0.0.0/0", "default"),
-        ("10.0.0.0/8", "broad"),
-        ("10.1.0.1/16", "specific"),
-        ("::/0", "v6default"),
-        ("2001:db8::/32", "v6"),
-    ] {
-        table.insert(parse_prefix(net).unwrap(), row(value));
-    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = csv_file(
+        dir.path(),
+        "net,name\n0.0.0.0/0,default\n10.0.0.0/8,broad\n10.1.0.1/16,specific\n::/0,v6default\n2001:db8::/32,v6\n",
+    );
+    let source = source::csv::open(&path, &prefix("net"), &schema(&["name"])).unwrap();
+    assert_eq!(source.len(), 5);
     for (ip, expected) in [
         ("10.1.2.3", "specific"),
         ("10.2.1.1", "broad"),
@@ -89,40 +115,51 @@ fn prefix_matches_longest_network_in_both_families() {
         ("::1", "v6default"),
     ] {
         assert_eq!(
-            table.lookup(Key::Ip(ip.parse().unwrap())).unwrap()["name"],
+            source
+                .lookup(Key::Ip(ip.parse().unwrap()))
+                .unwrap()
+                .get("name")
+                .unwrap(),
             expected
         );
     }
-    assert!(table.lookup(Key::Number(17)).is_none());
-    assert!(parse_prefix("10.0.0.1").is_err());
+    assert!(source.lookup(Key::Number(17)).is_none());
+
+    // A bare address is not a prefix.
+    let path = csv_file(dir.path(), "net,name\n10.0.0.1,bad\n");
+    assert!(source::csv::open(&path, &prefix("net"), &schema(&["name"])).is_err());
 }
 
 #[test]
-fn csv_reader_is_independent_of_lookup_strategy() {
+fn csv_cells_are_trimmed_and_only_schema_columns_are_kept() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("source");
-    fs::write(&path, "name, number ,empty\n\"UDP, transport\", 17 ,\n").unwrap();
-    let mut records = Vec::new();
-    formats::csv::read(&path, "number", &schema(&["name"]), |key, fields| {
-        records.push((key.to_owned(), fields));
-        Ok(())
-    })
-    .unwrap();
-    assert_eq!(records[0].0, "17");
-    assert_eq!(records[0].1["name"], "UDP, transport");
-    assert!(records[0].1.get("empty").is_none());
-    // Only schema columns are stored; the key column is not retained unless requested.
-    assert!(records[0].1.get("number").is_none());
-    assert_eq!(records[0].1.schema().columns(), ["name"]);
-    assert_eq!(records[0].1.values(), [Some("UDP, transport".to_owned())]);
-    assert!(formats::csv::read(&path, "missing", &schema(&[]), |_, _| Ok(())).is_err());
-    assert!(formats::csv::read(&path, "number", &schema(&["missing"]), |_, _| Ok(())).is_err());
+    let path = csv_file(
+        dir.path(),
+        "name, number ,empty\n\"UDP, transport\", 17 ,\n",
+    );
+    let source =
+        source::csv::open(&path, &exact("number", KeyType::Number), &schema(&["name"])).unwrap();
+    let row = source.lookup(Key::Number(17)).unwrap();
+    assert_eq!(row.get("name").unwrap(), "UDP, transport");
+    assert!(row.get("empty").is_none());
+    // The key column is not retained unless requested.
+    assert!(row.get("number").is_none());
+    assert_eq!(row.values(), [Some("UDP, transport".to_owned())]);
+
+    assert!(source::csv::open(&path, &exact("missing", KeyType::Number), &schema(&[])).is_err());
+    assert!(
+        source::csv::open(
+            &path,
+            &exact("number", KeyType::Number),
+            &schema(&["missing"])
+        )
+        .is_err()
+    );
 }
 
 #[test]
 fn csv_rejects_ambiguous_headers_and_malformed_records() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("source.csv");
     for content in [
         "key,key\n1,2\n",
         "key, key \n1,2\n",
@@ -130,9 +167,9 @@ fn csv_rejects_ambiguous_headers_and_malformed_records() {
         "key,name\n1\n",
         "key,name\n,x\n",
     ] {
-        fs::write(&path, content).unwrap();
+        let path = csv_file(dir.path(), content);
         assert!(
-            formats::csv::read(&path, "key", &schema(&[]), |_, _| Ok(())).is_err(),
+            source::csv::open(&path, &exact("key", KeyType::Text), &schema(&[])).is_err(),
             "{content}"
         );
     }
@@ -205,7 +242,6 @@ fn invalid_combinations_are_rejected_before_loading() {
 
 #[test]
 fn constructor_rejects_invalid_options_without_opening_source() {
-    use std::path::PathBuf;
     use std::time::Duration;
     let path = PathBuf::from("not-required-to-exist.mmdb");
     let columns = vec!["country.iso_code".into()];
@@ -220,10 +256,10 @@ fn constructor_rejects_invalid_options_without_opening_source() {
     );
     // Only parsed input is range-checked; direct construction is the caller's call.
     assert!("0s".parse::<ReloadPolicy>().is_err());
-    assert!("500us".parse::<ReloadPolicy>().is_err());
+    assert!("9s".parse::<ReloadPolicy>().is_err());
     assert_eq!(
-        "1ms".parse::<ReloadPolicy>().unwrap(),
-        ReloadPolicy::Interval(Duration::from_millis(1))
+        "10s".parse::<ReloadPolicy>().unwrap(),
+        ReloadPolicy::Interval(Duration::from_secs(10))
     );
     assert!(
         EnrichmentConfig::new(
@@ -264,32 +300,4 @@ fn constructor_rejects_invalid_options_without_opening_source() {
     assert!(config.source().is_absolute());
     assert_eq!(config.columns(), columns);
     assert_eq!(config.format(), &SourceFormat::Mmdb);
-}
-
-#[test]
-fn exact_table_owns_keys_and_borrowed_probes_do_not_limit_row_lifetime() {
-    use std::borrow::Cow;
-    let mut table = ExactTable::default();
-    {
-        let source = String::from("17");
-        table.insert(Key::Text(Cow::Borrowed(&source)), row("text"));
-    }
-    table.insert(Key::Number(17), row("number"));
-    table.insert(Key::Ip("0.0.0.17".parse().unwrap()), row("ip"));
-    assert_eq!(table.len(), 3);
-    table.insert(
-        Key::Text(Cow::Owned(String::from("17"))),
-        row("replacement"),
-    );
-    assert_eq!(table.len(), 3);
-    let found = {
-        let probe = String::from("17");
-        table.lookup(Key::Text(Cow::Borrowed(&probe))).unwrap()
-    };
-    assert_eq!(found["name"], "replacement");
-    assert_eq!(table.lookup(Key::Number(17)).unwrap()["name"], "number");
-    assert_eq!(
-        table.lookup(Key::Ip("0.0.0.17".parse().unwrap())).unwrap()["name"],
-        "ip"
-    );
 }

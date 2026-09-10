@@ -6,26 +6,28 @@ The collector's existing enrichment implementation remains separate.
 
 ## Components
 
-- `lookup`: key types and parsing, shared row schema, exact `HashMap` storage, and
-  IPv4/IPv6 prefix tries.
-- `formats`: CSV and MMDB readers emit `(key, row)` pairs through a callback.
+- `source`: the `Source` trait (`lookup`, `len`) and `source::open`, which builds the
+  source a configuration describes and wraps any failure in `Error::Load` with the path.
+  - `source::exact`: `ExactTable`, a hash map keyed by a typed key.
+  - `source::prefix`: `PrefixTable`, IPv4/IPv6 prefix tries for longest-prefix lookup.
+  - `source::csv`: reads a CSV once into an `ExactTable` keyed by a typed column or a
+    `PrefixTable` keyed by a network column.
+  - `source::mmdb`: `MmdbSource` keeps a MaxMind DB in memory, walks its search tree per
+    lookup, and decodes the record it finds.
+- `engine`: owns a source, replaces it on reload, and exposes load statistics.
+  - `engine::reload`: never, interval, or file watching using `notify-debouncer-full`.
 - `config`: source, selected columns, index options, and reload policy.
-- `loader`: picks the table for a configuration, parses keys, and builds it from one file.
-- `reload`: never, interval, or file watching using `notify-debouncer-full`.
-- `engine`: owns a source, replaces immutable tables, and exposes load statistics.
+- `key`, `row`: typed lookup keys and their parsing; the shared row schema.
 
 Field extraction and output mapping belong to the consuming application. For example,
 a collector adapter would read `flow.proto`, supply its numeric value to this library,
 and map the returned `name` column to an output field. No adapter is installed into the
 collector by this crate.
 
-Both `ExactTable` and `PrefixTable` implement the read-only `Lookup` trait and are
-built through their own `insert` methods. `ExactTable` keeps one map keyed by `Key`,
-so a lookup only matches rows of the same key type; lookups take a borrowed `Key<'_>`, so
-text lookups do not allocate. The `loader` module picks the table
-for the configured format, parses keys before insertion, and wraps any failure in
-`Error::Load` with the source path. The engine then shares the finished table as an
-`Arc<dyn Lookup>` in immutable snapshots.
+Lookups take a borrowed `Key<'_>`, so text lookups do not allocate, and a source only
+matches keys of its own kind: an exact source matches its configured key type, a prefix
+or MMDB source matches `Key::Ip`. Lookups return an owned `Row`. The engine shares the
+current source as an `Arc<dyn Source>` in immutable snapshots.
 
 ## Example
 
@@ -46,7 +48,7 @@ let config = parse_enrich_arg(
 )?;
 let protocols = Enrichment::new(config)?;
 let row = protocols.lookup(Key::Number(17)).unwrap();
-assert_eq!(row["name"], "udp");
+assert_eq!(row.get("name"), Some("udp"));
 # Ok::<(), rustflow_enrich::Error>(())
 ```
 
@@ -87,7 +89,7 @@ The library does not parse `fields=proto@name:protocol_name`: resolving `proto` 
 naming `protocol_name` are responsibilities of the caller.
 
 `reload=watch` uses a 250ms debounce. Programmatic configuration can supply
-`ReloadPolicy::Watch { debounce }`. Parsed intervals must be at least 1ms; values
+`ReloadPolicy::Watch { debounce }`. Parsed intervals must be at least 10s; values
 constructed directly in code are not range-checked.
 Parameter values cannot contain commas in this syntax; programmatic configuration can
 represent paths containing commas. Duplicate parameters and duplicate columns are rejected.
@@ -119,9 +121,18 @@ publishes an empty table. Duplicate keys use the last row. Prefixes are normaliz
 network boundaries.
 
 MMDB dotted paths select nested map keys. Missing paths and empty strings are omitted;
-other values become strings, with arrays and objects represented as JSON. Corrupt data
-and invalid path traversal fail the load. MMDB array indexing is not exposed in the
-argument syntax.
+other values become strings, with arrays and objects represented as JSON. Values that
+cannot be represented as JSON (byte strings, `uint128` beyond `u64::MAX`) are omitted
+too. Corrupt data fails the load. MMDB array indexing is not exposed in the argument
+syntax.
+
+`MmdbSource` reads the file into memory once and counts its networks for the load
+statistics. Each lookup is one tree walk followed by decoding the requested paths of
+the record found, exactly as `maxminddb::Reader` answers it, so alias ranges such as
+`::ffff:0:0/96` and `2002::/16` and records placed above the IPv4 subtree behave the
+way the reader defines. On GeoLite2-Country a hit costs about 0.3-0.5 µs. Caching
+decoded records by offset or materializing the networks into a prefix trie would be
+2-3x faster per lookup; `examples/bench_mmdb.rs` reproduces the comparison.
 
 Reload builds a full new table before replacing the snapshot. Failed reloads retain the
 previous table. Explicit and scheduled loads are serialized. Existing snapshot handles

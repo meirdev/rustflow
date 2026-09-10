@@ -1,10 +1,37 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use crate::lookup::{Row, Schema};
+use super::{ExactTable, PrefixTable, Source};
+use crate::config::CsvLookup;
+use crate::key::parse_prefix;
+use crate::row::{Row, Schema};
 use crate::{Error, Result};
 
-pub fn read(
+pub fn open(path: &Path, lookup: &CsvLookup, schema: &Schema) -> Result<Box<dyn Source>> {
+    Ok(match lookup {
+        CsvLookup::Exact {
+            key_column,
+            key_type,
+        } => {
+            let mut table = ExactTable::default();
+            read(path, key_column, schema, |key, row| {
+                table.insert(key_type.parse(key)?.into_owned(), row);
+                Ok(())
+            })?;
+            Box::new(table)
+        }
+        CsvLookup::Prefix { prefix_column } => {
+            let mut table = PrefixTable::default();
+            read(path, prefix_column, schema, |key, row| {
+                table.insert(parse_prefix(key)?, row);
+                Ok(())
+            })?;
+            Box::new(table)
+        }
+    })
+}
+
+fn read(
     path: &Path,
     key_column: &str,
     schema: &Schema,

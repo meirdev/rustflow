@@ -30,7 +30,14 @@ fn protocol_enrichment_and_transactional_reload() {
     let path = dir.path().join("protocols.csv");
     fs::write(&path, "number,name\n6,tcp\n17,udp\n").unwrap();
     let enrichment = Enrichment::new(config(&path, ReloadPolicy::Never)).unwrap();
-    assert_eq!(enrichment.lookup(Key::Number(17)).unwrap()["name"], "udp");
+    assert_eq!(
+        enrichment
+            .lookup(Key::Number(17))
+            .unwrap()
+            .get("name")
+            .unwrap(),
+        "udp"
+    );
     assert!(enrichment.lookup(Key::Number(999)).is_none());
     assert_eq!(enrichment.stats().loaded_rows, 2);
     fs::write(&path, "number,name\n17,partial\ninvalid,bad\n").unwrap();
@@ -40,12 +47,26 @@ fn protocol_enrichment_and_transactional_reload() {
         "{error}"
     );
     assert!(error.to_string().contains("invalid"), "{error}");
-    assert_eq!(enrichment.lookup(Key::Number(17)).unwrap()["name"], "udp");
+    assert_eq!(
+        enrichment
+            .lookup(Key::Number(17))
+            .unwrap()
+            .get("name")
+            .unwrap(),
+        "udp"
+    );
     assert_eq!(enrichment.stats().reload_failures, 1);
     assert!(enrichment.stats().last_error.is_some());
     fs::write(&path, "number,name\n17,UDP\n").unwrap();
     assert_eq!(enrichment.reload().unwrap(), 1);
-    assert_eq!(enrichment.lookup(Key::Number(17)).unwrap()["name"], "UDP");
+    assert_eq!(
+        enrichment
+            .lookup(Key::Number(17))
+            .unwrap()
+            .get("name")
+            .unwrap(),
+        "UDP"
+    );
     assert!(enrichment.stats().last_error.is_none());
     assert_eq!(enrichment.stats().successful_loads, 2);
 }
@@ -68,12 +89,14 @@ fn prefix_lookup_accepts_ip_keys_and_returns_source_columns() {
     let src = snapshot
         .lookup(Key::Ip("10.1.2.3".parse().unwrap()))
         .unwrap();
-    assert_eq!(src["name"], "specific");
-    assert_eq!(src["net"], "10.1.0.0/16");
+    assert_eq!(src.get("name").unwrap(), "specific");
+    assert_eq!(src.get("net").unwrap(), "10.1.0.0/16");
     assert_eq!(
         snapshot
             .lookup(Key::Ip("2001:db8::1".parse().unwrap()))
-            .unwrap()["name"],
+            .unwrap()
+            .get("name")
+            .unwrap(),
         "v6"
     );
     assert!(snapshot.lookup(Key::Number(17)).is_none());
@@ -90,7 +113,14 @@ fn interval_reload_and_prompt_shutdown() {
     ))
     .unwrap();
     fs::write(&path, "number,name\n17,new\n").unwrap();
-    wait_for(|| enrichment.lookup(Key::Number(17)).unwrap()["name"] == "new");
+    wait_for(|| {
+        enrichment
+            .lookup(Key::Number(17))
+            .unwrap()
+            .get("name")
+            .unwrap()
+            == "new"
+    });
     drop(enrichment);
     let enrichment = Enrichment::new(config(
         &path,
@@ -115,22 +145,47 @@ fn watch_reload_handles_edits_atomic_replacement_failure_and_recreation() {
     ))
     .unwrap();
     fs::write(&path, "number,name\n17,edited\n").unwrap();
-    wait_for(|| enrichment.lookup(Key::Number(17)).unwrap()["name"] == "edited");
+    wait_for(|| {
+        enrichment
+            .lookup(Key::Number(17))
+            .unwrap()
+            .get("name")
+            .unwrap()
+            == "edited"
+    });
     let replacement = dir.path().join("replacement.csv");
     fs::write(&replacement, "number,name\n17,replaced\n").unwrap();
     fs::rename(&replacement, &path).unwrap();
-    wait_for(|| enrichment.lookup(Key::Number(17)).unwrap()["name"] == "replaced");
+    wait_for(|| {
+        enrichment
+            .lookup(Key::Number(17))
+            .unwrap()
+            .get("name")
+            .unwrap()
+            == "replaced"
+    });
     fs::write(&path, "broken\n").unwrap();
     wait_for(|| enrichment.stats().reload_failures > 0);
     assert_eq!(
-        enrichment.lookup(Key::Number(17)).unwrap()["name"],
+        enrichment
+            .lookup(Key::Number(17))
+            .unwrap()
+            .get("name")
+            .unwrap(),
         "replaced"
     );
     let failures = enrichment.stats().reload_failures;
     fs::remove_file(&path).unwrap();
     wait_for(|| enrichment.stats().reload_failures > failures);
     fs::write(&path, "number,name\n17,recreated\n").unwrap();
-    wait_for(|| enrichment.lookup(Key::Number(17)).unwrap()["name"] == "recreated");
+    wait_for(|| {
+        enrichment
+            .lookup(Key::Number(17))
+            .unwrap()
+            .get("name")
+            .unwrap()
+            == "recreated"
+    });
     // After all source events settle, unrelated writes and reads must not reload.
     thread::sleep(Duration::from_millis(150));
     let loads = enrichment.stats().successful_loads;
@@ -162,7 +217,7 @@ fn concurrent_readers_use_one_snapshot_for_multiple_keys() {
                     let snapshot = enrichment.snapshot();
                     let src = snapshot.lookup(Key::Number(53)).unwrap();
                     let dst = snapshot.lookup(Key::Number(443)).unwrap();
-                    assert_eq!(src["name"], dst["name"]);
+                    assert_eq!(src.get("name").unwrap(), dst.get("name").unwrap());
                 }
             });
         }
@@ -172,5 +227,8 @@ fn concurrent_readers_use_one_snapshot_for_multiple_keys() {
             enrichment.reload().unwrap();
         }
     });
-    assert_eq!(old.lookup(Key::Number(53)).unwrap()["name"], "old");
+    assert_eq!(
+        old.lookup(Key::Number(53)).unwrap().get("name").unwrap(),
+        "old"
+    );
 }

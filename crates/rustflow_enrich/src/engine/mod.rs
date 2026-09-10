@@ -1,11 +1,12 @@
-//! Orchestration and immutable snapshots. No dependency on collector metrics or
-//! output.
 use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::SystemTime;
 
-use crate::lookup::{Lookup, Row};
-use crate::reload::{ReloadDriver, ReloadEvent, ReloadGuard};
-use crate::{EnrichmentConfig, Error, Key, Result, loader};
+pub mod reload;
+
+use crate::{EnrichmentConfig, Error, Key, Result, Row, Source, source};
+use reload::{ReloadDriver, ReloadEvent, ReloadGuard};
+
+pub use reload::ReloadPolicy;
 
 #[derive(Debug, Clone, Default)]
 pub struct LoadStats {
@@ -17,9 +18,8 @@ pub struct LoadStats {
     pub last_error: Option<String>,
 }
 
-/// The currently published table and its statistics.
 struct State {
-    table: Arc<dyn Lookup>,
+    table: Arc<dyn Source>,
     stats: LoadStats,
 }
 
@@ -41,16 +41,18 @@ impl Shared {
 
     fn reload(&self) -> Result<usize> {
         let _loading = self.loading.lock().unwrap_or_else(PoisonError::into_inner);
-        let loaded = loader::load(&self.config);
+        let loaded = source::open(&self.config);
         let mut state = self.state_mut();
         match loaded {
             Ok(table) => {
                 let count = table.len();
-                state.table = Arc::from(table);
+                let previous = std::mem::replace(&mut state.table, Arc::from(table));
                 state.stats.loaded_rows = count;
                 state.stats.successful_loads += 1;
                 state.stats.last_success = Some(SystemTime::now());
                 state.stats.last_error = None;
+                drop(state);
+                drop(previous);
                 Ok(count)
             }
             Err(error) => {
@@ -77,7 +79,7 @@ pub struct Enrichment {
 impl Enrichment {
     pub fn new(config: EnrichmentConfig) -> Result<Self> {
         let driver = ReloadDriver::new(config.source(), config.reload())?;
-        let table = loader::load(&config)?;
+        let table = source::open(&config)?;
         let stats = LoadStats {
             loaded_rows: table.len(),
             successful_loads: 1,
@@ -94,12 +96,12 @@ impl Enrichment {
         });
         let worker_shared = Arc::clone(&shared);
         let guard = driver.start(move |event| match event {
-            // A failed reload is already recorded in the statistics.
             ReloadEvent::Reload => {
                 let _ = worker_shared.reload();
             }
             ReloadEvent::WatcherError(message) => worker_shared.record_watcher_error(message),
         })?;
+
         Ok(Self {
             _reload: guard,
             shared,
@@ -118,29 +120,24 @@ impl Enrichment {
         self.shared.state().stats.clone()
     }
 
-    /// Capture a stable view for multiple lookups while reloads run
-    /// concurrently.
     pub fn snapshot(&self) -> LookupSnapshot {
         LookupSnapshot {
             table: Arc::clone(&self.shared.state().table),
         }
     }
 
-    /// Look up one key, returning an owned row. Use `snapshot()` to borrow
-    /// rows.
     pub fn lookup(&self, key: Key<'_>) -> Option<Row> {
-        self.snapshot().lookup(key).cloned()
+        self.snapshot().lookup(key)
     }
 }
 
-/// An immutable table view. All lookups through this handle see the same load.
 #[derive(Clone)]
 pub struct LookupSnapshot {
-    table: Arc<dyn Lookup>,
+    table: Arc<dyn Source>,
 }
 
 impl LookupSnapshot {
-    pub fn lookup(&self, key: Key<'_>) -> Option<&Row> {
+    pub fn lookup(&self, key: Key<'_>) -> Option<Row> {
         self.table.lookup(key)
     }
 }
