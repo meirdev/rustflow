@@ -26,7 +26,9 @@ pub fn open(config: &SourceConfig) -> Result<Box<dyn Source>> {
     let schema = Schema::new(config.columns());
 
     let source = match config.format() {
-        SourceFormat::Csv(lookup) => csv::open(config.source(), lookup, &schema),
+        SourceFormat::Csv { key_column, lookup } => {
+            csv::open(config.source(), key_column, *lookup, &schema)
+        }
         SourceFormat::Mmdb => MmdbSource::open(config.source(), &schema).map(|s| Box::new(s) as _),
     };
 

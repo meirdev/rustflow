@@ -7,12 +7,16 @@ use crate::enrich::key::parse_prefix;
 use crate::enrich::row::{Row, Schema};
 use crate::enrich::{Error, Result};
 
-pub fn open(path: &Path, lookup: &CsvLookup, schema: &Schema) -> Result<Box<dyn Source>> {
+/// Read the whole file into the table `lookup` asks for, keyed by
+/// `key_column`. Only the schema's columns are kept per row.
+pub fn open(
+    path: &Path,
+    key_column: &str,
+    lookup: CsvLookup,
+    schema: &Schema,
+) -> Result<Box<dyn Source>> {
     Ok(match lookup {
-        CsvLookup::Exact {
-            key_column,
-            key_type,
-        } => {
+        CsvLookup::Exact(key_type) => {
             let mut table = ExactTable::default();
             read(path, key_column, schema, |key, row| {
                 table.insert(key_type.parse(key)?.into_owned(), row);
@@ -20,9 +24,9 @@ pub fn open(path: &Path, lookup: &CsvLookup, schema: &Schema) -> Result<Box<dyn 
             })?;
             Box::new(table)
         }
-        CsvLookup::Prefix { prefix_column } => {
+        CsvLookup::Prefix => {
             let mut table = PrefixTable::default();
-            read(path, prefix_column, schema, |key, row| {
+            read(path, key_column, schema, |key, row| {
                 table.insert(parse_prefix(key)?, row);
                 Ok(())
             })?;

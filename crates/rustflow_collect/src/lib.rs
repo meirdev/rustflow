@@ -96,11 +96,10 @@ pub struct CollectArgs {
     template_timeout: u64,
 
     /// Flow enrichment configuration
-    /// Format: type=prefix_lookup|exact,source=file.csv,prefix_column=col|key_column=col,
+    /// Format: type=prefix_lookup|exact,source=file.csv,key_column=col,
     /// fields=<key>@col:output|col2:output2;<key2>@col:output3[,reload=30s|watch]
-    /// where <key> is a flow field such as src_addr, dst_addr or proto.
-    /// prefix_column is required for CSV prefix lookup, key_column for CSV
-    /// exact lookup; neither applies to .mmdb
+    /// key_column names the CSV column holding the prefixes or keys; it does
+    /// not apply to .mmdb
     #[arg(long = "enrich")]
     enrich: Vec<String>,
 }

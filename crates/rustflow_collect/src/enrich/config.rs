@@ -9,29 +9,18 @@ use rustflow_core::for_each_flow_field;
 
 use crate::enrich::{Error, Key, KeyType, ReloadPolicy, Result};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CsvLookup {
-    Prefix {
-        prefix_column: String,
-    },
-    Exact {
-        key_column: String,
-        key_type: KeyType,
-    },
-}
-
-impl CsvLookup {
-    pub fn column(&self) -> &str {
-        match self {
-            Self::Prefix { prefix_column } => prefix_column,
-            Self::Exact { key_column, .. } => key_column,
-        }
-    }
+    Prefix,
+    Exact(KeyType),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourceFormat {
-    Csv(CsvLookup),
+    Csv {
+        key_column: String,
+        lookup: CsvLookup,
+    },
     Mmdb,
 }
 
@@ -69,8 +58,8 @@ impl SourceConfig {
             }
         }
 
-        if let SourceFormat::Csv(options) = &format
-            && options.column().trim().is_empty()
+        if let SourceFormat::Csv { key_column, .. } = &format
+            && key_column.trim().is_empty()
         {
             return Err(Error::Config("Empty CSV key column".into()));
         }
@@ -231,15 +220,7 @@ pub struct EnrichmentConfig {
     pub mappings: Vec<FieldMapping>,
 }
 
-const PARAMETERS: &[&str] = &[
-    "type",
-    "format",
-    "source",
-    "prefix_column",
-    "key_column",
-    "fields",
-    "reload",
-];
+const PARAMETERS: &[&str] = &["type", "format", "source", "key_column", "fields", "reload"];
 
 #[derive(Clone, Copy)]
 enum Kind {
@@ -382,21 +363,15 @@ pub fn parse_enrich_arg(arg: &str) -> Result<EnrichmentConfig> {
     }
 
     let format = match (format, kind) {
-        (Format::Csv, Kind::Prefix) => {
-            forbid(&["key_column"], "CSV prefix_lookup")?;
-            SourceFormat::Csv(CsvLookup::Prefix {
-                prefix_column: required("prefix_column")?.into(),
-            })
-        }
-        (Format::Csv, Kind::Exact) => {
-            forbid(&["prefix_column"], "CSV exact lookup")?;
-            SourceFormat::Csv(CsvLookup::Exact {
-                key_column: required("key_column")?.into(),
-                key_type,
-            })
-        }
+        (Format::Csv, kind) => SourceFormat::Csv {
+            key_column: required("key_column")?.into(),
+            lookup: match kind {
+                Kind::Prefix => CsvLookup::Prefix,
+                Kind::Exact => CsvLookup::Exact(key_type),
+            },
+        },
         (Format::Mmdb, Kind::Prefix) => {
-            forbid(&["prefix_column", "key_column"], "MMDB")?;
+            forbid(&["key_column"], "MMDB")?;
             SourceFormat::Mmdb
         }
         (Format::Mmdb, Kind::Exact) => {
