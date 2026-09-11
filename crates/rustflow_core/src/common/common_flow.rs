@@ -53,6 +53,51 @@ impl Default for SamplingRateCache {
     }
 }
 
+#[macro_export]
+macro_rules! for_each_flow_field {
+    ($callback:ident) => {
+        $callback! {
+            flow_type: FlowType required,
+            time_received_ns: Timestamp optional,
+            sequence_num: U32 required,
+            sampling_rate: U32 optional,
+            sampler_address: Ip optional,
+            time_flow_start_ns: Timestamp optional,
+            time_flow_end_ns: Timestamp optional,
+            bytes: U64 required,
+            packets: U64 required,
+            src_addr: Ip optional,
+            dst_addr: Ip optional,
+            src_mac: Mac optional,
+            dst_mac: Mac optional,
+            etype: U16 optional,
+            proto: U8 optional,
+            src_port: U16 optional,
+            dst_port: U16 optional,
+            in_if: U32 optional,
+            out_if: U32 optional,
+            ip_tos: U8 optional,
+            ip_ttl: U8 optional,
+            tcp_flags: U16 optional,
+            icmp_type: U8 optional,
+            icmp_code: U8 optional,
+            ipv6_flow_label: U32 optional,
+            fragment_id: U32 optional,
+            fragment_offset: U16 optional,
+            src_as: U32 optional,
+            dst_as: U32 optional,
+            next_hop: Ip optional,
+            src_net: U8 optional,
+            dst_net: U8 optional,
+            bgp_next_hop: Ip optional,
+            src_vlan: U16 optional,
+            dst_vlan: U16 optional,
+            observation_domain_id: U32 optional,
+            template_id: U16 optional,
+        }
+    };
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct CommonFlow {
     pub flow_type: FlowType,
@@ -937,5 +982,31 @@ impl SFlowV5Context<'_> {
             Some(AsPathType::AsSequence(as_seq)) => as_seq.last().copied(),
             _ => None,
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    macro_rules! names {
+        ($( $name:ident : $kind:ident $presence:ident ),* $(,)?) => {
+            /// Compiles only while the list and the struct name the same
+            /// fields.
+            fn names(flow: &CommonFlow) -> Vec<&'static str> {
+                let CommonFlow { $( $name, )* } = flow;
+                $( let _ = $name; )*
+                vec![$( stringify!($name), )*]
+            }
+        };
+    }
+    for_each_flow_field!(names);
+
+    #[test]
+    fn list_names_every_field_of_the_struct() {
+        let names = names(&CommonFlow::new(FlowType::Ipfix));
+        assert_eq!(names.len(), 37);
+        assert_eq!(names[0], "flow_type");
+        assert_eq!(names[36], "template_id");
     }
 }

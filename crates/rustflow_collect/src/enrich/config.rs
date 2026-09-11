@@ -1,10 +1,11 @@
 use std::collections::{HashMap, HashSet};
-use std::net::IpAddr;
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
 
 use rustflow_core::common::common_flow::CommonFlow;
+use rustflow_core::for_each_flow_field;
 
 use crate::enrich::{Error, Key, KeyType, ReloadPolicy, Result};
 
@@ -124,83 +125,82 @@ impl FromStr for ReloadPolicy {
     }
 }
 
-/// The flow field a lookup key is taken from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LookupKey {
-    SrcAddr,
-    DstAddr,
-    NextHop,
-    BgpNextHop,
-    SamplerAddress,
-    Proto,
-    SrcPort,
-    DstPort,
-    InIf,
-    OutIf,
-    SrcAs,
-    DstAs,
-    SrcVlan,
-    DstVlan,
-    Etype,
+#[derive(Clone, Copy)]
+pub struct LookupKey {
+    name: &'static str,
+    key_type: KeyType,
+    extract: fn(&CommonFlow) -> Option<Key<'static>>,
 }
 
-impl LookupKey {
-    pub const NAMES: &[(&str, Self)] = &[
-        ("src_addr", Self::SrcAddr),
-        ("dst_addr", Self::DstAddr),
-        ("next_hop", Self::NextHop),
-        ("bgp_next_hop", Self::BgpNextHop),
-        ("sampler_address", Self::SamplerAddress),
-        ("proto", Self::Proto),
-        ("src_port", Self::SrcPort),
-        ("dst_port", Self::DstPort),
-        ("in_if", Self::InIf),
-        ("out_if", Self::OutIf),
-        ("src_as", Self::SrcAs),
-        ("dst_as", Self::DstAs),
-        ("src_vlan", Self::SrcVlan),
-        ("dst_vlan", Self::DstVlan),
-        ("etype", Self::Etype),
-    ];
+macro_rules! lookup_fields {
+    ($( $name:ident : $kind:ident $presence:ident ),* $(,)?) => {
+        lookup_fields!(@fields [] $( $name : $kind $presence, )*);
+    };
+    (@fields [$($acc:tt)*] $name:ident : FlowType $presence:ident, $($rest:tt)*) => {
+        lookup_fields!(@fields [$($acc)*] $($rest)*);
+    };
+    (@fields [$($acc:tt)*] $name:ident : Timestamp $presence:ident, $($rest:tt)*) => {
+        lookup_fields!(@fields [$($acc)*] $($rest)*);
+    };
+    (@fields [$($acc:tt)*] $name:ident : Mac $presence:ident, $($rest:tt)*) => {
+        lookup_fields!(@fields [$($acc)*] $($rest)*);
+    };
+    (@fields [$($acc:tt)*] $name:ident : Ip optional, $($rest:tt)*) => {
+        lookup_fields!(@fields [$($acc)* LookupKey {
+            name: stringify!($name),
+            key_type: KeyType::Ip,
+            extract: |flow| flow.$name.map(Key::Ip),
+        },] $($rest)*);
+    };
+    (@fields [$($acc:tt)*] $name:ident : $kind:ident optional, $($rest:tt)*) => {
+        lookup_fields!(@fields [$($acc)* LookupKey {
+            name: stringify!($name),
+            key_type: KeyType::Number,
+            extract: |flow| flow.$name.map(|value| Key::Number(value.into())),
+        },] $($rest)*);
+    };
+    (@fields [$($acc:tt)*] $name:ident : $kind:ident required, $($rest:tt)*) => {
+        lookup_fields!(@fields [$($acc)* LookupKey {
+            name: stringify!($name),
+            key_type: KeyType::Number,
+            extract: |flow| Some(Key::Number(flow.$name.into())),
+        },] $($rest)*);
+    };
+    (@fields [$($acc:tt)*]) => {
+        const LOOKUP_KEYS: &[LookupKey] = &[$($acc)*];
+    };
+}
+for_each_flow_field!(lookup_fields);
 
-    /// The kind of key this field produces: addresses are `Ip`, everything
-    /// else is `Number`.
-    pub fn key_type(self) -> KeyType {
-        match self {
-            Self::SrcAddr
-            | Self::DstAddr
-            | Self::NextHop
-            | Self::BgpNextHop
-            | Self::SamplerAddress => KeyType::Ip,
-            _ => KeyType::Number,
-        }
+impl LookupKey {
+    pub fn all() -> impl Iterator<Item = Self> {
+        LOOKUP_KEYS.iter().copied()
     }
 
-    /// The field's value as a lookup key, if the flow has it.
+    pub fn name(self) -> &'static str {
+        self.name
+    }
+
+    pub fn key_type(self) -> KeyType {
+        self.key_type
+    }
+
     pub fn extract(self, flow: &CommonFlow) -> Option<Key<'static>> {
-        fn ip(addr: Option<IpAddr>) -> Option<Key<'static>> {
-            addr.map(Key::Ip)
-        }
-        fn number(value: Option<impl Into<u64>>) -> Option<Key<'static>> {
-            value.map(|v| Key::Number(v.into()))
-        }
-        match self {
-            Self::SrcAddr => ip(flow.src_addr),
-            Self::DstAddr => ip(flow.dst_addr),
-            Self::NextHop => ip(flow.next_hop),
-            Self::BgpNextHop => ip(flow.bgp_next_hop),
-            Self::SamplerAddress => ip(flow.sampler_address),
-            Self::Proto => number(flow.proto),
-            Self::SrcPort => number(flow.src_port),
-            Self::DstPort => number(flow.dst_port),
-            Self::InIf => number(flow.in_if),
-            Self::OutIf => number(flow.out_if),
-            Self::SrcAs => number(flow.src_as),
-            Self::DstAs => number(flow.dst_as),
-            Self::SrcVlan => number(flow.src_vlan),
-            Self::DstVlan => number(flow.dst_vlan),
-            Self::Etype => number(flow.etype),
-        }
+        (self.extract)(flow)
+    }
+}
+
+impl PartialEq for LookupKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+
+impl Eq for LookupKey {}
+
+impl fmt::Debug for LookupKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
     }
 }
 
@@ -208,22 +208,16 @@ impl FromStr for LookupKey {
     type Err = Error;
 
     fn from_str(value: &str) -> Result<Self> {
-        Self::NAMES
-            .iter()
-            .find(|(name, _)| *name == value)
-            .map(|(_, key)| *key)
-            .ok_or_else(|| {
-                let names: Vec<_> = Self::NAMES.iter().map(|(name, _)| *name).collect();
-                Error::Config(format!(
-                    "Unknown lookup key '{value}'. Valid keys: {}",
-                    names.join(", ")
-                ))
-            })
+        Self::all().find(|key| key.name() == value).ok_or_else(|| {
+            let names: Vec<_> = Self::all().map(LookupKey::name).collect();
+            Error::Config(format!(
+                "Unknown lookup key '{value}'. Valid keys: {}",
+                names.join(", ")
+            ))
+        })
     }
 }
 
-/// One output field: the flow field to look up, the source column to read,
-/// and the name to emit it under.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldMapping {
     pub key: LookupKey,
@@ -231,7 +225,6 @@ pub struct FieldMapping {
     pub output_field: String,
 }
 
-/// One `--enrich` argument: a source and the fields it produces.
 #[derive(Debug, Clone)]
 pub struct EnrichmentConfig {
     pub source: SourceConfig,
@@ -286,16 +279,16 @@ impl FromStr for Format {
     }
 }
 
-/// Parse one `fields` value: groups separated by `;`, each
-/// `<key>@<source>:<output>[|<source>:<output>...]`.
 fn parse_field_mappings(value: &str) -> Result<Vec<FieldMapping>> {
     let mut mappings = Vec::new();
+
     for group in value.split(';').map(str::trim).filter(|g| !g.is_empty()) {
         let (key, specs) = group.split_once('@').ok_or_else(|| {
             Error::Config(format!(
                 "Invalid field group, expected <key>@<source>:<output>[|<source>:<output>...]: '{group}'"
             ))
         })?;
+
         let key: LookupKey = key.trim().parse()?;
         let mut any = false;
         for spec in specs.split('|').map(str::trim).filter(|s| !s.is_empty()) {
@@ -308,6 +301,7 @@ fn parse_field_mappings(value: &str) -> Result<Vec<FieldMapping>> {
                         "Invalid field mapping, expected source:output: '{spec}'"
                     ))
                 })?;
+
             mappings.push(FieldMapping {
                 key,
                 source_column: source_column.to_owned(),
@@ -321,9 +315,11 @@ fn parse_field_mappings(value: &str) -> Result<Vec<FieldMapping>> {
             )));
         }
     }
+
     if mappings.is_empty() {
         return Err(Error::Config("'fields' has no field mappings".into()));
     }
+
     Ok(mappings)
 }
 
@@ -334,6 +330,7 @@ pub fn parse_enrich_arg(arg: &str) -> Result<EnrichmentConfig> {
             .split_once('=')
             .ok_or_else(|| Error::Config(format!("Expected key=value: '{part}'")))?;
         let (key, value) = (key.trim(), value.trim());
+
         if value.is_empty() {
             return Err(Error::Config(format!("Empty '{key}' parameter")));
         }
@@ -344,17 +341,20 @@ pub fn parse_enrich_arg(arg: &str) -> Result<EnrichmentConfig> {
             return Err(Error::Config(format!("Duplicate parameter '{key}'")));
         }
     }
+
     let required = |key: &str| {
         params
             .get(key)
             .copied()
             .ok_or_else(|| Error::Config(format!("Missing '{key}' parameter")))
     };
+
     let forbid =
         |keys: &[&str], context: &str| match keys.iter().find(|key| params.contains_key(*key)) {
             Some(key) => Err(Error::Config(format!("'{key}' is not valid for {context}"))),
             None => Ok(()),
         };
+
     let kind: Kind = required("type")?.parse()?;
     let source = PathBuf::from(required("source")?);
     let format: Format = params
@@ -365,20 +365,22 @@ pub fn parse_enrich_arg(arg: &str) -> Result<EnrichmentConfig> {
             Error::Config("Specify format=csv or format=mmdb when source has no extension".into())
         })?
         .parse()?;
+
     let mappings = parse_field_mappings(required("fields")?)?;
 
-    // Every key of one source must produce the same kind of lookup key.
     let key_type = mappings[0].key.key_type();
     if mappings.iter().any(|m| m.key.key_type() != key_type) {
         return Err(Error::Config(
             "All lookup keys of one source must be addresses or all numbers".into(),
         ));
     }
+
     if matches!(kind, Kind::Prefix) && key_type != KeyType::Ip {
         return Err(Error::Config(
             "prefix_lookup keys must be address fields".into(),
         ));
     }
+
     let format = match (format, kind) {
         (Format::Csv, Kind::Prefix) => {
             forbid(&["key_column"], "CSV prefix_lookup")?;
@@ -401,17 +403,20 @@ pub fn parse_enrich_arg(arg: &str) -> Result<EnrichmentConfig> {
             return Err(Error::Config("MMDB supports only prefix_lookup".into()));
         }
     };
+
     let reload = params
         .get("reload")
         .map(|v| v.parse())
         .transpose()?
         .unwrap_or_default();
+
     let mut columns: Vec<String> = Vec::new();
     for mapping in &mappings {
         if !columns.contains(&mapping.source_column) {
             columns.push(mapping.source_column.clone());
         }
     }
+
     Ok(EnrichmentConfig {
         source: SourceConfig::new(source, format, columns, reload)?,
         mappings,
