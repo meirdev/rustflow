@@ -6,6 +6,8 @@ use prometheus::{Counter, CounterVec, Encoder, GaugeVec, Opts, Registry, TextEnc
 use rustc_hash::FxHashMap;
 use tiny_http::{Response, Server};
 
+use crate::enrich::TableMetrics;
+
 // Metric label constants
 pub const LABEL_NETFLOW: &str = "netflow";
 pub const LABEL_NETFLOW_V5: &str = "netflow_v5";
@@ -35,6 +37,9 @@ pub struct Metrics {
 
     /// Number of unique exporters (netflow_v9/ipfix)
     pub active_exporters: GaugeVec,
+
+    /// Load statistics of the enrichment tables, labeled by source
+    pub enrichment: TableMetrics,
 }
 
 impl Metrics {
@@ -99,8 +104,12 @@ impl Metrics {
             .register(Box::new(active_exporters.clone()))
             .unwrap();
 
+        let enrichment = TableMetrics::new();
+        enrichment.register(&registry).unwrap();
+
         Metrics {
             registry,
+            enrichment,
             packets_received_total,
             bytes_received_total,
             flows_processed_total,

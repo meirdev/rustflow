@@ -1,72 +1,59 @@
 use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use std::time::SystemTime;
+use std::time::{SystemTime, UNIX_EPOCH};
 
+pub mod metrics;
 pub mod reload;
 
-use crate::enrich::{Error, Key, Result, Row, Source, SourceConfig, source};
+use crate::enrich::{Key, Result, Row, Source, SourceConfig, source};
+use metrics::{SourceMetrics, TableMetrics};
 use reload::{ReloadDriver, ReloadEvent, ReloadGuard};
 
 pub use reload::ReloadPolicy;
 
-#[derive(Debug, Clone, Default)]
-pub struct LoadStats {
-    pub loaded_rows: usize,
-    pub successful_loads: u64,
-    pub reload_failures: u64,
-    pub watcher_failures: u64,
-    pub last_success: Option<SystemTime>,
-    pub last_error: Option<String>,
-}
-
-struct State {
-    table: Arc<dyn Source>,
-    stats: LoadStats,
-}
-
 struct Shared {
     config: SourceConfig,
-    state: RwLock<State>,
+    source: RwLock<Arc<dyn Source>>,
     // Serialize explicit and scheduled reloads so older loads cannot replace newer ones.
     loading: Mutex<()>,
+    metrics: SourceMetrics,
 }
 
 impl Shared {
-    fn state(&self) -> RwLockReadGuard<'_, State> {
-        self.state.read().unwrap_or_else(PoisonError::into_inner)
+    fn source(&self) -> RwLockReadGuard<'_, Arc<dyn Source>> {
+        self.source.read().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn state_mut(&self) -> RwLockWriteGuard<'_, State> {
-        self.state.write().unwrap_or_else(PoisonError::into_inner)
+    fn source_mut(&self) -> RwLockWriteGuard<'_, Arc<dyn Source>> {
+        self.source.write().unwrap_or_else(PoisonError::into_inner)
     }
 
     fn reload(&self) -> Result<usize> {
         let _loading = self.loading.lock().unwrap_or_else(PoisonError::into_inner);
-        let loaded = source::open(&self.config);
-        let mut state = self.state_mut();
-        match loaded {
-            Ok(table) => {
-                let count = table.len();
-                let previous = std::mem::replace(&mut state.table, Arc::from(table));
-                state.stats.loaded_rows = count;
-                state.stats.successful_loads += 1;
-                state.stats.last_success = Some(SystemTime::now());
-                state.stats.last_error = None;
-                drop(state);
+        match source::open(&self.config) {
+            Ok(source) => {
+                let count = source.len();
+                // Swap under the lock, but free the previous source only
+                // after readers can proceed again.
+                let previous = std::mem::replace(&mut *self.source_mut(), Arc::from(source));
                 drop(previous);
+                self.record_load(count);
                 Ok(count)
             }
             Err(error) => {
-                state.stats.reload_failures += 1;
-                state.stats.last_error = Some(error.to_string());
+                self.metrics.reload_failures_total.inc();
+                eprintln!("{error}");
                 Err(error)
             }
         }
     }
 
-    fn record_watcher_error(&self, message: String) {
-        let mut state = self.state_mut();
-        state.stats.watcher_failures += 1;
-        state.stats.last_error = Some(Error::Watcher(message).to_string());
+    fn record_load(&self, count: usize) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+        self.metrics.loaded_rows.set(count as i64);
+        self.metrics.last_load_timestamp_seconds.set(now);
+        self.metrics.loads_total.inc();
     }
 }
 
@@ -77,31 +64,30 @@ pub struct Table {
 }
 
 impl Table {
-    pub fn new(config: SourceConfig) -> Result<Self> {
+    pub fn new(config: SourceConfig, metrics: &TableMetrics) -> Result<Self> {
         let driver = ReloadDriver::new(config.source(), config.reload())?;
-        let table = source::open(&config)?;
-        let stats = LoadStats {
-            loaded_rows: table.len(),
-            successful_loads: 1,
-            last_success: Some(SystemTime::now()),
-            ..Default::default()
-        };
+        let source = source::open(&config)?;
         let shared = Arc::new(Shared {
+            metrics: metrics.for_source(&config.source().display().to_string()),
             config,
-            state: RwLock::new(State {
-                table: Arc::from(table),
-                stats,
-            }),
+            source: RwLock::new(Arc::from(source)),
             loading: Mutex::new(()),
         });
+        shared.record_load(shared.source().len());
         let worker_shared = Arc::clone(&shared);
         let guard = driver.start(move |event| match event {
+            // A failed reload is already counted and reported.
             ReloadEvent::Reload => {
                 let _ = worker_shared.reload();
             }
-            ReloadEvent::WatcherError(message) => worker_shared.record_watcher_error(message),
+            ReloadEvent::WatcherError(message) => {
+                worker_shared.metrics.watcher_failures_total.inc();
+                eprintln!(
+                    "Watcher error on {}: {message}",
+                    worker_shared.config.source().display()
+                );
+            }
         })?;
-
         Ok(Self {
             _reload: guard,
             shared,
@@ -112,17 +98,25 @@ impl Table {
         &self.shared.config
     }
 
+    pub fn metrics(&self) -> &SourceMetrics {
+        &self.shared.metrics
+    }
+
+    pub fn len(&self) -> usize {
+        self.shared.source().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn reload(&self) -> Result<usize> {
         self.shared.reload()
     }
 
-    pub fn stats(&self) -> LoadStats {
-        self.shared.state().stats.clone()
-    }
-
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
-            table: Arc::clone(&self.shared.state().table),
+            source: Arc::clone(&self.shared.source()),
         }
     }
 
@@ -133,11 +127,11 @@ impl Table {
 
 #[derive(Clone)]
 pub struct Snapshot {
-    table: Arc<dyn Source>,
+    source: Arc<dyn Source>,
 }
 
 impl Snapshot {
     pub fn lookup(&self, key: Key<'_>) -> Option<Row> {
-        self.table.lookup(key)
+        self.source.lookup(key)
     }
 }

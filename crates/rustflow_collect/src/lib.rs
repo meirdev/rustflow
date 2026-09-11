@@ -620,7 +620,7 @@ pub fn run(cli: CollectArgs) {
     }
 
     // Parse and build enrichment engine
-    let mut enrichment_engine = EnrichmentEngine::new();
+    let mut enrichment_engine = EnrichmentEngine::new(metrics.enrichment.clone());
     for enrich_arg in &cli.enrich {
         match parse_enrich_arg(enrich_arg) {
             Ok(config) => {
@@ -639,10 +639,6 @@ pub fn run(cli: CollectArgs) {
             }
         }
     }
-    metrics
-        .registry
-        .register(Box::new(enrichment_engine.collector()))
-        .expect("enrichment metrics register once");
     let enrichment_engine = Arc::new(enrichment_engine);
 
     let interval = cli.interval.as_deref().map(|value| {
