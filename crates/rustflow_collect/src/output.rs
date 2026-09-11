@@ -649,45 +649,13 @@ fn file_extension(serialization: SerializationFormat) -> &'static str {
     }
 }
 
-const COMMON_FLOW_HEADERS: &[&str] = &[
-    "flow_type",
-    "time_received_ns",
-    "sequence_num",
-    "sampling_rate",
-    "sampler_address",
-    "time_flow_start_ns",
-    "time_flow_end_ns",
-    "bytes",
-    "packets",
-    "src_addr",
-    "dst_addr",
-    "src_mac",
-    "dst_mac",
-    "etype",
-    "proto",
-    "src_port",
-    "dst_port",
-    "in_if",
-    "out_if",
-    "ip_tos",
-    "ip_ttl",
-    "tcp_flags",
-    "icmp_type",
-    "icmp_code",
-    "ipv6_flow_label",
-    "fragment_id",
-    "fragment_offset",
-    "src_as",
-    "dst_as",
-    "next_hop",
-    "src_net",
-    "dst_net",
-    "bgp_next_hop",
-    "src_vlan",
-    "dst_vlan",
-    "observation_domain_id",
-    "template_id",
-];
+macro_rules! flow_headers {
+    ($( $name:ident : $kind:ident $presence:ident ),* $(,)?) => {
+        /// CSV header of the common flow fields, in flow field order.
+        const COMMON_FLOW_HEADERS: &[&str] = &[$( stringify!($name), )*];
+    };
+}
+rustflow_core::for_each_flow_field!(flow_headers);
 
 #[cfg(test)]
 mod tests {

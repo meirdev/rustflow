@@ -1,396 +1,399 @@
-use std::net::IpAddr;
-use std::path::PathBuf;
+use std::collections::{HashMap, HashSet};
+use std::fmt;
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::time::Duration;
 
 use rustflow_core::common::common_flow::CommonFlow;
+use rustflow_core::for_each_flow_field;
+
+use crate::enrich::{Error, Key, KeyType, ReloadPolicy, Result};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LookupType {
-    PrefixLookup,
+pub enum CsvLookup {
+    Prefix,
+    Exact(KeyType),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LookupKey {
-    SrcAddr,
-    DstAddr,
-    NextHop,
-    SamplerAddress,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SourceFormat {
+    Csv {
+        key_column: String,
+        lookup: CsvLookup,
+    },
+    Mmdb,
 }
+
+#[derive(Debug, Clone)]
+pub struct SourceConfig {
+    source: PathBuf,
+    format: SourceFormat,
+    reload: ReloadPolicy,
+    columns: Vec<String>,
+}
+
+impl SourceConfig {
+    pub fn new(
+        source: PathBuf,
+        format: SourceFormat,
+        columns: Vec<String>,
+        reload: ReloadPolicy,
+    ) -> Result<Self> {
+        if source.as_os_str().is_empty() {
+            return Err(Error::Config("Empty source".into()));
+        }
+
+        if columns.is_empty() {
+            return Err(Error::Config(
+                "At least one source column is required".into(),
+            ));
+        }
+
+        let mut seen = HashSet::new();
+        for column in &columns {
+            if column.trim().is_empty() || !seen.insert(column) {
+                return Err(Error::Config(
+                    "Source columns must be nonempty and unique".into(),
+                ));
+            }
+        }
+
+        if let SourceFormat::Csv { key_column, .. } = &format
+            && key_column.trim().is_empty()
+        {
+            return Err(Error::Config("Empty CSV key column".into()));
+        }
+
+        Ok(Self {
+            source: std::path::absolute(source)?,
+            format,
+            columns,
+            reload,
+        })
+    }
+
+    pub fn source(&self) -> &Path {
+        &self.source
+    }
+    pub fn format(&self) -> &SourceFormat {
+        &self.format
+    }
+    pub fn columns(&self) -> &[String] {
+        &self.columns
+    }
+    pub fn reload(&self) -> ReloadPolicy {
+        self.reload
+    }
+}
+
+pub const DEFAULT_DEBOUNCE: Duration = Duration::from_millis(250);
+
+pub const MIN_INTERVAL: Duration = Duration::from_secs(10);
+
+impl FromStr for ReloadPolicy {
+    type Err = Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        Ok(match value {
+            "never" => Self::Never,
+            "watch" => Self::Watch {
+                debounce: DEFAULT_DEBOUNCE,
+            },
+            _ => {
+                let interval = duration_str::parse(value).map_err(|e| {
+                    Error::Config(format!("Invalid reload duration '{value}': {e}"))
+                })?;
+                if interval < MIN_INTERVAL {
+                    return Err(Error::Config(format!(
+                        "Reload interval '{value}' must be at least {MIN_INTERVAL:?}"
+                    )));
+                }
+                Self::Interval(interval)
+            }
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct LookupKey {
+    name: &'static str,
+    key_type: KeyType,
+    extract: fn(&CommonFlow) -> Option<Key<'static>>,
+}
+
+macro_rules! lookup_fields {
+    ($( $name:ident : $kind:ident $presence:ident ),* $(,)?) => {
+        lookup_fields!(@fields [] $( $name : $kind $presence, )*);
+    };
+    (@fields [$($acc:tt)*] $name:ident : FlowType $presence:ident, $($rest:tt)*) => {
+        lookup_fields!(@fields [$($acc)*] $($rest)*);
+    };
+    (@fields [$($acc:tt)*] $name:ident : Timestamp $presence:ident, $($rest:tt)*) => {
+        lookup_fields!(@fields [$($acc)*] $($rest)*);
+    };
+    (@fields [$($acc:tt)*] $name:ident : Mac $presence:ident, $($rest:tt)*) => {
+        lookup_fields!(@fields [$($acc)*] $($rest)*);
+    };
+    (@fields [$($acc:tt)*] $name:ident : Ip optional, $($rest:tt)*) => {
+        lookup_fields!(@fields [$($acc)* LookupKey {
+            name: stringify!($name),
+            key_type: KeyType::Ip,
+            extract: |flow| flow.$name.map(Key::Ip),
+        },] $($rest)*);
+    };
+    (@fields [$($acc:tt)*] $name:ident : $kind:ident optional, $($rest:tt)*) => {
+        lookup_fields!(@fields [$($acc)* LookupKey {
+            name: stringify!($name),
+            key_type: KeyType::Number,
+            extract: |flow| flow.$name.map(|value| Key::Number(value.into())),
+        },] $($rest)*);
+    };
+    (@fields [$($acc:tt)*] $name:ident : $kind:ident required, $($rest:tt)*) => {
+        lookup_fields!(@fields [$($acc)* LookupKey {
+            name: stringify!($name),
+            key_type: KeyType::Number,
+            extract: |flow| Some(Key::Number(flow.$name.into())),
+        },] $($rest)*);
+    };
+    (@fields [$($acc:tt)*]) => {
+        const LOOKUP_KEYS: &[LookupKey] = &[$($acc)*];
+    };
+}
+for_each_flow_field!(lookup_fields);
 
 impl LookupKey {
-    /// Number of variants; `index()` is always below this.
-    pub const COUNT: usize = 4;
-
-    pub fn from_str(s: &str) -> Result<Self, String> {
-        match s {
-            "src_addr" => Ok(Self::SrcAddr),
-            "dst_addr" => Ok(Self::DstAddr),
-            "next_hop" => Ok(Self::NextHop),
-            "sampler_address" => Ok(Self::SamplerAddress),
-            _ => Err(format!(
-                "Unknown lookup key: '{}'. Valid keys: src_addr, dst_addr, next_hop, sampler_address",
-                s
-            )),
-        }
+    pub fn all() -> impl Iterator<Item = Self> {
+        LOOKUP_KEYS.iter().copied()
     }
 
-    pub fn extract(&self, flow: &CommonFlow) -> Option<IpAddr> {
-        match self {
-            Self::SrcAddr => flow.src_addr,
-            Self::DstAddr => flow.dst_addr,
-            Self::NextHop => flow.next_hop,
-            Self::SamplerAddress => flow.sampler_address,
-        }
+    pub fn name(self) -> &'static str {
+        self.name
     }
 
-    pub fn index(self) -> usize {
-        self as usize
+    pub fn key_type(self) -> KeyType {
+        self.key_type
+    }
+
+    pub fn extract(self, flow: &CommonFlow) -> Option<Key<'static>> {
+        (self.extract)(flow)
+    }
+}
+
+impl PartialEq for LookupKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+
+impl Eq for LookupKey {}
+
+impl fmt::Debug for LookupKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+impl FromStr for LookupKey {
+    type Err = Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        Self::all().find(|key| key.name() == value).ok_or_else(|| {
+            let names: Vec<_> = Self::all().map(LookupKey::name).collect();
+            Error::Config(format!(
+                "Unknown lookup key '{value}'. Valid keys: {}",
+                names.join(", ")
+            ))
+        })
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldMapping {
-    /// Flow field whose address is looked up in the datasource.
     pub key: LookupKey,
-    /// Column (CSV) or dotted path (MaxMind DB) in the datasource.
     pub source_column: String,
-    /// Name of the emitted field.
     pub output_field: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct EnrichmentConfig {
-    pub lookup_type: LookupType,
-    pub source_file: PathBuf,
-    pub field_mappings: Vec<FieldMapping>,
-    /// Name of the CSV column holding the prefix. Required for CSV sources,
-    /// not applicable to MaxMind DB sources.
-    pub prefix_column: Option<String>,
-    pub reload_interval: Option<Duration>,
+    pub source: SourceConfig,
+    pub mappings: Vec<FieldMapping>,
 }
 
-/// Split the argument on `,` into `(name, value)` parameters.
-fn split_parameters(arg: &str) -> Result<Vec<(&str, &str)>, String> {
-    arg.split(',')
-        .map(|part| {
-            let (name, value) = part
-                .split_once('=')
-                .ok_or_else(|| format!("Invalid format, expected key=value: '{}'", part))?;
-            let name = name.trim();
-            if name.is_empty() {
-                return Err(format!("Invalid format, expected key=value: '{}'", part));
-            }
-            Ok((name, value.trim()))
-        })
-        .collect()
+const PARAMETERS: &[&str] = &["type", "format", "source", "key_column", "fields", "reload"];
+
+#[derive(Clone, Copy)]
+enum Kind {
+    Prefix,
+    Exact,
 }
 
-/// Parse one `fields` value.
-///
-/// Groups are separated by `;`, and each group is
-/// `<key>@<mapping>[|<mapping>...]` where a mapping is `<source>:<output>`.
-/// Every group must name its key.
-fn parse_field_mappings(value: &str) -> Result<Vec<FieldMapping>, String> {
+impl FromStr for Kind {
+    type Err = Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "prefix_lookup" => Ok(Self::Prefix),
+            "exact" => Ok(Self::Exact),
+            other => Err(Error::Config(format!("Unknown type '{other}'"))),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Format {
+    Csv,
+    Mmdb,
+}
+
+impl FromStr for Format {
+    type Err = Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        if value.eq_ignore_ascii_case("csv") {
+            Ok(Self::Csv)
+        } else if value.eq_ignore_ascii_case("mmdb") {
+            Ok(Self::Mmdb)
+        } else {
+            Err(Error::Config(format!("Unknown format '{value}'")))
+        }
+    }
+}
+
+fn parse_field_mappings(value: &str) -> Result<Vec<FieldMapping>> {
     let mut mappings = Vec::new();
 
-    for group in value.split(';') {
-        let group = group.trim();
-        if group.is_empty() {
-            continue;
-        }
-
+    for group in value.split(';').map(str::trim).filter(|g| !g.is_empty()) {
         let (key, specs) = group.split_once('@').ok_or_else(|| {
-            format!(
-                "Invalid field group, expected <key>@<source>:<output>[|<source>:<output>...]: '{}'",
-                group
-            )
+            Error::Config(format!(
+                "Invalid field group, expected <key>@<source>:<output>[|<source>:<output>...]: '{group}'"
+            ))
         })?;
-        let key = LookupKey::from_str(key.trim())?;
 
+        let key: LookupKey = key.trim().parse()?;
         let mut any = false;
-        for spec in specs.split('|') {
-            let spec = spec.trim();
-            if spec.is_empty() {
-                continue;
-            }
-            let (src, dst) = spec.split_once(':').ok_or_else(|| {
-                format!("Invalid field mapping, expected source:output: '{}'", spec)
-            })?;
-            let (src, dst) = (src.trim(), dst.trim());
-            if src.is_empty() || dst.is_empty() {
-                return Err(format!(
-                    "Invalid field mapping, expected source:output: '{}'",
-                    spec
-                ));
-            }
+        for spec in specs.split('|').map(str::trim).filter(|s| !s.is_empty()) {
+            let (source_column, output_field) = spec
+                .split_once(':')
+                .map(|(s, o)| (s.trim(), o.trim()))
+                .filter(|(s, o)| !s.is_empty() && !o.is_empty())
+                .ok_or_else(|| {
+                    Error::Config(format!(
+                        "Invalid field mapping, expected source:output: '{spec}'"
+                    ))
+                })?;
+
             mappings.push(FieldMapping {
                 key,
-                source_column: src.to_string(),
-                output_field: dst.to_string(),
+                source_column: source_column.to_owned(),
+                output_field: output_field.to_owned(),
             });
             any = true;
         }
-
         if !any {
-            return Err(format!("Field group has no mappings: '{}'", group));
+            return Err(Error::Config(format!(
+                "Field group has no mappings: '{group}'"
+            )));
         }
+    }
+
+    if mappings.is_empty() {
+        return Err(Error::Config("'fields' has no field mappings".into()));
     }
 
     Ok(mappings)
 }
 
-pub fn parse_enrich_arg(arg: &str) -> Result<EnrichmentConfig, String> {
-    let mut lookup_type = None;
-    let mut source_file = None;
-    let mut field_mappings = Vec::new();
-    let mut prefix_column = None;
-    let mut reload_interval = None;
+pub fn parse_enrich_arg(arg: &str) -> Result<EnrichmentConfig> {
+    let mut params = HashMap::new();
+    for part in arg.split(',') {
+        let (key, value) = part
+            .split_once('=')
+            .ok_or_else(|| Error::Config(format!("Expected key=value: '{part}'")))?;
+        let (key, value) = (key.trim(), value.trim());
 
-    for (key, value) in split_parameters(arg)? {
-        match key {
-            "type" => {
-                lookup_type = Some(match value.trim() {
-                    "prefix_lookup" => LookupType::PrefixLookup,
-                    other => {
-                        return Err(format!(
-                            "Unknown type: '{}'. Valid types: prefix_lookup",
-                            other
-                        ));
-                    }
-                });
-            }
-            "source" => {
-                source_file = Some(PathBuf::from(value.trim()));
-            }
-            "fields" => {
-                field_mappings.extend(parse_field_mappings(value)?);
-            }
-            "prefix_column" => {
-                let name = value.trim();
-                if name.is_empty() {
-                    return Err("Empty 'prefix_column' parameter".to_string());
-                }
-                prefix_column = Some(name.to_string());
-            }
-            "reload" => {
-                let duration = duration_str::parse(value.trim())
-                    .map_err(|e| format!("Invalid reload duration '{}': {}", value, e))?;
-                reload_interval = Some(duration);
-            }
-            other => return Err(format!("Unknown parameter: '{}'", other)),
+        if value.is_empty() {
+            return Err(Error::Config(format!("Empty '{key}' parameter")));
+        }
+        if !PARAMETERS.contains(&key) {
+            return Err(Error::Config(format!("Unknown parameter '{key}'")));
+        }
+        if params.insert(key, value).is_some() {
+            return Err(Error::Config(format!("Duplicate parameter '{key}'")));
         }
     }
 
-    if field_mappings.is_empty() {
-        return Err("Missing 'fields' parameter or no field mappings specified".to_string());
+    let required = |key: &str| {
+        params
+            .get(key)
+            .copied()
+            .ok_or_else(|| Error::Config(format!("Missing '{key}' parameter")))
+    };
+
+    let forbid =
+        |keys: &[&str], context: &str| match keys.iter().find(|key| params.contains_key(*key)) {
+            Some(key) => Err(Error::Config(format!("'{key}' is not valid for {context}"))),
+            None => Ok(()),
+        };
+
+    let kind: Kind = required("type")?.parse()?;
+    let source = PathBuf::from(required("source")?);
+    let format: Format = params
+        .get("format")
+        .copied()
+        .or_else(|| source.extension()?.to_str())
+        .ok_or_else(|| {
+            Error::Config("Specify format=csv or format=mmdb when source has no extension".into())
+        })?
+        .parse()?;
+
+    let mappings = parse_field_mappings(required("fields")?)?;
+
+    let key_type = mappings[0].key.key_type();
+    if mappings.iter().any(|m| m.key.key_type() != key_type) {
+        return Err(Error::Config(
+            "All lookup keys of one source must be addresses or all numbers".into(),
+        ));
     }
 
-    let source_file: PathBuf = source_file.ok_or("Missing 'source' parameter")?;
-    let is_csv = source_file
-        .extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("csv"));
-    match (&prefix_column, is_csv) {
-        (None, true) => {
-            return Err("Missing 'prefix_column' parameter (required for CSV sources)".to_string());
+    if matches!(kind, Kind::Prefix) && key_type != KeyType::Ip {
+        return Err(Error::Config(
+            "prefix_lookup keys must be address fields".into(),
+        ));
+    }
+
+    let format = match (format, kind) {
+        (Format::Csv, kind) => SourceFormat::Csv {
+            key_column: required("key_column")?.into(),
+            lookup: match kind {
+                Kind::Prefix => CsvLookup::Prefix,
+                Kind::Exact => CsvLookup::Exact(key_type),
+            },
+        },
+        (Format::Mmdb, Kind::Prefix) => {
+            forbid(&["key_column"], "MMDB")?;
+            SourceFormat::Mmdb
         }
-        (Some(_), false) => {
-            return Err("'prefix_column' only applies to CSV sources".to_string());
+        (Format::Mmdb, Kind::Exact) => {
+            return Err(Error::Config("MMDB supports only prefix_lookup".into()));
         }
-        _ => {}
+    };
+
+    let reload = params
+        .get("reload")
+        .map(|v| v.parse())
+        .transpose()?
+        .unwrap_or_default();
+
+    let mut columns: Vec<String> = Vec::new();
+    for mapping in &mappings {
+        if !columns.contains(&mapping.source_column) {
+            columns.push(mapping.source_column.clone());
+        }
     }
 
     Ok(EnrichmentConfig {
-        lookup_type: lookup_type.ok_or("Missing 'type' parameter")?,
-        source_file,
-        field_mappings,
-        prefix_column,
-        reload_interval,
+        source: SourceConfig::new(source, format, columns, reload)?,
+        mappings,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn mapping(key: LookupKey, src: &str, dst: &str) -> FieldMapping {
-        FieldMapping {
-            key,
-            source_column: src.to_string(),
-            output_field: dst.to_string(),
-        }
-    }
-
-    #[test]
-    fn test_parse_basic() {
-        let arg = "type=prefix_lookup,source=test.csv,prefix_column=prefix,fields=dst_addr@account:dst_account";
-        let config = parse_enrich_arg(arg).unwrap();
-        assert_eq!(config.lookup_type, LookupType::PrefixLookup);
-        assert_eq!(config.source_file, PathBuf::from("test.csv"));
-        assert_eq!(
-            config.field_mappings,
-            vec![mapping(LookupKey::DstAddr, "account", "dst_account")]
-        );
-        assert_eq!(config.prefix_column.as_deref(), Some("prefix"));
-        assert!(config.reload_interval.is_none());
-    }
-
-    #[test]
-    fn test_parse_with_reload() {
-        let arg = "type=prefix_lookup,source=test.csv,prefix_column=prefix,fields=src_addr@region:src_region,reload=30s";
-        let config = parse_enrich_arg(arg).unwrap();
-        assert_eq!(
-            config.field_mappings,
-            vec![mapping(LookupKey::SrcAddr, "region", "src_region")]
-        );
-        assert_eq!(config.reload_interval, Some(Duration::from_secs(30)));
-    }
-
-    #[test]
-    fn test_parse_multiple_fields_in_one_group() {
-        let arg = "type=prefix_lookup,source=test.csv,prefix_column=prefix,fields=dst_addr@account:dst_account|region:dst_region|owner:dst_owner";
-        let config = parse_enrich_arg(arg).unwrap();
-        assert_eq!(
-            config.field_mappings,
-            vec![
-                mapping(LookupKey::DstAddr, "account", "dst_account"),
-                mapping(LookupKey::DstAddr, "region", "dst_region"),
-                mapping(LookupKey::DstAddr, "owner", "dst_owner"),
-            ]
-        );
-    }
-
-    #[test]
-    fn test_parse_multiple_keys() {
-        let arg = "type=prefix_lookup,source=GeoLite2-City.mmdb,fields=src_addr@country.iso_code:src_country|city.names.en:src_city;dst_addr@country.iso_code:dst_country|city.names.en:dst_city,reload=1h";
-        let config = parse_enrich_arg(arg).unwrap();
-        assert_eq!(
-            config.field_mappings,
-            vec![
-                mapping(LookupKey::SrcAddr, "country.iso_code", "src_country"),
-                mapping(LookupKey::SrcAddr, "city.names.en", "src_city"),
-                mapping(LookupKey::DstAddr, "country.iso_code", "dst_country"),
-                mapping(LookupKey::DstAddr, "city.names.en", "dst_city"),
-            ]
-        );
-        assert_eq!(config.reload_interval, Some(Duration::from_secs(3600)));
-    }
-
-    #[test]
-    fn test_parse_fields_before_source() {
-        let arg = "fields=src_addr@asn:src_asn|org:src_org,source=asn.csv,prefix_column=net,type=prefix_lookup";
-        let config = parse_enrich_arg(arg).unwrap();
-        assert_eq!(config.source_file, PathBuf::from("asn.csv"));
-        assert_eq!(config.field_mappings.len(), 2);
-    }
-
-    #[test]
-    fn test_parse_prefix_column() {
-        let arg =
-            "type=prefix_lookup,source=test.csv,prefix_column=subnet,fields=dst_addr@asn:dst_asn";
-        let config = parse_enrich_arg(arg).unwrap();
-        assert_eq!(config.prefix_column.as_deref(), Some("subnet"));
-
-        let arg = "type=prefix_lookup,source=test.csv,prefix_column=,fields=dst_addr@asn:dst_asn";
-        assert!(parse_enrich_arg(arg).is_err());
-    }
-
-    #[test]
-    fn test_prefix_column_is_required_for_csv_only() {
-        let arg = "type=prefix_lookup,source=test.csv,fields=dst_addr@asn:dst_asn";
-        let err = parse_enrich_arg(arg).unwrap_err();
-        assert!(err.contains("Missing 'prefix_column'"), "{}", err);
-
-        // extension match is case-insensitive
-        let arg = "type=prefix_lookup,source=TEST.CSV,fields=dst_addr@asn:dst_asn";
-        assert!(parse_enrich_arg(arg).is_err());
-
-        let arg = "type=prefix_lookup,source=geo.mmdb,fields=dst_addr@country.iso_code:dst_country";
-        let config = parse_enrich_arg(arg).unwrap();
-        assert!(config.prefix_column.is_none());
-
-        let arg = "type=prefix_lookup,source=geo.mmdb,prefix_column=x,fields=dst_addr@country.iso_code:dst_country";
-        let err = parse_enrich_arg(arg).unwrap_err();
-        assert!(err.contains("only applies to CSV"), "{}", err);
-    }
-
-    #[test]
-    fn test_parse_group_without_key_is_rejected() {
-        let arg =
-            "type=prefix_lookup,source=test.csv,prefix_column=prefix,fields=account:dst_account";
-        let err = parse_enrich_arg(arg).unwrap_err();
-        assert!(err.contains("<key>@"), "{}", err);
-
-        let arg = "type=prefix_lookup,source=test.csv,prefix_column=prefix,fields=dst_addr@a:b;region:dst_region";
-        assert!(parse_enrich_arg(arg).is_err());
-    }
-
-    #[test]
-    fn test_parse_unknown_key_is_rejected() {
-        let arg = "type=prefix_lookup,source=test.csv,prefix_column=prefix,fields=nope@account:dst_account";
-        let err = parse_enrich_arg(arg).unwrap_err();
-        assert!(err.contains("Unknown lookup key"), "{}", err);
-    }
-
-    #[test]
-    fn test_parse_bad_mapping_is_rejected() {
-        for fields in [
-            "dst_addr@account",
-            "dst_addr@:x",
-            "dst_addr@x:",
-            "dst_addr@",
-        ] {
-            let arg = format!(
-                "type=prefix_lookup,source=test.csv,prefix_column=prefix,fields={}",
-                fields
-            );
-            assert!(parse_enrich_arg(&arg).is_err(), "{}", fields);
-        }
-    }
-
-    #[test]
-    fn test_removed_key_parameter_is_rejected() {
-        let arg = "type=prefix_lookup,source=test.csv,key=dst_addr,fields=dst_addr@a:b";
-        let err = parse_enrich_arg(arg).unwrap_err();
-        assert!(err.contains("Unknown parameter: 'key'"), "{}", err);
-    }
-
-    #[test]
-    fn test_split_parameters() {
-        assert_eq!(
-            split_parameters("type=prefix_lookup,source=x.csv,fields=src_addr@a:b|c:d,reload=10s")
-                .unwrap(),
-            vec![
-                ("type", "prefix_lookup"),
-                ("source", "x.csv"),
-                ("fields", "src_addr@a:b|c:d"),
-                ("reload", "10s"),
-            ]
-        );
-        assert_eq!(
-            split_parameters(" type = x , source = y ").unwrap(),
-            vec![("type", "x"), ("source", "y")]
-        );
-        for bad in ["type", "a=b,c", "=x"] {
-            assert!(split_parameters(bad).is_err(), "{}", bad);
-        }
-    }
-
-    #[test]
-    fn test_comma_inside_fields_is_rejected() {
-        let arg = "type=prefix_lookup,source=x.mmdb,fields=src_addr@a:b,c:d";
-        let err = parse_enrich_arg(arg).unwrap_err();
-        assert!(err.contains("expected key=value: 'c:d'"), "{}", err);
-    }
-
-    #[test]
-    fn test_parse_missing_type() {
-        let arg = "source=test.csv,prefix_column=prefix,fields=dst_addr@a:b";
-        assert!(parse_enrich_arg(arg).is_err());
-    }
-
-    #[test]
-    fn test_parse_missing_fields() {
-        let arg = "type=prefix_lookup,source=test.csv";
-        assert!(parse_enrich_arg(arg).is_err());
-    }
 }
