@@ -2,10 +2,10 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use super::{ExactTable, PrefixTable, Source};
-use crate::config::CsvLookup;
-use crate::key::parse_prefix;
-use crate::row::{Row, Schema};
-use crate::{Error, Result};
+use crate::enrich::config::CsvLookup;
+use crate::enrich::key::parse_prefix;
+use crate::enrich::row::{Row, Schema};
+use crate::enrich::{Error, Result};
 
 pub fn open(path: &Path, lookup: &CsvLookup, schema: &Schema) -> Result<Box<dyn Source>> {
     Ok(match lookup {

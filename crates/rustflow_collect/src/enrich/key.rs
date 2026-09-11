@@ -3,7 +3,7 @@ use std::net::IpAddr;
 
 use ipnet::IpNet;
 
-use crate::{Error, Result};
+use crate::enrich::{Error, Result};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Key<'a> {

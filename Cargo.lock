@@ -510,20 +510,6 @@ dependencies = [
 
 [[package]]
 name = "duration-str"
-version = "0.11.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f88959de2d447fd3eddcf1909d1f19fe084e27a056a6904203dc5d8b9e771c1e"
-dependencies = [
- "chrono",
- "rust_decimal",
- "serde",
- "thiserror 2.0.20",
- "time",
- "winnow 0.6.26",
-]
-
-[[package]]
-name = "duration-str"
 version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "027cd1402a609c71a9ac333c7e3d90ee042e7a131da1a83da8c60df323f12f61"
@@ -533,7 +519,7 @@ dependencies = [
  "serde",
  "thiserror 2.0.20",
  "time",
- "winnow 0.7.14",
+ "winnow",
 ]
 
 [[package]]
@@ -956,19 +942,6 @@ dependencies = [
 
 [[package]]
 name = "maxminddb"
-version = "0.27.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76371bd37ce742f8954daabd0fde7f1594ee43ac2200e20c003ba5c3d65e2192"
-dependencies = [
- "ipnetwork",
- "log",
- "memchr",
- "serde",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "maxminddb"
 version = "0.30.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6649a1829998559f076107dfff337f1d05195eec8d01964d96e53570cc8f8d75"
@@ -1277,17 +1250,6 @@ dependencies = [
 
 [[package]]
 name = "prefix-trie"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03ef8c73261223b73d4807d55c6a71fa209695506c0efc30abc19eeba5713325"
-dependencies = [
- "either",
- "ipnet",
- "num-traits",
-]
-
-[[package]]
-name = "prefix-trie"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6369af434551b9bf8be05ab871ac1263687d6f0c9485e6d781f904f3e06d7d03"
@@ -1530,14 +1492,15 @@ dependencies = [
  "crossbeam",
  "csv",
  "ctrlc",
- "duration-str 0.11.3",
+ "duration-str",
+ "hashbrown 0.16.1",
  "ipnet",
- "ipnetwork",
  "macaddr",
- "maxminddb 0.27.3",
+ "maxminddb",
+ "notify-debouncer-full",
  "parquet",
  "pcap-file",
- "prefix-trie 0.8.1",
+ "prefix-trie",
  "prometheus",
  "prost",
  "rustc-hash",
@@ -1545,6 +1508,8 @@ dependencies = [
  "rustflow_lib",
  "serde",
  "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
  "tiny_http",
 ]
 
@@ -1568,22 +1533,6 @@ dependencies = [
  "serde",
  "strum",
  "strum_macros",
-]
-
-[[package]]
-name = "rustflow_enrich"
-version = "0.13.0"
-dependencies = [
- "csv",
- "duration-str 0.21.0",
- "hashbrown 0.16.1",
- "ipnet",
- "maxminddb 0.30.3",
- "notify-debouncer-full",
- "prefix-trie 0.10.1",
- "serde_json",
- "tempfile",
- "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -1942,7 +1891,7 @@ dependencies = [
  "indexmap",
  "toml_datetime",
  "toml_parser",
- "winnow 0.7.14",
+ "winnow",
 ]
 
 [[package]]
@@ -1951,7 +1900,7 @@ version = "1.0.9+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "702d4415e08923e7e1ef96cd5727c0dfed80b4d2fa25db9647fe5eb6f7c5a4c4"
 dependencies = [
- "winnow 0.7.14",
+ "winnow",
 ]
 
 [[package]]
@@ -2216,15 +2165,6 @@ name = "windows_x86_64_msvc"
 version = "0.53.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650"
-
-[[package]]
-name = "winnow"
-version = "0.6.26"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e90edd2ac1aa278a5c4599b1d89cf03074b610800f866d4026dc199d7929a28"
-dependencies = [
- "memchr",
-]
 
 [[package]]
 name = "winnow"

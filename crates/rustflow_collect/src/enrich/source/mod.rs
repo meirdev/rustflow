@@ -3,10 +3,10 @@ pub mod exact;
 pub mod mmdb;
 pub mod prefix;
 
-use crate::config::{EnrichmentConfig, SourceFormat};
-use crate::key::Key;
-use crate::row::{Row, Schema};
-use crate::{Error, Result};
+use crate::enrich::config::{SourceConfig, SourceFormat};
+use crate::enrich::key::Key;
+use crate::enrich::row::{Row, Schema};
+use crate::enrich::{Error, Result};
 
 pub use exact::ExactTable;
 pub use mmdb::MmdbSource;
@@ -22,7 +22,7 @@ pub trait Source: Send + Sync {
     }
 }
 
-pub fn open(config: &EnrichmentConfig) -> Result<Box<dyn Source>> {
+pub fn open(config: &SourceConfig) -> Result<Box<dyn Source>> {
     let schema = Schema::new(config.columns());
 
     let source = match config.format() {

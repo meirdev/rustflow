@@ -3,8 +3,8 @@ use std::collections::hash_map::RandomState;
 use hashbrown::{Equivalent, HashMap};
 
 use super::Source;
-use crate::key::Key;
-use crate::row::Row;
+use crate::enrich::key::Key;
+use crate::enrich::row::Row;
 
 #[derive(Default)]
 pub struct ExactTable {

@@ -1,4 +1,4 @@
-mod enrich;
+pub mod enrich;
 mod metrics;
 mod output;
 mod parquet_sink;
@@ -96,10 +96,11 @@ pub struct CollectArgs {
     template_timeout: u64,
 
     /// Flow enrichment configuration
-    /// Format: type=prefix_lookup,source=file.csv,prefix_column=col,
-    /// fields=<key>@col:output|col2:output2;<key2>@col:output3[,reload=10s]
-    /// where <key> is src_addr, dst_addr, next_hop or sampler_address.
-    /// prefix_column is required for CSV sources and omitted for .mmdb
+    /// Format: type=prefix_lookup|exact,source=file.csv,prefix_column=col|key_column=col,
+    /// fields=<key>@col:output|col2:output2;<key2>@col:output3[,reload=30s|watch]
+    /// where <key> is a flow field such as src_addr, dst_addr or proto.
+    /// prefix_column is required for CSV prefix lookup, key_column for CSV
+    /// exact lookup; neither applies to .mmdb
     #[arg(long = "enrich")]
     enrich: Vec<String>,
 }
@@ -619,13 +620,13 @@ pub fn run(cli: CollectArgs) {
     }
 
     // Parse and build enrichment engine
-    let mut enrichment_engine = EnrichmentEngine::new(Arc::clone(&metrics));
+    let mut enrichment_engine = EnrichmentEngine::new();
     for enrich_arg in &cli.enrich {
         match parse_enrich_arg(enrich_arg) {
             Ok(config) => {
-                let source = config.source_file.display().to_string();
+                let source = config.source.source().display().to_string();
                 match enrichment_engine.add(config) {
-                    Ok(count) => eprintln!("Loaded {} prefix entries from {}", count, source),
+                    Ok(count) => eprintln!("Loaded {} rows from {}", count, source),
                     Err(e) => {
                         eprintln!("Failed to load enrichment from {}: {}", source, e);
                         std::process::exit(1);
@@ -638,6 +639,10 @@ pub fn run(cli: CollectArgs) {
             }
         }
     }
+    metrics
+        .registry
+        .register(Box::new(enrichment_engine.collector()))
+        .expect("enrichment metrics register once");
     let enrichment_engine = Arc::new(enrichment_engine);
 
     let interval = cli.interval.as_deref().map(|value| {

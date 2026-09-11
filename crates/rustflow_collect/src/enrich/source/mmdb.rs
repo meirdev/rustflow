@@ -4,9 +4,9 @@ use maxminddb::{PathElement, Reader};
 use serde_json::Value;
 
 use super::Source;
-use crate::Result;
-use crate::key::Key;
-use crate::row::{Row, Schema};
+use crate::enrich::Result;
+use crate::enrich::key::Key;
+use crate::enrich::row::{Row, Schema};
 
 pub struct MmdbSource {
     reader: Reader<Vec<u8>>,

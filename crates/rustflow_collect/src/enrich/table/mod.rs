@@ -3,7 +3,7 @@ use std::time::SystemTime;
 
 pub mod reload;
 
-use crate::{EnrichmentConfig, Error, Key, Result, Row, Source, source};
+use crate::enrich::{Error, Key, Result, Row, Source, SourceConfig, source};
 use reload::{ReloadDriver, ReloadEvent, ReloadGuard};
 
 pub use reload::ReloadPolicy;
@@ -24,7 +24,7 @@ struct State {
 }
 
 struct Shared {
-    config: EnrichmentConfig,
+    config: SourceConfig,
     state: RwLock<State>,
     // Serialize explicit and scheduled reloads so older loads cannot replace newer ones.
     loading: Mutex<()>,
@@ -70,14 +70,14 @@ impl Shared {
     }
 }
 
-pub struct Enrichment {
+pub struct Table {
     // Guard is owned here, not by Shared: no reference cycle with the worker.
     _reload: ReloadGuard,
     shared: Arc<Shared>,
 }
 
-impl Enrichment {
-    pub fn new(config: EnrichmentConfig) -> Result<Self> {
+impl Table {
+    pub fn new(config: SourceConfig) -> Result<Self> {
         let driver = ReloadDriver::new(config.source(), config.reload())?;
         let table = source::open(&config)?;
         let stats = LoadStats {
@@ -108,7 +108,7 @@ impl Enrichment {
         })
     }
 
-    pub fn config(&self) -> &EnrichmentConfig {
+    pub fn config(&self) -> &SourceConfig {
         &self.shared.config
     }
 
@@ -120,8 +120,8 @@ impl Enrichment {
         self.shared.state().stats.clone()
     }
 
-    pub fn snapshot(&self) -> LookupSnapshot {
-        LookupSnapshot {
+    pub fn snapshot(&self) -> Snapshot {
+        Snapshot {
             table: Arc::clone(&self.shared.state().table),
         }
     }
@@ -132,11 +132,11 @@ impl Enrichment {
 }
 
 #[derive(Clone)]
-pub struct LookupSnapshot {
+pub struct Snapshot {
     table: Arc<dyn Source>,
 }
 
-impl LookupSnapshot {
+impl Snapshot {
     pub fn lookup(&self, key: Key<'_>) -> Option<Row> {
         self.table.lookup(key)
     }

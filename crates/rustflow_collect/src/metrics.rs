@@ -35,18 +35,6 @@ pub struct Metrics {
 
     /// Number of unique exporters (netflow_v9/ipfix)
     pub active_exporters: GaugeVec,
-
-    /// Number of rows currently loaded from each enrichment source
-    pub enrichment_loaded_rows: GaugeVec,
-
-    /// Unix timestamp of the latest successful load of each enrichment source
-    pub enrichment_last_reload_timestamp_seconds: GaugeVec,
-
-    /// Number of failed enrichment reloads
-    pub enrichment_reload_failures_total: CounterVec,
-
-    /// Rows skipped in the latest load of each enrichment source
-    pub enrichment_skipped_rows: GaugeVec,
 }
 
 impl Metrics {
@@ -92,42 +80,6 @@ impl Metrics {
         )
         .unwrap();
 
-        let enrichment_loaded_rows = GaugeVec::new(
-            Opts::new(
-                "enrichment_loaded_rows",
-                "Number of rows currently loaded from an enrichment source",
-            ),
-            &["source"],
-        )
-        .unwrap();
-
-        let enrichment_last_reload_timestamp_seconds = GaugeVec::new(
-            Opts::new(
-                "enrichment_last_reload_timestamp_seconds",
-                "Unix timestamp of the latest successful enrichment load",
-            ),
-            &["source"],
-        )
-        .unwrap();
-
-        let enrichment_reload_failures_total = CounterVec::new(
-            Opts::new(
-                "enrichment_reload_failures_total",
-                "Number of failed enrichment reloads",
-            ),
-            &["source"],
-        )
-        .unwrap();
-
-        let enrichment_skipped_rows = GaugeVec::new(
-            Opts::new(
-                "enrichment_skipped_rows",
-                "Rows skipped in the latest enrichment load",
-            ),
-            &["source"],
-        )
-        .unwrap();
-
         registry
             .register(Box::new(packets_received_total.clone()))
             .unwrap();
@@ -146,18 +98,6 @@ impl Metrics {
         registry
             .register(Box::new(active_exporters.clone()))
             .unwrap();
-        registry
-            .register(Box::new(enrichment_loaded_rows.clone()))
-            .unwrap();
-        registry
-            .register(Box::new(enrichment_last_reload_timestamp_seconds.clone()))
-            .unwrap();
-        registry
-            .register(Box::new(enrichment_reload_failures_total.clone()))
-            .unwrap();
-        registry
-            .register(Box::new(enrichment_skipped_rows.clone()))
-            .unwrap();
 
         Metrics {
             registry,
@@ -167,10 +107,6 @@ impl Metrics {
             parse_errors_total,
             unknown_version_total,
             active_exporters,
-            enrichment_loaded_rows,
-            enrichment_last_reload_timestamp_seconds,
-            enrichment_reload_failures_total,
-            enrichment_skipped_rows,
         }
     }
 

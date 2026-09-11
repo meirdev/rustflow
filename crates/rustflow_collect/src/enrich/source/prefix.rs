@@ -4,8 +4,8 @@ use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 use prefix_trie::PrefixMap;
 
 use super::Source;
-use crate::key::Key;
-use crate::row::Row;
+use crate::enrich::key::Key;
+use crate::enrich::row::Row;
 
 #[derive(Default)]
 pub struct PrefixTable {
