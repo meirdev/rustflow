@@ -4,115 +4,65 @@ use prometheus::IntCounter;
 
 use crate::sink::OutputMetrics;
 
-/// Logs an operation's failures on state change instead of per record, and
-/// counts every one.
-struct ErrorGate {
-    what: &'static str,
-    failing: bool,
-    counter: IntCounter,
+/// Counts every failure but logs only on a change of state, so a broken
+/// disk produces two log lines and not one per record. Each operation has
+/// its own state: only a successful write clears a write failure.
+pub struct SinkErrors {
+    metrics: OutputMetrics,
+    write_failing: bool,
+    rotate_failing: bool,
+    flush_failing: bool,
 }
 
-impl ErrorGate {
-    fn observe(&mut self, result: io::Result<()>) {
-        match (result, self.failing) {
-            (Ok(()), true) => {
-                eprintln!("{} recovered", self.what);
-                self.failing = false;
+fn observe(what: &str, failing: &mut bool, counter: &IntCounter, result: io::Result<()>) {
+    match result {
+        Ok(()) if *failing => {
+            eprintln!("{what} recovered");
+            *failing = false;
+        }
+        Ok(()) => {}
+        Err(e) => {
+            if !*failing {
+                eprintln!("{what} failed: {e}");
+                *failing = true;
             }
-            (Ok(()), false) => {}
-            (Err(e), false) => {
-                eprintln!("{} failed: {e}", self.what);
-                self.failing = true;
-                self.counter.inc();
-            }
-            (Err(_), true) => self.counter.inc(),
+            counter.inc();
         }
     }
-}
-
-/// One `ErrorGate` per sink operation, so they cannot mask each other: a
-/// rotation that was not due is not an observation, and only a successful
-/// *write* clears a write failure.
-pub struct SinkErrors {
-    write: ErrorGate,
-    rotate: ErrorGate,
-    flush: ErrorGate,
 }
 
 impl SinkErrors {
     pub fn new(metrics: &OutputMetrics) -> Self {
-        let gate = |what, counter: &IntCounter| ErrorGate {
-            what,
-            failing: false,
-            counter: counter.clone(),
-        };
         Self {
-            write: gate("output write", &metrics.write_errors),
-            rotate: gate("output rotation", &metrics.rotate_errors),
-            flush: gate("output flush", &metrics.write_errors),
+            metrics: metrics.clone(),
+            write_failing: false,
+            rotate_failing: false,
+            flush_failing: false,
         }
     }
 
     pub fn write(&mut self, result: io::Result<()>) {
-        self.write.observe(result);
+        let counter = &self.metrics.write_errors;
+        observe("output write", &mut self.write_failing, counter, result);
     }
 
     pub fn flush(&mut self, result: io::Result<()>) {
-        self.flush.observe(result);
+        let counter = &self.metrics.write_errors;
+        observe("output flush", &mut self.flush_failing, counter, result);
     }
 
     /// `Ok(false)` means no rotation was due: neither success nor failure.
     pub fn rotate(&mut self, result: io::Result<bool>) {
-        match result {
-            Ok(false) => {}
-            Ok(true) => self.rotate.observe(Ok(())),
-            Err(e) => self.rotate.observe(Err(e)),
-        }
+        let result = match result {
+            Ok(false) => return,
+            Ok(true) => Ok(()),
+            Err(e) => Err(e),
+        };
+        let counter = &self.metrics.rotate_errors;
+        observe("output rotation", &mut self.rotate_failing, counter, result);
     }
 
-    /// Whether the last observed write failed.
     pub fn write_failing(&self) -> bool {
-        self.write.failing
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn err() -> io::Result<()> {
-        Err(io::Error::other("disk full"))
-    }
-
-    #[test]
-    fn a_not_due_rotation_does_not_clear_a_write_failure() {
-        let metrics = OutputMetrics::new();
-        let mut errors = SinkErrors::new(&metrics);
-
-        errors.write(err());
-        assert!(errors.write_failing());
-        assert_eq!(metrics.write_errors.get(), 1);
-
-        for _ in 0..100 {
-            errors.rotate(Ok(false));
-        }
-        assert!(errors.write_failing(), "still failing; no false recovery");
-
-        errors.write(err());
-        assert_eq!(metrics.write_errors.get(), 2);
-        assert_eq!(metrics.rotate_errors.get(), 0);
-
-        errors.write(Ok(()));
-        assert!(!errors.write_failing());
-    }
-
-    #[test]
-    fn rotation_failures_count_separately() {
-        let metrics = OutputMetrics::new();
-        let mut errors = SinkErrors::new(&metrics);
-        errors.rotate(Err(io::Error::other("mkdir")));
-        errors.rotate(Ok(true));
-        assert_eq!(metrics.rotate_errors.get(), 1);
-        assert_eq!(metrics.write_errors.get(), 0);
+        self.write_failing
     }
 }

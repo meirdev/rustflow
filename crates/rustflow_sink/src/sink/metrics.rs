@@ -2,11 +2,8 @@ use std::io::{self, Write};
 
 use prometheus::{IntCounter, Registry};
 
-/// Output-side Prometheus counters. Cheap to clone: each counter is
-/// reference-counted.
 #[derive(Clone, Debug)]
 pub struct OutputMetrics {
-    /// Flows handed to the sink.
     pub flows: IntCounter,
     /// Bytes written to the destination, after encoding and compression.
     pub bytes: IntCounter,
@@ -14,15 +11,12 @@ pub struct OutputMetrics {
     pub files: IntCounter,
     /// Failed writes and flushes.
     pub write_errors: IntCounter,
-    /// Failed rotations (opening the next window or committing the previous).
     pub rotate_errors: IntCounter,
 }
 
 impl OutputMetrics {
     pub fn new() -> Self {
-        let counter = |name: &str, help: &str| {
-            IntCounter::new(name, help).expect("static metric definitions are valid")
-        };
+        let counter = |name: &str, help: &str| IntCounter::new(name, help).unwrap();
         Self {
             flows: counter("output_flows_total", "Flows handed to the output sink"),
             bytes: counter(

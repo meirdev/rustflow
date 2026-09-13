@@ -1473,3 +1473,14 @@ non-enriched fast path skips it.
 `[0,17,34,51,68,85]` while CSV and Parquet emit `00:11:22:33:44:55` and
 `docs/output.md` says "string". A `serialize_with` on the field in
 `rustflow_core` would align them; that is outside this crate's scope.
+
+## 15. Stepping back to plain crates (2026-09-11)
+
+The hand-written protobuf encoder, the `itoa` integers in CSV, and the
+`AddrText` address formatter were removed. They were measurably faster
+(section 14) but made the encoders large and unlike the rest of the code.
+`protobuf.rs` is now the prost-derived message and one
+`encode_length_delimited`; CSV and the Parquet text columns format through
+`Display`. `CRATE_NOTES.md` records what the profiling taught us about each
+crate, the before/after numbers, and the changes that would help without
+custom code. The Parquet writer settings and typed column builders stay.

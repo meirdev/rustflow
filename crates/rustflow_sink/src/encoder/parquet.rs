@@ -1,33 +1,25 @@
+use std::fmt::Write as _;
 use std::io;
-use std::marker::PhantomData;
-use std::net::IpAddr;
 use std::sync::Arc;
 
 use arrow_array::builder::{PrimitiveBuilder, StringBuilder, TimestampNanosecondBuilder};
-use arrow_array::types::{ArrowPrimitiveType, UInt8Type, UInt16Type, UInt32Type, UInt64Type};
+use arrow_array::types::{UInt8Type, UInt16Type, UInt32Type, UInt64Type};
 use arrow_array::{ArrayRef, RecordBatch};
 use arrow_schema::{DataType, Field, Schema, TimeUnit};
-use macaddr::MacAddr6;
 use parquet::arrow::ArrowWriter;
 use parquet::basic::{Compression, Encoding};
 use parquet::file::properties::{EnabledStatistics, WriterProperties, WriterVersion};
 use parquet::schema::types::ColumnPath;
-use rustflow_core::common::common_flow::{CommonFlow, FlowType};
+use rustflow_core::common::common_flow::CommonFlow;
+use rustflow_core::for_each_flow_field;
 
-use super::text::{AddrText, flow_type_name};
 use super::{FlowEncoder, Output};
-use crate::flow::Enriched;
-use crate::flow::fields::for_each_flow_field;
+use crate::enriched::Enriched;
 
-/// Rows buffered in the Arrow builders before a batch is handed to the
-/// writer. Large enough to amortize the per-batch setup across all ~40
-/// columns.
 const BATCH_ROWS: usize = 32_768;
 
-/// Columns where nearly every value is unique: a dictionary is pure
-/// overhead there, and delta encoding compresses monotonic timestamps and
-/// counters far better. Measured: 20 % less time and 25 % smaller files
-/// than the defaults on realistic data.
+/// Nearly every value is unique here, so a dictionary only costs time and
+/// delta encoding compresses far better.
 const HIGH_CARDINALITY: &[&str] = &[
     "time_received_ns",
     "time_flow_start_ns",
@@ -40,194 +32,136 @@ const HIGH_CARDINALITY: &[&str] = &[
     "src_port",
 ];
 
-/// What the column list needs to know about one kind of column. Static
-/// dispatch only: every `append` inlines to a plain builder call.
-trait ColumnKind {
-    type Builder;
-    type Value: Copy;
-    const NULLABLE: bool;
-    fn data_type() -> DataType;
-    fn builder() -> Self::Builder;
-    fn append(builder: &mut Self::Builder, value: Self::Value);
-    fn finish(builder: &mut Self::Builder) -> ArrayRef;
+macro_rules! builder {
+    (FlowType) => { StringBuilder };
+    (Timestamp) => { TimestampNanosecondBuilder };
+    (U8) => { PrimitiveBuilder<UInt8Type> };
+    (U16) => { PrimitiveBuilder<UInt16Type> };
+    (U32) => { PrimitiveBuilder<UInt32Type> };
+    (U64) => { PrimitiveBuilder<UInt64Type> };
+    (Ip) => { StringBuilder };
+    (Mac) => { StringBuilder };
 }
 
-/// A nullable integer column of Arrow type `T`.
-struct Nullable<T>(PhantomData<T>);
-
-impl<T: ArrowPrimitiveType> ColumnKind for Nullable<T> {
-    type Builder = PrimitiveBuilder<T>;
-    type Value = Option<T::Native>;
-    const NULLABLE: bool = true;
-    fn data_type() -> DataType {
-        T::DATA_TYPE
-    }
-    fn builder() -> Self::Builder {
-        PrimitiveBuilder::new()
-    }
-    fn append(b: &mut Self::Builder, v: Self::Value) {
-        b.append_option(v)
-    }
-    fn finish(b: &mut Self::Builder) -> ArrayRef {
-        Arc::new(b.finish())
-    }
-}
-
-/// A non-nullable integer column of Arrow type `T`.
-struct Required<T>(PhantomData<T>);
-
-impl<T: ArrowPrimitiveType> ColumnKind for Required<T> {
-    type Builder = PrimitiveBuilder<T>;
-    type Value = T::Native;
-    const NULLABLE: bool = false;
-    fn data_type() -> DataType {
-        T::DATA_TYPE
-    }
-    fn builder() -> Self::Builder {
-        PrimitiveBuilder::new()
-    }
-    fn append(b: &mut Self::Builder, v: Self::Value) {
-        b.append_value(v)
-    }
-    fn finish(b: &mut Self::Builder) -> ArrayRef {
-        Arc::new(b.finish())
-    }
-}
-
-/// Nanoseconds since the Unix epoch, typed as a UTC timestamp.
-struct Timestamp;
-
-impl ColumnKind for Timestamp {
-    type Builder = TimestampNanosecondBuilder;
-    type Value = Option<i64>;
-    const NULLABLE: bool = true;
-    fn data_type() -> DataType {
-        DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into()))
-    }
-    fn builder() -> Self::Builder {
+macro_rules! new_builder {
+    (Timestamp) => {
         TimestampNanosecondBuilder::new().with_timezone("UTC")
-    }
-    fn append(b: &mut Self::Builder, v: Self::Value) {
-        b.append_option(v)
-    }
-    fn finish(b: &mut Self::Builder) -> ArrayRef {
-        Arc::new(b.finish())
-    }
-}
-
-/// A text column, written without `core::fmt` (see `text.rs`).
-macro_rules! text_kind {
-    ($kind:ident, $value:ty, $nullable:expr, |$b:ident, $v:ident| $append:expr) => {
-        struct $kind;
-        impl ColumnKind for $kind {
-            type Builder = StringBuilder;
-            type Value = $value;
-            const NULLABLE: bool = $nullable;
-            fn data_type() -> DataType {
-                DataType::Utf8
-            }
-            fn builder() -> StringBuilder {
-                StringBuilder::new()
-            }
-            fn append($b: &mut StringBuilder, $v: $value) {
-                $append
-            }
-            fn finish(b: &mut StringBuilder) -> ArrayRef {
-                Arc::new(b.finish())
-            }
-        }
+    };
+    ($kind:ident) => {
+        <builder!($kind)>::new()
     };
 }
 
-text_kind!(FlowTypeName, FlowType, false, |b, v| b
-    .append_value(flow_type_name(v)));
-text_kind!(Ip, Option<IpAddr>, true, |b, v| match v {
-    Some(v) => b.append_value(AddrText::ip(v).as_str()),
-    None => b.append_null(),
-});
-text_kind!(Mac, Option<MacAddr6>, true, |b, v| match v {
-    Some(v) => b.append_value(AddrText::mac(v).as_str()),
-    None => b.append_null(),
-});
-
-/// How each kind and presence in the shared field list is stored here.
-/// This is the one place that decides "an IP address is a Utf8 column".
-macro_rules! column_kind {
-    (FlowType required) => { FlowTypeName };
-    (Timestamp optional) => { Timestamp };
-    (U8 optional) => { Nullable<UInt8Type> };
-    (U16 optional) => { Nullable<UInt16Type> };
-    (U32 optional) => { Nullable<UInt32Type> };
-    (U32 required) => { Required<UInt32Type> };
-    (U64 required) => { Required<UInt64Type> };
-    (Ip optional) => { Ip };
-    (Mac optional) => { Mac };
+macro_rules! data_type {
+    (FlowType) => {
+        DataType::Utf8
+    };
+    (Timestamp) => {
+        DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into()))
+    };
+    (U8) => {
+        DataType::UInt8
+    };
+    (U16) => {
+        DataType::UInt16
+    };
+    (U32) => {
+        DataType::UInt32
+    };
+    (U64) => {
+        DataType::UInt64
+    };
+    (Ip) => {
+        DataType::Utf8
+    };
+    (Mac) => {
+        DataType::Utf8
+    };
 }
 
-/// One typed builder per flow column, expanded from the shared field list.
-///
-/// Typed builders rather than the `fields::visit` walk: measured 14 %
-/// faster on this encoder, because every append is a direct builder call
-/// with nothing in between. The destructure in `append` has no `..`, so a
-/// field added to `CommonFlow` fails to compile until it is in the list.
+macro_rules! nullable {
+    (required) => {
+        false
+    };
+    (optional) => {
+        true
+    };
+}
+
+macro_rules! append {
+    ($b:expr, FlowType required, $v:expr) => {
+        append_text($b, $v)
+    };
+    ($b:expr, Ip optional, $v:expr) => {
+        append_text_option($b, $v)
+    };
+    ($b:expr, Mac optional, $v:expr) => {
+        append_text_option($b, $v)
+    };
+    ($b:expr, $kind:ident optional, $v:expr) => {
+        $b.append_option($v)
+    };
+    ($b:expr, $kind:ident required, $v:expr) => {
+        $b.append_value($v)
+    };
+}
+
+/// `StringBuilder` implements `fmt::Write`; the empty `append_value` closes
+/// the value written so far.
+fn append_text(b: &mut StringBuilder, v: impl std::fmt::Display) {
+    let _ = write!(b, "{v}");
+    b.append_value("");
+}
+
+fn append_text_option(b: &mut StringBuilder, v: Option<impl std::fmt::Display>) {
+    match v {
+        Some(v) => append_text(b, v),
+        None => b.append_null(),
+    }
+}
+
 macro_rules! flow_columns {
     ($( $name:ident : $kind:ident $presence:ident ),* $(,)?) => {
         struct FlowColumns {
-            $( $name: <column_kind!($kind $presence) as ColumnKind>::Builder, )*
+            $( $name: builder!($kind), )*
         }
 
         impl FlowColumns {
             fn new() -> Self {
-                Self { $( $name: <column_kind!($kind $presence) as ColumnKind>::builder(), )* }
+                Self { $( $name: new_builder!($kind), )* }
             }
 
             fn fields() -> Vec<Field> {
-                vec![ $( Field::new(
-                    stringify!($name),
-                    <column_kind!($kind $presence) as ColumnKind>::data_type(),
-                    <column_kind!($kind $presence) as ColumnKind>::NULLABLE,
-                ), )* ]
+                vec![ $( Field::new(stringify!($name), data_type!($kind), nullable!($presence)), )* ]
             }
 
             fn append(&mut self, flow: &CommonFlow) {
                 let CommonFlow { $( $name, )* } = flow;
-                $( <column_kind!($kind $presence) as ColumnKind>::append(&mut self.$name, *$name); )*
+                $( append!(&mut self.$name, $kind $presence, *$name); )*
             }
 
             fn finish(&mut self) -> Vec<ArrayRef> {
-                vec![ $( <column_kind!($kind $presence) as ColumnKind>::finish(&mut self.$name), )* ]
+                vec![ $( Arc::new(self.$name.finish()) as ArrayRef, )* ]
             }
         }
     };
 }
 for_each_flow_field!(flow_columns);
 
-/// Snappy-compressed Apache Parquet.
-///
-/// Each flow is appended field-by-field into typed per-column Arrow
-/// builders; every `BATCH_ROWS` rows the builders are drained into a
-/// record batch for the writer, which manages pages and row groups. The
-/// footer is only written by `finish`, so the file is unreadable until the
-/// encoder is finished.
+/// Snappy-compressed Apache Parquet. Rows accumulate in per-column
+/// builders and go to the writer every `BATCH_ROWS`; the footer is written
+/// by `finish`, so the file is unreadable until then.
 pub struct Parquet {
     writer: ArrowWriter<Output>,
     schema: Arc<Schema>,
     flow: FlowColumns,
-    /// One text column per enrichment field, after the flow columns.
     enrichment: Vec<StringBuilder>,
     rows: usize,
     batch_rows: usize,
 }
 
-/// Writer settings, chosen by measurement (see `SINK_DESIGN.md` §14):
-///
-/// - Snappy: cheap to encode, well supported.
-/// - High-cardinality timestamps and counters: no dictionary, delta binary
-///   packed (needs the v2 writer). Smaller and faster than the default.
-/// - Statistics only on the timestamp columns. Time-range pruning is what
-///   readers use on flow data; min/max of ports, counters, or address
-///   strings never prunes a row group of a time-ordered file, and costs a
-///   comparison per value.
+/// Statistics only on the timestamp columns: readers prune row groups of
+/// a time-ordered file by time range, never by port or counter.
 fn writer_properties(schema: &Schema) -> WriterProperties {
     let mut props = WriterProperties::builder()
         .set_compression(Compression::SNAPPY)
@@ -249,7 +183,9 @@ fn writer_properties(schema: &Schema) -> WriterProperties {
 }
 
 impl Parquet {
-    fn open_with_batch_rows(
+    /// `open` with `BATCH_ROWS`; smaller batches make row-group behaviour
+    /// testable.
+    pub fn open_with_batch_rows(
         out: Output,
         enriched_fields: &[String],
         batch_rows: usize,
@@ -275,7 +211,6 @@ impl Parquet {
         })
     }
 
-    /// Drain the builders into one record batch for the writer.
     fn flush_batch(&mut self) -> io::Result<()> {
         if self.rows == 0 {
             return Ok(());
@@ -312,7 +247,7 @@ impl FlowEncoder for Parquet {
         Ok(())
     }
 
-    /// Row groups flush themselves; there is nothing to push mid-stream.
+    /// Row groups flush themselves; nothing to push mid-stream.
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
     }
@@ -322,6 +257,3 @@ impl FlowEncoder for Parquet {
         self.writer.close().map(drop).map_err(io::Error::other)
     }
 }
-
-#[cfg(test)]
-mod tests;

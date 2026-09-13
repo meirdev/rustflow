@@ -4,9 +4,9 @@ use rustflow_core::common::common_flow::CommonFlow;
 use serde::Serialize;
 
 use super::{FlowEncoder, Output, RawEncoder};
-use crate::flow::Enriched;
+use crate::enriched::Enriched;
 
-/// Decode and count flows but write nothing; the load-testing baseline.
+/// Writes nothing; the load-testing baseline.
 pub struct Discard;
 
 impl FlowEncoder for Discard {
@@ -29,7 +29,6 @@ impl FlowEncoder for Discard {
     }
 }
 
-/// `--format raw --serialization discard` stays allowed.
 impl RawEncoder for Discard {
     fn write_value<T: Serialize + ?Sized>(&mut self, _: &T) -> io::Result<()> {
         Ok(())
