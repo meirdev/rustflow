@@ -3,7 +3,7 @@ use std::io;
 use rustflow_core::common::common_flow::CommonFlow;
 use serde::Serialize;
 
-use super::{FlowEncoder, Output, RawEncoder};
+use super::{FlowEncoder, RawEncoder, Writer};
 use crate::enrich::Enriched;
 
 /// Writes nothing; the load-testing baseline.
@@ -12,7 +12,7 @@ pub struct Discard;
 impl FlowEncoder for Discard {
     const EXTENSION: &'static str = "discard";
 
-    fn open(_: Output, _: &[String]) -> io::Result<Self> {
+    fn open(_: Writer, _: &[String]) -> io::Result<Self> {
         Ok(Self)
     }
 

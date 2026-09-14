@@ -113,7 +113,7 @@ See [Enrichment](enrichment.md) for configuration and examples.
 
 ## Prometheus Metrics
 
-The collector exposes Prometheus metrics over HTTP.
+The collector exposes Prometheus metrics over HTTP, in the OpenMetrics text format.
 
 By default, the metrics server listens on:
 

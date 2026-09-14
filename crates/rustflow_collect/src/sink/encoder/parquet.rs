@@ -13,7 +13,7 @@ use parquet::schema::types::ColumnPath;
 use rustflow_core::common::common_flow::CommonFlow;
 use rustflow_core::for_each_flow_field;
 
-use super::{FlowEncoder, Output};
+use super::{FlowEncoder, Writer};
 use crate::enrich::Enriched;
 
 const BATCH_ROWS: usize = 32_768;
@@ -152,12 +152,13 @@ for_each_flow_field!(flow_columns);
 /// builders and go to the writer every `BATCH_ROWS`; the footer is written
 /// by `finish`, so the file is unreadable until then.
 pub struct Parquet {
-    writer: ArrowWriter<Output>,
+    writer: ArrowWriter<Writer>,
     schema: Arc<Schema>,
     flow: FlowColumns,
     enrichment: Vec<StringBuilder>,
     rows: usize,
     batch_rows: usize,
+    finished: bool,
 }
 
 /// Statistics only on the timestamp columns: readers prune row groups of
@@ -186,7 +187,7 @@ impl Parquet {
     /// `open` with `BATCH_ROWS`; smaller batches make row-group behaviour
     /// testable.
     pub fn open_with_batch_rows(
-        out: Output,
+        out: Writer,
         enriched_fields: &[String],
         batch_rows: usize,
     ) -> io::Result<Self> {
@@ -208,6 +209,7 @@ impl Parquet {
                 .collect(),
             rows: 0,
             batch_rows: batch_rows.max(1),
+            finished: false,
         })
     }
 
@@ -221,17 +223,34 @@ impl Parquet {
                 .iter_mut()
                 .map(|b| Arc::new(b.finish()) as ArrayRef),
         );
-        self.rows = 0;
+        let rows = std::mem::take(&mut self.rows);
         let batch =
             RecordBatch::try_new(Arc::clone(&self.schema), columns).map_err(io::Error::other)?;
-        self.writer.write(&batch).map_err(io::Error::other)
+        self.writer
+            .write(&batch)
+            .map_err(|e| io::Error::other(format!("row group of {rows} rows lost: {e}")))
+    }
+
+    fn write_footer(&mut self) -> io::Result<()> {
+        self.finished = true;
+        self.flush_batch()?;
+        self.writer.finish().map(drop).map_err(io::Error::other)
+    }
+}
+
+/// A panic on the encoder thread still leaves a readable file.
+impl Drop for Parquet {
+    fn drop(&mut self) {
+        if !self.finished {
+            let _ = self.write_footer();
+        }
     }
 }
 
 impl FlowEncoder for Parquet {
     const EXTENSION: &'static str = "parquet";
 
-    fn open(out: Output, enriched_fields: &[String]) -> io::Result<Self> {
+    fn open(out: Writer, enriched_fields: &[String]) -> io::Result<Self> {
         Self::open_with_batch_rows(out, enriched_fields, BATCH_ROWS)
     }
 
@@ -253,7 +272,6 @@ impl FlowEncoder for Parquet {
     }
 
     fn finish(mut self) -> io::Result<()> {
-        self.flush_batch()?;
-        self.writer.close().map(drop).map_err(io::Error::other)
+        self.write_footer()
     }
 }

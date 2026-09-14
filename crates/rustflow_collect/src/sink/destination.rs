@@ -33,16 +33,22 @@ pub struct Opened {
 }
 
 /// A file being written under a temporary name. It gets its final,
-/// glob-visible name only once it is complete.
-#[must_use = "a pending rename that is dropped leaves a .tmp file behind"]
+/// glob-visible name once it is complete, or when it is dropped, so a
+/// panic on the writing thread does not hide the file.
 #[derive(Debug)]
 pub struct PendingRename {
     tmp: PathBuf,
     final_path: PathBuf,
+    committed: bool,
 }
 
 impl PendingRename {
-    pub fn commit(self) -> io::Result<()> {
+    pub fn commit(mut self) -> io::Result<()> {
+        self.committed = true;
+        self.rename()
+    }
+
+    fn rename(&self) -> io::Result<()> {
         std::fs::rename(&self.tmp, &self.final_path).map_err(|e| {
             io::Error::new(
                 e.kind(),
@@ -57,6 +63,14 @@ impl PendingRename {
 
     pub fn final_path(&self) -> &Path {
         &self.final_path
+    }
+}
+
+impl Drop for PendingRename {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = self.rename();
+        }
     }
 }
 
@@ -93,17 +107,14 @@ impl Destination {
                 let tmp = temp_path(&final_path);
                 Ok(Opened {
                     writer: Box::new(create(&tmp)?),
-                    pending: Some(PendingRename { tmp, final_path }),
+                    pending: Some(PendingRename {
+                        tmp,
+                        final_path,
+                        committed: false,
+                    }),
                     rotate_at: Some(window_start + interval_secs),
                 })
             }
-        }
-    }
-
-    pub fn interval_secs(&self) -> Option<i64> {
-        match self {
-            Destination::Partitioned { interval_secs, .. } => Some(*interval_secs),
-            _ => None,
         }
     }
 }

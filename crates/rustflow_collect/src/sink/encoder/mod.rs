@@ -21,7 +21,7 @@ pub use protobuf::{FlowMessage, Protobuf};
 /// encoder calls into the kernel.
 pub(crate) const WRITE_BUFFER_BYTES: usize = 256 * 1024;
 
-pub type Output = Box<dyn Write + Send>;
+pub type Writer = Box<dyn Write + Send>;
 
 /// Turns flows into bytes in one format. Knows nothing about files,
 /// rotation, or threads.
@@ -30,7 +30,7 @@ pub trait FlowEncoder: Send + Sized {
     const EXTENSION: &'static str;
 
     /// Writes any header now, so a rotated file is well-formed even when empty.
-    fn open(out: Output, enriched_fields: &[String]) -> io::Result<Self>;
+    fn open(out: Writer, enriched_fields: &[String]) -> io::Result<Self>;
 
     fn encode(&mut self, flow: &CommonFlow, enriched: &Enriched) -> io::Result<()>;
 

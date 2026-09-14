@@ -15,8 +15,9 @@ pub struct RotatingSink<E: FlowEncoder> {
     destination: Destination,
     enriched_fields: Vec<String>,
     metrics: OutputMetrics,
-    current: Window<E>,
-    dirty: bool,
+    /// `None` after a rotation until the next write, so an idle interval
+    /// leaves no empty file behind.
+    current: Option<Window<E>>,
 }
 
 struct Window<E> {
@@ -37,21 +38,25 @@ impl<E: FlowEncoder> Window<E> {
             pending,
             rotate_at,
         } = destination.open_for(now, E::EXTENSION)?;
+        let writer = Box::new(CountingWriter::new(writer, metrics.bytes.clone()));
+        let encoder = E::open(writer, fields)?;
         if pending.is_some() {
             metrics.files.inc();
         }
-        let writer = Box::new(CountingWriter::new(writer, metrics.bytes.clone()));
         Ok(Self {
-            encoder: E::open(writer, fields)?,
+            encoder,
             pending,
             rotate_at,
         })
     }
 
-    /// Finishes the stream, then gives the file its final name.
+    /// Finishes the stream, then gives the file its final name. The rename
+    /// happens even when finishing failed: a truncated window is worth more
+    /// than one hidden behind a `.tmp` name.
     fn close(self) -> io::Result<()> {
-        self.encoder.finish()?;
-        self.pending.map_or(Ok(()), PendingRename::commit)
+        let finished = self.encoder.finish();
+        let committed = self.pending.map_or(Ok(()), PendingRename::commit);
+        finished.and(committed)
     }
 }
 
@@ -64,6 +69,7 @@ impl<E: FlowEncoder> RotatingSink<E> {
         Self::open_at(destination, enriched_fields, metrics, Utc::now())
     }
 
+    /// The first window is opened right away, so a bad path fails at startup.
     pub fn open_at(
         destination: Destination,
         enriched_fields: Vec<String>,
@@ -75,62 +81,59 @@ impl<E: FlowEncoder> RotatingSink<E> {
             destination,
             enriched_fields,
             metrics,
-            current,
-            dirty: false,
+            current: Some(current),
         })
+    }
+
+    fn window(&mut self) -> io::Result<&mut Window<E>> {
+        if self.current.is_none() {
+            let window = Window::open(
+                &self.destination,
+                &self.enriched_fields,
+                &self.metrics,
+                Utc::now(),
+            )?;
+            self.current = Some(window);
+        }
+        Ok(self.current.as_mut().expect("opened above"))
     }
 }
 
 impl<E: FlowEncoder> FlowSink for RotatingSink<E> {
     fn write(&mut self, flow: &CommonFlow, enriched: &Enriched) -> io::Result<()> {
-        self.current.encoder.encode(flow, enriched)?;
-        self.dirty = true;
-        Ok(())
+        self.window()?.encoder.encode(flow, enriched)
     }
 
     fn rotate_if_due(&mut self, now: DateTime<Utc>) -> io::Result<bool> {
-        let Some(rotate_at) = self.current.rotate_at else {
+        let Some(rotate_at) = self.current.as_ref().and_then(|w| w.rotate_at) else {
             return Ok(false);
         };
         if now.timestamp() < rotate_at {
             return Ok(false);
         }
-
-        match Window::open(&self.destination, &self.enriched_fields, &self.metrics, now) {
-            Ok(next) => {
-                let previous = std::mem::replace(&mut self.current, next);
-                self.dirty = false;
-                previous.close()?;
-                Ok(true)
-            }
-            Err(e) => {
-                // Keep writing to the current file and try again next window.
-                if let Some(interval_secs) = self.destination.interval_secs() {
-                    self.current.rotate_at = Some(rotate_at + interval_secs);
-                }
-                Err(e)
-            }
+        if let Some(previous) = self.current.take() {
+            previous.close()?;
         }
+        Ok(true)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        if !self.dirty {
-            return Ok(());
+        match &mut self.current {
+            Some(window) => window.encoder.flush(),
+            None => Ok(()),
         }
-        self.current.encoder.flush()?;
-        self.dirty = false;
-        Ok(())
     }
 
-    fn finish(self: Box<Self>) -> io::Result<()> {
-        self.current.close()
+    fn finish(mut self: Box<Self>) -> io::Result<()> {
+        match self.current.take() {
+            Some(window) => window.close(),
+            None => Ok(()),
+        }
     }
 }
 
 impl<E: RawEncoder> RotatingSink<E> {
     pub fn write_raw<T: Serialize + ?Sized>(&mut self, value: &T) -> io::Result<()> {
-        self.current.encoder.write_value(value)?;
-        self.dirty = true;
-        Ok(())
+        self.window()?.encoder.write_value(value)
     }
 }

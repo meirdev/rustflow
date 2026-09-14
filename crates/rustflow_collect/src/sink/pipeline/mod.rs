@@ -1,6 +1,3 @@
-//! The ingest thread's view of the output: raw packets are written in
-//! place, common flows are chunked and handed to the encoder thread.
-
 pub mod encoder;
 pub mod errors;
 pub mod raw;
@@ -9,7 +6,7 @@ pub mod timer;
 use std::io;
 use std::time::Duration;
 
-pub use encoder::{Encoder, encoder_loop};
+pub use encoder::{CHUNK_FLUSH_TIMEOUT, Encoder, encoder_loop};
 pub use errors::SinkErrors;
 pub use raw::RawOutput;
 pub use timer::FlushTimer;
@@ -57,13 +54,9 @@ impl Output {
     }
 
     /// Write everything out and close the output.
-    pub fn finish(self) {
+    pub fn finish(self) -> io::Result<()> {
         match self {
-            Output::Raw(raw) => {
-                if let Err(e) = raw.finish() {
-                    eprintln!("Failed to finalize output: {}", e);
-                }
-            }
+            Output::Raw(raw) => raw.finish(),
             Output::Common(encoder) => encoder.drain(),
         }
     }

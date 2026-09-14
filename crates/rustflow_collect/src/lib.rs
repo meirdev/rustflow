@@ -18,7 +18,7 @@ use rustflow::{
 use rustflow_core::ipfix::parser::IPFIX_VERSION;
 use rustflow_core::netflow_v5::parser::NETFLOW_V5_VERSION;
 use rustflow_core::netflow_v9::parser::NETFLOW_V9_VERSION;
-use sink::pipeline::{Output, RawOutput};
+use sink::pipeline::{CHUNK_FLUSH_TIMEOUT, Output, RawOutput};
 use sink::{Format, MAX_PARTITION_LEVEL, OutputFormat, SinkConfig};
 
 /// Arguments for the `collect` subcommand.
@@ -228,10 +228,6 @@ fn netflow_flow_count(packet: &NetflowPacket) -> usize {
             .sum(),
     }
 }
-
-/// Idle tick: without traffic, a partial chunk or buffered raw output waits
-/// at most this long.
-const CHUNK_FLUSH_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// Set by the signal handler; the ingest loops poll it (their socket read
 /// timeout bounds the latency) and exit so the pipeline drains in order.
@@ -535,5 +531,8 @@ pub fn run(cli: CollectArgs) {
 
     // Socket modes return here after a graceful shutdown; pcap modes when the
     // file is exhausted.
-    output.finish();
+    if let Err(e) = output.finish() {
+        eprintln!("Failed to finalize output: {}", e);
+        std::process::exit(1);
+    }
 }

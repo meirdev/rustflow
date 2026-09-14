@@ -2,7 +2,7 @@
 //! byte-counting null writer, so the numbers are the encoder's own cost
 //! with no disk or kernel in the way.
 //!
-//! Run with `cargo bench -p rustflow_sink` (release profile).
+//! Run with `cargo bench -p rustflow_collect` (release profile).
 
 use std::hint::black_box;
 use std::io::{self, Write};
@@ -12,8 +12,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use macaddr::MacAddr6;
+use rustflow_collect::enrich::Enriched;
+use rustflow_collect::sink::{Csv, Discard, FlowEncoder, Ndjson, Parquet, Protobuf};
 use rustflow_core::common::common_flow::{CommonFlow, FlowType};
-use rustflow_sink::{Csv, Discard, Enriched, FlowEncoder, Ndjson, Parquet, Protobuf};
 
 const ENRICHED_FIELDS: [&str; 3] = ["src_asn", "src_org", "dst_country"];
 const ENRICHED_VALUES: [&str; 3] = ["13335", "Cloudflare, Inc.", "US"];
