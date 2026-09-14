@@ -96,8 +96,6 @@ for the complete CLI options.
 - [Library usage](./docs/library.md)
 - [Production deployment](./docs/deployment.md)
 - [Vector integration](./docs/vector.md)
-- [Vector → Kafka → Arroyo example](./examples/vector-kafka-arroyo/)
-- [Parquet → DuckDB sliding-window example](./examples/duckdb-sliding-window/)
 - [Protocol references](./docs/protocols.md)
 - [Alternatives](./docs/alternatives.md)
 
