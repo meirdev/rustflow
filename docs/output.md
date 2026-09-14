@@ -172,7 +172,7 @@ rustflow collect \
   --interval 10m
 ```
 
-This creates a new output file every 10 minutes.
+This creates a new output file every 10 minutes. An interval in which no flows arrive produces no file.
 
 A custom file name prefix can be specified with `--prefix`:
 

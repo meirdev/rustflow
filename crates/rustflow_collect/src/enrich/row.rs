@@ -14,7 +14,7 @@ impl Schema {
     }
 
     pub fn row(&self, values: impl IntoIterator<Item = Option<String>>) -> Row {
-        let values: Box<[_]> = values.into_iter().collect();
+        let values: Box<[_]> = values.into_iter().map(|v| v.map(Arc::from)).collect();
         assert_eq!(
             values.len(),
             self.0.len(),
@@ -29,10 +29,12 @@ impl Schema {
     }
 }
 
+/// Values are shared, so cloning a row or copying a value into the
+/// enrichment output is a refcount bump.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Row {
     schema: Schema,
-    values: Box<[Option<String>]>,
+    values: Box<[Option<Arc<str>>]>,
 }
 
 impl Row {
@@ -41,7 +43,7 @@ impl Row {
         self.values[index].as_deref()
     }
 
-    pub fn values(&self) -> &[Option<String>] {
+    pub fn values(&self) -> &[Option<Arc<str>>] {
         &self.values
     }
 

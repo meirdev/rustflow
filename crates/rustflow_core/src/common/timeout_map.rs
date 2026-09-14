@@ -101,6 +101,17 @@ where
         })
     }
 
+    /// Keep only the entries for which `f` returns true. Expired entries are
+    /// dropped regardless.
+    pub fn retain<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&K, &V) -> bool,
+    {
+        let timeout = self.timeout;
+        self.map
+            .retain(|key, entry| entry.inserted_at.elapsed() < timeout && f(key, &entry.value));
+    }
+
     pub fn contains_key<Q>(&self, key: &Q) -> bool
     where
         K: Borrow<Q>,
