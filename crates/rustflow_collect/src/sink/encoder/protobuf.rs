@@ -6,7 +6,7 @@ use prost::Message;
 use rustflow_core::common::common_flow::CommonFlow;
 
 use super::{FlowEncoder, Output, WRITE_BUFFER_BYTES};
-use crate::enriched::Enriched;
+use crate::enrich::Enriched;
 
 /// `rustflow.CommonFlow` of `proto/rustflow.proto`. Tags are the wire
 /// contract: new fields get tags from 39, 38 is the enrichment map.

@@ -5,7 +5,7 @@ use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
 
 use super::{FlowEncoder, Output, RawEncoder, WRITE_BUFFER_BYTES};
-use crate::enriched::Enriched;
+use crate::enrich::Enriched;
 
 /// Newline-delimited JSON, one object per record.
 pub struct Ndjson {

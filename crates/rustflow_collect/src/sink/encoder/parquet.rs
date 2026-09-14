@@ -14,7 +14,7 @@ use rustflow_core::common::common_flow::CommonFlow;
 use rustflow_core::for_each_flow_field;
 
 use super::{FlowEncoder, Output};
-use crate::enriched::Enriched;
+use crate::enrich::Enriched;
 
 const BATCH_ROWS: usize = 32_768;
 

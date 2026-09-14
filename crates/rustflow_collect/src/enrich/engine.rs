@@ -1,8 +1,9 @@
-use std::collections::HashMap;
+use std::sync::Arc;
 
 use rustflow_core::common::common_flow::CommonFlow;
 
 use crate::enrich::config::{EnrichmentConfig, LookupKey};
+use crate::enrich::enriched::Enriched;
 use crate::enrich::table::Table;
 use crate::enrich::table::metrics::TableMetrics;
 use crate::enrich::{Result, Row};
@@ -14,7 +15,8 @@ struct Lookup {
 
 struct Group {
     key: LookupKey,
-    fields: Vec<(usize, String)>,
+    /// Source column to output field index.
+    fields: Vec<(usize, usize)>,
 }
 
 pub struct EnrichmentEngine {
@@ -36,14 +38,22 @@ impl EnrichmentEngine {
         let columns = config.source.columns();
         let mut groups: Vec<Group> = Vec::new();
         for mapping in &config.mappings {
-            if !self.output_fields.contains(&mapping.output_field) {
-                self.output_fields.push(mapping.output_field.clone());
-            }
+            let output = match self
+                .output_fields
+                .iter()
+                .position(|f| *f == mapping.output_field)
+            {
+                Some(index) => index,
+                None => {
+                    self.output_fields.push(mapping.output_field.clone());
+                    self.output_fields.len() - 1
+                }
+            };
             let column = columns
                 .iter()
                 .position(|c| *c == mapping.source_column)
                 .expect("mapping columns are the source columns");
-            let field = (column, mapping.output_field.clone());
+            let field = (column, output);
             match groups.iter_mut().find(|g| g.key == mapping.key) {
                 Some(group) => group.fields.push(field),
                 None => groups.push(Group {
@@ -62,8 +72,10 @@ impl EnrichmentEngine {
         &self.output_fields
     }
 
-    pub fn enrich(&self, flow: &CommonFlow) -> HashMap<String, String> {
-        let mut result = HashMap::new();
+    /// Fills `out` in the order of [`output_fields`](Self::output_fields);
+    /// a field without a match stays `None`.
+    pub fn enrich(&self, flow: &CommonFlow, out: &mut Enriched) {
+        out.clear();
         for lookup in &self.lookups {
             let snapshot = lookup.table.snapshot();
             for group in &lookup.groups {
@@ -71,14 +83,12 @@ impl EnrichmentEngine {
                 let Some(row) = row else {
                     continue;
                 };
-                let values: &[Option<String>] = row.values();
-                for (column, output) in &group.fields {
-                    if let Some(value) = &values[*column] {
-                        result.insert(output.clone(), value.clone());
+                for &(column, output) in &group.fields {
+                    if let Some(value) = &row.values()[column] {
+                        out.set(output, Arc::clone(value));
                     }
                 }
             }
         }
-        result
     }
 }

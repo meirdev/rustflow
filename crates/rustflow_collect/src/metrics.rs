@@ -7,6 +7,7 @@ use rustc_hash::FxHashMap;
 use tiny_http::{Response, Server};
 
 use crate::enrich::TableMetrics;
+use crate::sink::OutputMetrics;
 
 // Metric label constants
 pub const LABEL_NETFLOW: &str = "netflow";
@@ -40,6 +41,9 @@ pub struct Metrics {
 
     /// Load statistics of the enrichment tables, labeled by source
     pub enrichment: TableMetrics,
+
+    /// Flows, bytes and files written by the output sink, and its failures
+    pub output: OutputMetrics,
 }
 
 impl Metrics {
@@ -107,9 +111,13 @@ impl Metrics {
         let enrichment = TableMetrics::new();
         enrichment.register(&registry).unwrap();
 
+        let output = OutputMetrics::new();
+        output.register(&registry).unwrap();
+
         Metrics {
             registry,
             enrichment,
+            output,
             packets_received_total,
             bytes_received_total,
             flows_processed_total,

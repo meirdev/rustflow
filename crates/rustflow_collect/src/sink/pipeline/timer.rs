@@ -25,9 +25,14 @@ impl FlushTimer {
         if now < self.next {
             return false;
         }
-        // One interval after the previous deadline, never in the past, so
-        // the cadence does not drift under load.
-        self.next = (self.next + self.interval).max(now);
+        // One interval after the previous deadline, so the cadence does not
+        // drift under load; after a longer stall, one interval from now.
+        let anchored = self.next + self.interval;
+        self.next = if anchored > now {
+            anchored
+        } else {
+            now + self.interval
+        };
         true
     }
 }

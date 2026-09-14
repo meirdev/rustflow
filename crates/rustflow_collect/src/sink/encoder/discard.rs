@@ -4,7 +4,7 @@ use rustflow_core::common::common_flow::CommonFlow;
 use serde::Serialize;
 
 use super::{FlowEncoder, Output, RawEncoder};
-use crate::enriched::Enriched;
+use crate::enrich::Enriched;
 
 /// Writes nothing; the load-testing baseline.
 pub struct Discard;

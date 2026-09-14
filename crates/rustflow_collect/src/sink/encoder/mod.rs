@@ -9,7 +9,7 @@ use std::io::{self, Write};
 use rustflow_core::common::common_flow::CommonFlow;
 use serde::Serialize;
 
-use crate::enriched::Enriched;
+use crate::enrich::Enriched;
 
 pub use self::csv::Csv;
 pub use self::parquet::Parquet;

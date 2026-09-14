@@ -5,7 +5,7 @@ use rustflow_core::common::common_flow::CommonFlow;
 use rustflow_core::for_each_flow_field;
 
 use super::{FlowEncoder, Output, WRITE_BUFFER_BYTES};
-use crate::enriched::Enriched;
+use crate::enrich::Enriched;
 
 /// Comma-separated values with a header row: the flow's columns followed by
 /// the enrichment fields.

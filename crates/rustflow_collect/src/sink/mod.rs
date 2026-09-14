@@ -1,5 +1,10 @@
+//! Output sinks: encoders turn flows into bytes, destinations say where the
+//! bytes go, and the rotating sink opens and closes files on an interval.
+
 pub mod destination;
+pub mod encoder;
 pub mod metrics;
+pub mod pipeline;
 pub mod rotating;
 
 use std::fmt;
@@ -8,15 +13,17 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
+use clap::ValueEnum;
 use rustflow_core::common::common_flow::CommonFlow;
 use serde::Serialize;
 
 pub use destination::{Destination, MAX_PARTITION_LEVEL, PendingRename};
+pub use encoder::{Csv, Discard, FlowEncoder, Ndjson, Parquet, Protobuf, RawEncoder};
 pub use metrics::OutputMetrics;
+pub use pipeline::{FLUSH_INTERVAL, encoder_loop};
 pub use rotating::RotatingSink;
 
-use crate::encoder::{Csv, Discard, FlowEncoder, Ndjson, Parquet, Protobuf};
-use crate::enriched::Enriched;
+use crate::enrich::Enriched;
 
 /// A sink for common-format flows, owned by one thread.
 pub trait FlowSink: Send {
@@ -32,12 +39,24 @@ pub trait FlowSink: Send {
     fn finish(self: Box<Self>) -> io::Result<()>;
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// `--format`: the original packet structure, or the normalized flow.
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum OutputFormat {
+    Raw,
+    Common,
+}
+
+/// `--serialization`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Format {
+    /// Newline-delimited JSON, one object per line
     Ndjson,
     Csv,
+    /// Snappy-compressed Apache Parquet
     Parquet,
+    /// Length-delimited protobuf, see `proto/rustflow.proto`
     Protobuf,
+    /// Decode and count flows but write no output (for load testing)
     Discard,
 }
 

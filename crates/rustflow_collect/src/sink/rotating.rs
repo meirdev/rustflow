@@ -7,8 +7,8 @@ use serde::Serialize;
 use super::FlowSink;
 use super::destination::{Destination, Opened, PendingRename};
 use super::metrics::{CountingWriter, OutputMetrics};
-use crate::encoder::{FlowEncoder, RawEncoder};
-use crate::enriched::Enriched;
+use crate::enrich::Enriched;
+use crate::sink::encoder::{FlowEncoder, RawEncoder};
 
 /// A [`Destination`] plus the encoder for its current window.
 pub struct RotatingSink<E: FlowEncoder> {
