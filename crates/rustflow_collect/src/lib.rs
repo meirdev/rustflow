@@ -281,16 +281,17 @@ fn read_netflow_socket(
                 }
 
                 let processor = reader.processor();
-                metrics_cache
-                    .metrics()
-                    .active_exporters
-                    .with_label_values(&[metrics::LABEL_NETFLOW_V9])
-                    .set(processor.v9_parsers.len() as f64);
-                metrics_cache
-                    .metrics()
-                    .active_exporters
-                    .with_label_values(&[metrics::LABEL_IPFIX])
-                    .set(processor.ipfix_parsers.len() as f64);
+                let active_exporters = &metrics_cache.metrics().active_exporters;
+                active_exporters
+                    .get_or_create(&metrics::TypeLabel {
+                        r#type: metrics::LABEL_NETFLOW_V9,
+                    })
+                    .set(processor.v9_parsers.len() as i64);
+                active_exporters
+                    .get_or_create(&metrics::TypeLabel {
+                        r#type: metrics::LABEL_IPFIX,
+                    })
+                    .set(processor.ipfix_parsers.len() as i64);
             }
             Ok(NetflowReadResult::ParseError { len, src, version }) => {
                 if let Some(version) = version {

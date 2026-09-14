@@ -1,68 +1,63 @@
 use std::io::{self, Write};
 
-use prometheus::{IntCounter, Registry};
+use prometheus_client::metrics::counter::Counter;
+use prometheus_client::registry::Registry;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct OutputMetrics {
-    pub flows: IntCounter,
+    pub flows: Counter,
     /// Bytes written to the destination, after encoding and compression.
-    pub bytes: IntCounter,
+    pub bytes: Counter,
     /// Files opened in a rotated output tree.
-    pub files: IntCounter,
+    pub files: Counter,
     /// Failed writes and flushes.
-    pub write_errors: IntCounter,
-    pub rotate_errors: IntCounter,
+    pub write_errors: Counter,
+    pub rotate_errors: Counter,
 }
 
 impl OutputMetrics {
     pub fn new() -> Self {
-        let counter = |name: &str, help: &str| IntCounter::new(name, help).unwrap();
-        Self {
-            flows: counter("output_flows_total", "Flows handed to the output sink"),
-            bytes: counter(
-                "output_bytes_total",
-                "Bytes written to the output destination",
-            ),
-            files: counter(
-                "output_files_total",
-                "Files opened in the rotated output tree",
-            ),
-            write_errors: counter(
-                "output_write_errors_total",
-                "Failed output writes and flushes",
-            ),
-            rotate_errors: counter("output_rotate_errors_total", "Failed output file rotations"),
-        }
+        Self::default()
     }
 
-    pub fn register(&self, registry: &Registry) -> prometheus::Result<()> {
-        for c in [
-            &self.flows,
-            &self.bytes,
-            &self.files,
-            &self.write_errors,
-            &self.rotate_errors,
-        ] {
-            registry.register(Box::new(c.clone()))?;
-        }
-        Ok(())
-    }
-}
-
-impl Default for OutputMetrics {
-    fn default() -> Self {
-        Self::new()
+    /// Counters are registered without `_total`; the encoder appends it.
+    pub fn register(&self, registry: &mut Registry) {
+        registry.register(
+            "output_flows",
+            "Flows handed to the output sink",
+            self.flows.clone(),
+        );
+        registry.register(
+            "output_bytes",
+            "Bytes written to the output destination",
+            self.bytes.clone(),
+        );
+        registry.register(
+            "output_files",
+            "Files opened in the rotated output tree",
+            self.files.clone(),
+        );
+        registry.register(
+            "output_write_errors",
+            "Failed output writes and flushes",
+            self.write_errors.clone(),
+        );
+        registry.register(
+            "output_rotate_errors",
+            "Failed output file rotations",
+            self.rotate_errors.clone(),
+        );
     }
 }
 
 /// A `Write` that counts the bytes passing through it.
 pub(crate) struct CountingWriter<W> {
     inner: W,
-    bytes: IntCounter,
+    bytes: Counter,
 }
 
 impl<W: Write> CountingWriter<W> {
-    pub(crate) fn new(inner: W, bytes: IntCounter) -> Self {
+    pub(crate) fn new(inner: W, bytes: Counter) -> Self {
         Self { inner, bytes }
     }
 }
