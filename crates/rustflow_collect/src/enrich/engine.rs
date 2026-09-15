@@ -3,10 +3,11 @@ use std::sync::Arc;
 use rustflow_core::common::common_flow::CommonFlow;
 
 use crate::enrich::config::{EnrichmentConfig, LookupKey};
-use crate::enrich::enriched::Enriched;
 use crate::enrich::table::Table;
 use crate::enrich::table::metrics::TableMetrics;
 use crate::enrich::{Result, Row};
+
+pub type Enriched = Vec<Option<Arc<str>>>;
 
 struct Lookup {
     table: Table,
@@ -75,7 +76,7 @@ impl EnrichmentEngine {
     /// Fills `out` in the order of [`output_fields`](Self::output_fields);
     /// a field without a match stays `None`.
     pub fn enrich(&self, flow: &CommonFlow, out: &mut Enriched) {
-        out.clear();
+        out.fill(None);
         for lookup in &self.lookups {
             let snapshot = lookup.table.snapshot();
             for group in &lookup.groups {
@@ -85,7 +86,7 @@ impl EnrichmentEngine {
                 };
                 for &(column, output) in &group.fields {
                     if let Some(value) = &row.values()[column] {
-                        out.set(output, Arc::clone(value));
+                        out[output] = Some(Arc::clone(value));
                     }
                 }
             }

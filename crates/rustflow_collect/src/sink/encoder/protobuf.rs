@@ -183,7 +183,7 @@ impl FlowMessage {
             enriched: names
                 .iter()
                 .zip(enriched.iter())
-                .filter_map(|(name, value)| Some((name.clone(), value?.to_owned())))
+                .filter_map(|(name, value)| Some((name.clone(), value.as_deref()?.to_owned())))
                 .collect(),
         }
     }

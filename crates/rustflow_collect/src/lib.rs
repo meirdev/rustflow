@@ -433,13 +433,11 @@ fn sink_config(cli: &CollectArgs) -> SinkConfig {
     }
 }
 
-/// Run the flow collector.
-pub fn run(cli: CollectArgs) {
-    let metrics = Arc::new(metrics::Metrics::new());
-
-    let mut ie_registry = IERegistry::new_with_iana_elements();
-    if let Some(ref path) = cli.ie_mapping {
-        match ie_registry.load_from_csv(path) {
+/// The IANA elements plus the `--ie-mapping` file, if any.
+fn load_ie_registry(path: Option<&str>) -> IERegistry {
+    let mut registry = IERegistry::new_with_iana_elements();
+    if let Some(path) = path {
+        match registry.load_from_csv(path) {
             Ok(count) => eprintln!("Loaded {} custom IE definitions from {}", count, path),
             Err(e) => {
                 eprintln!("Failed to load IE mappings from {}: {}", path, e);
@@ -447,44 +445,34 @@ pub fn run(cli: CollectArgs) {
             }
         }
     }
+    registry
+}
 
-    // Parse and build enrichment engine
-    let mut enrichment_engine = EnrichmentEngine::new(metrics.enrichment.clone());
-    for enrich_arg in &cli.enrich {
-        match parse_enrich_arg(enrich_arg) {
-            Ok(config) => {
-                let source = config.source.source().display().to_string();
-                match enrichment_engine.add(config) {
-                    Ok(count) => eprintln!("Loaded {} rows from {}", count, source),
-                    Err(e) => {
-                        eprintln!("Failed to load enrichment from {}: {}", source, e);
-                        std::process::exit(1);
-                    }
-                }
-            }
+/// The tables named by `--enrich`, loaded; any failure exits.
+fn load_enrichment(cli: &CollectArgs, metrics: &metrics::Metrics) -> EnrichmentEngine {
+    let mut engine = EnrichmentEngine::new(metrics.enrichment.clone());
+    for arg in &cli.enrich {
+        let config = parse_enrich_arg(arg).unwrap_or_else(|e| {
+            eprintln!("Invalid --enrich argument: {}", e);
+            std::process::exit(1);
+        });
+        let source = config.source.source().display().to_string();
+        match engine.add(config) {
+            Ok(count) => eprintln!("Loaded {} rows from {}", count, source),
             Err(e) => {
-                eprintln!("Invalid --enrich argument: {}", e);
+                eprintln!("Failed to load enrichment from {}: {}", source, e);
                 std::process::exit(1);
             }
         }
     }
+    engine
+}
 
-    let sink = sink::build(
-        cli.format,
-        &sink_config(&cli),
-        enrichment_engine.output_fields().to_vec(),
-        &metrics.output,
-    )
-    .unwrap_or_else(|e| {
-        eprintln!("Error: {}", e);
-        std::process::exit(1);
-    });
-    let mut output = Pipeline::spawn(sink, enrichment_engine, metrics.output.clone());
-
-    // Graceful shutdown on Ctrl-C / SIGTERM: flag the ingest loop to stop,
-    // which drains the pipeline and finalizes the output (a parquet file is
-    // unreadable until its footer is written). A second signal forces exit,
-    // so a stuck drain can never trap the operator.
+/// Graceful shutdown on Ctrl-C / SIGTERM: flag the ingest loop to stop,
+/// which drains the pipeline and finalizes the output (a parquet file is
+/// unreadable until its footer is written). A second signal forces exit,
+/// so a stuck drain can never trap the operator.
+fn install_shutdown_handler() {
     if let Err(e) = ctrlc::set_handler(move || {
         if SHUTDOWN.swap(true, Ordering::SeqCst) {
             eprintln!("Forced exit");
@@ -494,7 +482,27 @@ pub fn run(cli: CollectArgs) {
     }) {
         eprintln!("Failed to install shutdown handler: {}", e);
     }
+}
 
+/// Run the flow collector.
+pub fn run(cli: CollectArgs) {
+    let metrics = Arc::new(metrics::Metrics::new());
+    let ie_registry = load_ie_registry(cli.ie_mapping.as_deref());
+    let enrichment = load_enrichment(&cli, &metrics);
+
+    let sink = sink::build(
+        cli.format,
+        &sink_config(&cli),
+        enrichment.output_fields().to_vec(),
+        &metrics.output,
+    )
+    .unwrap_or_else(|e| {
+        eprintln!("Error: {}", e);
+        std::process::exit(1);
+    });
+    let mut output = Pipeline::spawn(sink, enrichment, metrics.output.clone());
+
+    install_shutdown_handler();
     let timeout = std::time::Duration::from_secs(cli.template_timeout);
 
     match (&cli.flow_type, &cli.pcap, &cli.port) {

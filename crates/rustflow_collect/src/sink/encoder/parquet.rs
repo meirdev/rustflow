@@ -257,7 +257,7 @@ impl Encoder for Parquet {
     fn encode(&mut self, flow: &CommonFlow, enriched: &Enriched) -> io::Result<()> {
         self.flow.append(flow);
         for (builder, value) in self.enrichment.iter_mut().zip(enriched.iter()) {
-            builder.append_option(value);
+            builder.append_option(value.as_deref());
         }
         self.rows += 1;
         if self.rows >= self.batch_rows {

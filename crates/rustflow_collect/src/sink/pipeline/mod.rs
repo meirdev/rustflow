@@ -157,7 +157,7 @@ pub fn encoder_loop(
     enrichment: &EnrichmentEngine,
     metrics: &OutputMetrics,
 ) -> io::Result<()> {
-    let mut enriched = Enriched::new(enrichment.output_fields().len());
+    let mut enriched: Enriched = vec![None; enrichment.output_fields().len()];
     let mut errors = SinkErrors::new(metrics);
     let mut timer = FlushTimer::new(FLUSH_INTERVAL);
 

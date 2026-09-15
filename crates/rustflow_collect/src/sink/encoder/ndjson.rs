@@ -35,7 +35,7 @@ impl Serialize for EnrichedMap<'_> {
         let mut map = s.serialize_map(None)?;
         for (name, value) in self.names.iter().zip(self.values.iter()) {
             if let Some(value) = value {
-                map.serialize_entry(name, value)?;
+                map.serialize_entry(name, &**value)?;
             }
         }
         map.end()

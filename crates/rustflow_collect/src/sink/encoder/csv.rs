@@ -91,7 +91,7 @@ impl Encoder for Csv {
     fn encode(&mut self, flow: &CommonFlow, enriched: &Enriched) -> io::Result<()> {
         write_flow(&mut self.out, &mut self.scratch, flow)?;
         for value in enriched.iter() {
-            self.out.write_field(value.unwrap_or(""))?;
+            self.out.write_field(value.as_deref().unwrap_or(""))?;
         }
         // Terminates the record started by write_field.
         self.out.write_record(None::<&[u8]>)?;
