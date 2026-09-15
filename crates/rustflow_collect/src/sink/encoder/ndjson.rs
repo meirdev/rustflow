@@ -4,7 +4,7 @@ use rustflow_core::common::common_flow::CommonFlow;
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
 
-use super::{FlowEncoder, RawEncoder, WRITE_BUFFER_BYTES, Writer};
+use super::{Encoder, WRITE_BUFFER_BYTES, Writer};
 use crate::enrich::Enriched;
 
 /// Newline-delimited JSON, one object per record.
@@ -53,17 +53,17 @@ fn write_line<T: Serialize + ?Sized>(
     out.write_all(line)
 }
 
-impl FlowEncoder for Ndjson {
-    const EXTENSION: &'static str = "ndjson";
-
-    fn open(out: Writer, enriched_fields: &[String]) -> io::Result<Self> {
+impl Ndjson {
+    pub fn open(out: Writer, enriched_fields: &[String]) -> io::Result<Self> {
         Ok(Self {
             out: BufWriter::with_capacity(WRITE_BUFFER_BYTES, out),
             names: enriched_fields.to_vec(),
             line: Vec::with_capacity(1024),
         })
     }
+}
 
+impl Encoder for Ndjson {
     fn encode(&mut self, flow: &CommonFlow, enriched: &Enriched) -> io::Result<()> {
         let row = Row {
             flow,
@@ -75,17 +75,19 @@ impl FlowEncoder for Ndjson {
         write_line(&mut self.out, &mut self.line, &row)
     }
 
+    /// One write per line, so a failed write cannot leave half a line.
+    fn write_raw(&mut self, lines: &[u8]) -> io::Result<()> {
+        for line in lines.split_inclusive(|b| *b == b'\n') {
+            self.out.write_all(line)?;
+        }
+        Ok(())
+    }
+
     fn flush(&mut self) -> io::Result<()> {
         self.out.flush()
     }
 
-    fn finish(mut self) -> io::Result<()> {
+    fn finish(&mut self) -> io::Result<()> {
         self.out.flush()
-    }
-}
-
-impl RawEncoder for Ndjson {
-    fn write_value<T: Serialize + ?Sized>(&mut self, value: &T) -> io::Result<()> {
-        write_line(&mut self.out, &mut self.line, value)
     }
 }

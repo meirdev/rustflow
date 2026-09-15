@@ -18,7 +18,7 @@ use rustflow::{
 use rustflow_core::ipfix::parser::IPFIX_VERSION;
 use rustflow_core::netflow_v5::parser::NETFLOW_V5_VERSION;
 use rustflow_core::netflow_v9::parser::NETFLOW_V9_VERSION;
-use sink::pipeline::{CHUNK_FLUSH_TIMEOUT, Output, RawOutput};
+use sink::pipeline::{CHUNK_FLUSH_TIMEOUT, Pipeline};
 use sink::{MAX_PARTITION_LEVEL, OutputFormat, Serialization, SinkConfig};
 
 /// Arguments for the `collect` subcommand.
@@ -113,10 +113,11 @@ fn read_netflow_pcap(
     file_path: &str,
     ie_registry: &IERegistry,
     timeout: std::time::Duration,
-    output: &mut Output,
+    format: OutputFormat,
+    output: &mut Pipeline,
 ) {
-    match output {
-        Output::Common(pipeline) => {
+    match format {
+        OutputFormat::Common => {
             let reader = NetflowPcapReader::open(file_path)
                 .expect("Failed to open pcap file")
                 .with_ie_registry(ie_registry.clone())
@@ -124,7 +125,7 @@ fn read_netflow_pcap(
 
             for result in reader {
                 match result {
-                    Ok(flow) => pipeline.push([flow]),
+                    Ok(flow) => output.push([flow]),
                     Err(e) => {
                         eprintln!("Error reading flow: {}", e);
                         break;
@@ -134,7 +135,7 @@ fn read_netflow_pcap(
         }
         // For raw format, we still need to use the low-level parsers
         // to output the original packet structure
-        Output::Raw(raw) => read_netflow_pcap_raw(file_path, ie_registry, timeout, raw),
+        OutputFormat::Raw => read_netflow_pcap_raw(file_path, ie_registry, timeout, output),
     }
 }
 
@@ -142,7 +143,7 @@ fn read_netflow_pcap_raw(
     file_path: &str,
     ie_registry: &IERegistry,
     timeout: std::time::Duration,
-    output: &mut RawOutput,
+    output: &mut Pipeline,
 ) {
     use pcap_file::pcap::PcapReader;
     use rustflow_core::common::utils::parse_udp_packet;
@@ -171,11 +172,11 @@ fn read_netflow_pcap_raw(
 }
 
 /// Write a raw NetFlow packet to output.
-fn write_netflow_packet_raw(packet: &NetflowPacket, output: &mut RawOutput) {
+fn write_netflow_packet_raw(packet: &NetflowPacket, output: &mut Pipeline) {
     match packet {
-        NetflowPacket::V5(p) => output.write(p),
-        NetflowPacket::V9(p) => output.write(p),
-        NetflowPacket::Ipfix(p) => output.write(p),
+        NetflowPacket::V5(p) => output.push_raw(p),
+        NetflowPacket::V9(p) => output.push_raw(p),
+        NetflowPacket::Ipfix(p) => output.push_raw(p),
     }
 }
 
@@ -239,7 +240,8 @@ fn read_netflow_socket(
     ie_registry: &IERegistry,
     timeout: std::time::Duration,
     metrics: Arc<metrics::Metrics>,
-    output: &mut Output,
+    format: OutputFormat,
+    output: &mut Pipeline,
 ) {
     let addr: SocketAddr = format!("{}:{}", host, port).parse().unwrap();
     let mut reader = NetflowReader::bind(addr)
@@ -266,15 +268,15 @@ fn read_netflow_socket(
 
                 exporters.record_packet(src, version_label, len, flow_count);
 
-                match output {
-                    Output::Raw(raw) => write_netflow_packet_raw(&packet, raw),
-                    Output::Common(pipeline) => {
+                match format {
+                    OutputFormat::Raw => write_netflow_packet_raw(&packet, output),
+                    OutputFormat::Common => {
                         let time_received_ns = Some(Utc::now().timestamp_nanos_opt().unwrap_or(0));
                         let flows =
                             reader
                                 .processor()
                                 .convert_to_flows(src, &packet, time_received_ns);
-                        pipeline.push(flows);
+                        output.push(flows);
                     }
                 }
 
@@ -291,7 +293,7 @@ fn read_netflow_socket(
                     }
                 }
             }
-            Ok(NetflowReadResult::Timeout) => output.idle(),
+            Ok(NetflowReadResult::Timeout) => output.flush(),
             Err(err) => {
                 eprintln!("Error receiving data: {:#?}", err);
             }
@@ -299,14 +301,14 @@ fn read_netflow_socket(
     }
 }
 
-fn read_sflow_pcap(file_path: &str, output: &mut Output) {
-    match output {
-        Output::Common(pipeline) => {
+fn read_sflow_pcap(file_path: &str, format: OutputFormat, output: &mut Pipeline) {
+    match format {
+        OutputFormat::Common => {
             let reader = SflowPcapReader::open(file_path).expect("Failed to open pcap file");
 
             for result in reader {
                 match result {
-                    Ok(flow) => pipeline.push([flow]),
+                    Ok(flow) => output.push([flow]),
                     Err(e) => {
                         eprintln!("Error reading flow: {}", e);
                         break;
@@ -314,11 +316,11 @@ fn read_sflow_pcap(file_path: &str, output: &mut Output) {
                 }
             }
         }
-        Output::Raw(raw) => read_sflow_pcap_raw(file_path, raw),
+        OutputFormat::Raw => read_sflow_pcap_raw(file_path, output),
     }
 }
 
-fn read_sflow_pcap_raw(file_path: &str, output: &mut RawOutput) {
+fn read_sflow_pcap_raw(file_path: &str, output: &mut Pipeline) {
     use pcap_file::pcap::PcapReader;
     use rustflow_core::common::utils::parse_udp_packet;
 
@@ -344,9 +346,9 @@ fn read_sflow_pcap_raw(file_path: &str, output: &mut RawOutput) {
 }
 
 /// Write a raw sFlow packet to output.
-fn write_sflow_packet_raw(packet: &SflowPacket, output: &mut RawOutput) {
+fn write_sflow_packet_raw(packet: &SflowPacket, output: &mut Pipeline) {
     match packet {
-        SflowPacket::V5(p) => output.write(p),
+        SflowPacket::V5(p) => output.push_raw(p),
     }
 }
 
@@ -363,7 +365,13 @@ fn sflow_flow_count(packet: &SflowPacket) -> usize {
     }
 }
 
-fn read_sflow_socket(host: &str, port: u16, metrics: Arc<metrics::Metrics>, output: &mut Output) {
+fn read_sflow_socket(
+    host: &str,
+    port: u16,
+    metrics: Arc<metrics::Metrics>,
+    format: OutputFormat,
+    output: &mut Pipeline,
+) {
     let addr: SocketAddr = format!("{}:{}", host, port).parse().unwrap();
     let mut reader = SflowReader::bind(addr)
         .expect("Failed to bind to socket")
@@ -383,12 +391,12 @@ fn read_sflow_socket(host: &str, port: u16, metrics: Arc<metrics::Metrics>, outp
                 let flow_count = sflow_flow_count(&packet);
                 exporters.record_packet(src, metrics::LABEL_SFLOW_V5, len, flow_count);
 
-                match output {
-                    Output::Raw(raw) => write_sflow_packet_raw(&packet, raw),
-                    Output::Common(pipeline) => {
+                match format {
+                    OutputFormat::Raw => write_sflow_packet_raw(&packet, output),
+                    OutputFormat::Common => {
                         let time_received_ns = Some(Utc::now().timestamp_nanos_opt().unwrap_or(0));
                         let flows = SflowProcessor::convert_to_flows(&packet, time_received_ns);
-                        pipeline.push(flows);
+                        output.push(flows);
                     }
                 }
             }
@@ -401,7 +409,7 @@ fn read_sflow_socket(host: &str, port: u16, metrics: Arc<metrics::Metrics>, outp
                     }
                 }
             }
-            Ok(SflowReadResult::Timeout) => output.idle(),
+            Ok(SflowReadResult::Timeout) => output.flush(),
             Err(err) => {
                 eprintln!("Error receiving data: {:#?}", err);
             }
@@ -461,16 +469,17 @@ pub fn run(cli: CollectArgs) {
         }
     }
 
-    let mut output = Output::build(
+    let sink = sink::build(
         cli.format,
         &sink_config(&cli),
-        enrichment_engine,
+        enrichment_engine.output_fields().to_vec(),
         &metrics.output,
     )
     .unwrap_or_else(|e| {
         eprintln!("Error: {}", e);
         std::process::exit(1);
     });
+    let mut output = Pipeline::spawn(sink, enrichment_engine, metrics.output.clone());
 
     // Graceful shutdown on Ctrl-C / SIGTERM: flag the ingest loop to stop,
     // which drains the pipeline and finalizes the output (a parquet file is
@@ -490,7 +499,7 @@ pub fn run(cli: CollectArgs) {
 
     match (&cli.flow_type, &cli.pcap, &cli.port) {
         (FlowType::Netflow, Some(path), _) => {
-            read_netflow_pcap(path, &ie_registry, timeout, &mut output)
+            read_netflow_pcap(path, &ie_registry, timeout, cli.format, &mut output)
         }
         (FlowType::Netflow, None, Some(port)) => {
             let _metrics_handle = metrics::start_metrics_server(
@@ -504,17 +513,24 @@ pub fn run(cli: CollectArgs) {
                 &ie_registry,
                 timeout,
                 Arc::clone(&metrics),
+                cli.format,
                 &mut output,
             )
         }
-        (FlowType::Sflow, Some(path), _) => read_sflow_pcap(path, &mut output),
+        (FlowType::Sflow, Some(path), _) => read_sflow_pcap(path, cli.format, &mut output),
         (FlowType::Sflow, None, Some(port)) => {
             let _metrics_handle = metrics::start_metrics_server(
                 Arc::clone(&metrics),
                 &cli.metrics_host,
                 cli.metrics_port,
             );
-            read_sflow_socket(&cli.host, *port, Arc::clone(&metrics), &mut output)
+            read_sflow_socket(
+                &cli.host,
+                *port,
+                Arc::clone(&metrics),
+                cli.format,
+                &mut output,
+            )
         }
         (_, None, None) => {
             eprintln!("Error: Either --pcap or --port must be specified");
@@ -524,7 +540,7 @@ pub fn run(cli: CollectArgs) {
 
     // Socket modes return here after a graceful shutdown; pcap modes when the
     // file is exhausted.
-    if let Err(e) = output.finish() {
+    if let Err(e) = output.drain() {
         eprintln!("Failed to finalize output: {}", e);
         std::process::exit(1);
     }

@@ -5,7 +5,7 @@ use std::net::IpAddr;
 use prost::Message;
 use rustflow_core::common::common_flow::CommonFlow;
 
-use super::{FlowEncoder, WRITE_BUFFER_BYTES, Writer};
+use super::{Encoder, WRITE_BUFFER_BYTES, Writer};
 use crate::enrich::Enriched;
 
 /// `rustflow.CommonFlow` of `proto/rustflow.proto`. Tags are the wire
@@ -196,17 +196,17 @@ pub struct Protobuf {
     buf: Vec<u8>,
 }
 
-impl FlowEncoder for Protobuf {
-    const EXTENSION: &'static str = "pb";
-
-    fn open(out: Writer, enriched_fields: &[String]) -> io::Result<Self> {
+impl Protobuf {
+    pub fn open(out: Writer, enriched_fields: &[String]) -> io::Result<Self> {
         Ok(Self {
             out: BufWriter::with_capacity(WRITE_BUFFER_BYTES, out),
             names: enriched_fields.to_vec(),
             buf: Vec::with_capacity(512),
         })
     }
+}
 
+impl Encoder for Protobuf {
     fn encode(&mut self, flow: &CommonFlow, enriched: &Enriched) -> io::Result<()> {
         self.buf.clear();
         FlowMessage::from_flow(flow, &self.names, enriched)
@@ -219,7 +219,7 @@ impl FlowEncoder for Protobuf {
         self.out.flush()
     }
 
-    fn finish(mut self) -> io::Result<()> {
+    fn finish(&mut self) -> io::Result<()> {
         self.out.flush()
     }
 }

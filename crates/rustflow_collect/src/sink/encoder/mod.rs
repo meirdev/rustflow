@@ -10,7 +10,6 @@ pub use discard::Discard;
 pub use ndjson::Ndjson;
 pub use protobuf::{FlowMessage, Protobuf};
 use rustflow_core::common::common_flow::CommonFlow;
-use serde::Serialize;
 
 pub use self::csv::Csv;
 pub use self::parquet::Parquet;
@@ -22,26 +21,22 @@ pub(crate) const WRITE_BUFFER_BYTES: usize = 256 * 1024;
 
 pub type Writer = Box<dyn Write + Send>;
 
-/// Turns flows into bytes in one format. Knows nothing about files,
-/// rotation, or threads.
-pub trait FlowEncoder: Send + Sized {
-    /// File extension in the partitioned tree.
-    const EXTENSION: &'static str;
-
-    /// Writes any header now, so a rotated file is well-formed even when empty.
-    fn open(out: Writer, enriched_fields: &[String]) -> io::Result<Self>;
-
+/// Turns records into bytes in one format. Knows nothing about files,
+/// rotation, or threads. Every encoder's `open` writes its header right
+/// away, so a rotated file is well-formed even when empty.
+pub trait Encoder: Send {
     fn encode(&mut self, flow: &CommonFlow, enriched: &Enriched) -> io::Result<()>;
+
+    /// Records the ingest thread already serialized as JSON lines
+    /// (`--format raw`); only NDJSON and discard take them.
+    fn write_raw(&mut self, _lines: &[u8]) -> io::Result<()> {
+        Err(io::Error::other(
+            "raw records need --serialization ndjson or discard",
+        ))
+    }
 
     fn flush(&mut self) -> io::Result<()>;
 
-    /// Ends the stream (Parquet footer). Consumes `self`, so writing after
-    /// finish is a compile error.
-    fn finish(self) -> io::Result<()>;
-}
-
-/// An encoder that can also carry an arbitrary serializable record, which
-/// is what `--format raw` writes.
-pub trait RawEncoder: FlowEncoder {
-    fn write_value<T: Serialize + ?Sized>(&mut self, value: &T) -> io::Result<()>;
+    /// Ends the stream (Parquet footer).
+    fn finish(&mut self) -> io::Result<()>;
 }

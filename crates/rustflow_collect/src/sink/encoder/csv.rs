@@ -5,7 +5,7 @@ use std::io::{self, BufWriter, Write};
 use rustflow_core::common::common_flow::CommonFlow;
 use rustflow_core::for_each_flow_field;
 
-use super::{FlowEncoder, WRITE_BUFFER_BYTES, Writer};
+use super::{Encoder, WRITE_BUFFER_BYTES, Writer};
 use crate::enrich::Enriched;
 
 /// Comma-separated values with a header row: the flow's columns followed by
@@ -68,10 +68,8 @@ macro_rules! flow_fields {
 }
 for_each_flow_field!(flow_fields);
 
-impl FlowEncoder for Csv {
-    const EXTENSION: &'static str = "csv";
-
-    fn open(out: Writer, enriched_fields: &[String]) -> io::Result<Self> {
+impl Csv {
+    pub fn open(out: Writer, enriched_fields: &[String]) -> io::Result<Self> {
         let out = Batched(RefCell::new(BufWriter::with_capacity(
             WRITE_BUFFER_BYTES,
             out,
@@ -87,7 +85,9 @@ impl FlowEncoder for Csv {
             scratch: String::new(),
         })
     }
+}
 
+impl Encoder for Csv {
     fn encode(&mut self, flow: &CommonFlow, enriched: &Enriched) -> io::Result<()> {
         write_flow(&mut self.out, &mut self.scratch, flow)?;
         for value in enriched.iter() {
@@ -103,7 +103,7 @@ impl FlowEncoder for Csv {
         self.out.get_ref().0.borrow_mut().flush()
     }
 
-    fn finish(mut self) -> io::Result<()> {
+    fn finish(&mut self) -> io::Result<()> {
         self.flush()
     }
 }
