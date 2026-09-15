@@ -25,16 +25,11 @@ pub(crate) enum ReloadEvent {
     WatcherError(String),
 }
 
-enum Signal {
-    Event(ReloadEvent),
-    Stop,
-}
-
 pub(crate) struct ReloadDriver {
     policy: ReloadPolicy,
     watcher: Option<Watcher>,
-    tx: Sender<Signal>,
-    rx: Receiver<Signal>,
+    tx: Sender<ReloadEvent>,
+    rx: Receiver<ReloadEvent>,
 }
 
 impl ReloadDriver {
@@ -72,7 +67,7 @@ impl ReloadDriver {
                 thread::Builder::new()
                     .name("enrichment-reload".into())
                     .spawn(move || {
-                        while let Some(Signal::Event(event)) = next(policy, &rx) {
+                        while let Some(event) = next(policy, &rx) {
                             callback(event);
                         }
                     })?,
@@ -81,24 +76,24 @@ impl ReloadDriver {
 
         Ok(ReloadGuard {
             watcher,
-            tx,
+            tx: Some(tx),
             worker,
         })
     }
 }
 
-fn next(policy: ReloadPolicy, rx: &Receiver<Signal>) -> Option<Signal> {
+fn next(policy: ReloadPolicy, rx: &Receiver<ReloadEvent>) -> Option<ReloadEvent> {
     match policy {
         ReloadPolicy::Interval(duration) => match rx.recv_timeout(duration) {
-            Ok(signal) => Some(signal),
-            Err(RecvTimeoutError::Timeout) => Some(Signal::Event(ReloadEvent::Reload)),
+            Ok(event) => Some(event),
+            Err(RecvTimeoutError::Timeout) => Some(ReloadEvent::Reload),
             Err(RecvTimeoutError::Disconnected) => None,
         },
         _ => rx.recv().ok(),
     }
 }
 
-fn watcher(path: &Path, debounce: Duration, tx: Sender<Signal>) -> Result<Watcher> {
+fn watcher(path: &Path, debounce: Duration, tx: Sender<ReloadEvent>) -> Result<Watcher> {
     let filename = path
         .file_name()
         .ok_or_else(|| Error::Config("Source must name a file".into()))?;
@@ -135,7 +130,7 @@ fn watcher(path: &Path, debounce: Duration, tx: Sender<Signal>) -> Result<Watche
             ),
         };
 
-        let _ = tx.send(Signal::Event(event));
+        let _ = tx.send(event);
     })?;
 
     watcher.watch(&parent, RecursiveMode::NonRecursive)?;
@@ -145,15 +140,16 @@ fn watcher(path: &Path, debounce: Duration, tx: Sender<Signal>) -> Result<Watche
 
 pub(crate) struct ReloadGuard {
     watcher: Option<Watcher>,
-    tx: Sender<Signal>,
+    tx: Option<Sender<ReloadEvent>>,
     worker: Option<JoinHandle<()>>,
 }
 
 impl Drop for ReloadGuard {
     fn drop(&mut self) {
-        // Stop producing events before stopping the consumer.
+        // The worker ends when the last sender is gone; the watcher holds
+        // one, so it goes first.
         self.watcher.take();
-        let _ = self.tx.send(Signal::Stop);
+        self.tx.take();
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }

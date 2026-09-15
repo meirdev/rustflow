@@ -94,10 +94,6 @@ impl Table {
         })
     }
 
-    pub fn config(&self) -> &SourceConfig {
-        &self.shared.config
-    }
-
     pub fn metrics(&self) -> &SourceMetrics {
         &self.shared.metrics
     }
@@ -114,24 +110,11 @@ impl Table {
         self.shared.reload()
     }
 
-    pub fn snapshot(&self) -> Snapshot {
-        Snapshot {
-            source: Arc::clone(&self.shared.source()),
-        }
+    pub fn snapshot(&self) -> Arc<dyn Source> {
+        Arc::clone(&self.shared.source())
     }
 
     pub fn lookup(&self, key: Key<'_>) -> Option<Row> {
         self.snapshot().lookup(key)
-    }
-}
-
-#[derive(Clone)]
-pub struct Snapshot {
-    source: Arc<dyn Source>,
-}
-
-impl Snapshot {
-    pub fn lookup(&self, key: Key<'_>) -> Option<Row> {
-        self.source.lookup(key)
     }
 }

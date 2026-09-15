@@ -16,7 +16,7 @@ pub use key::{Key, KeyType};
 pub use row::{Row, Schema};
 pub use source::{ExactTable, MmdbSource, PrefixTable, Source};
 pub use table::metrics::{SourceMetrics, TableMetrics};
-pub use table::{ReloadPolicy, Snapshot, Table};
+pub use table::{ReloadPolicy, Table};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
