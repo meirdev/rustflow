@@ -134,6 +134,11 @@ impl Metrics {
         }
     }
 
+    pub fn active_exporters(&self, version: &'static str) -> Gauge {
+        self.active_exporters
+            .get_or_create_owned(&TypeLabel { r#type: version })
+    }
+
     pub fn encode(&self) -> String {
         let mut buffer = String::new();
         text::encode(&mut buffer, &self.registry).unwrap();
@@ -147,7 +152,6 @@ impl Default for Metrics {
     }
 }
 
-/// Cached counters for a single exporter IP to avoid string allocations.
 struct ExporterCounters {
     packets_received: Counter,
     bytes_received: Counter,
@@ -155,161 +159,88 @@ struct ExporterCounters {
     parse_errors: Counter,
 }
 
-impl ExporterCounters {
-    fn new(metrics: &Metrics, src: IpAddr, family: &'static str, version: &'static str) -> Self {
-        let source_ip = src.to_string();
-        let by_source = SourceLabel {
-            source_ip: source_ip.clone(),
-        };
-        let by_family = TypeSourceLabel {
-            r#type: family,
-            source_ip: source_ip.clone(),
-        };
-        let by_version = TypeSourceLabel {
-            r#type: version,
-            source_ip,
-        };
-        Self {
-            packets_received: metrics
-                .packets_received_total
-                .get_or_create_owned(&by_family),
-            bytes_received: metrics.bytes_received_total.get_or_create_owned(&by_source),
-            flows_processed: metrics
-                .flows_processed_total
-                .get_or_create_owned(&by_version),
-            parse_errors: metrics.parse_errors_total.get_or_create_owned(&by_version),
-        }
-    }
-}
-
-/// Count a packet whose protocol version is unknown; rare, so the labels are
-/// built on the spot.
-fn record_unknown_version(metrics: &Metrics, family: &'static str, src: IpAddr, bytes: usize) {
-    let source_ip = src.to_string();
-    metrics
-        .packets_received_total
-        .get_or_create(&TypeSourceLabel {
-            r#type: family,
-            source_ip: source_ip.clone(),
-        })
-        .inc();
-    metrics
-        .bytes_received_total
-        .get_or_create(&SourceLabel {
-            source_ip: source_ip.clone(),
-        })
-        .inc_by(bytes as u64);
-    metrics
-        .unknown_version_total
-        .get_or_create(&SourceLabel { source_ip })
-        .inc();
-}
-
-/// Cached metrics for NetFlow exporters.
-/// Avoids string allocation on every packet by caching Counter objects per IP.
-pub struct NetflowMetricsCache {
+pub struct ExporterMetrics {
     metrics: Arc<Metrics>,
-    /// Cached counters per (src_ip, version_label)
-    v5_cache: FxHashMap<IpAddr, ExporterCounters>,
-    v9_cache: FxHashMap<IpAddr, ExporterCounters>,
-    ipfix_cache: FxHashMap<IpAddr, ExporterCounters>,
+    family: &'static str,
+    counters: FxHashMap<(IpAddr, &'static str), ExporterCounters>,
 }
 
-impl NetflowMetricsCache {
-    pub fn new(metrics: Arc<Metrics>) -> Self {
+impl ExporterMetrics {
+    pub fn new(metrics: Arc<Metrics>, family: &'static str) -> Self {
         Self {
             metrics,
-            v5_cache: FxHashMap::default(),
-            v9_cache: FxHashMap::default(),
-            ipfix_cache: FxHashMap::default(),
+            family,
+            counters: FxHashMap::default(),
         }
     }
 
-    fn get_or_create(&mut self, src: IpAddr, version_label: &'static str) -> &ExporterCounters {
-        let cache = match version_label {
-            LABEL_NETFLOW_V5 => &mut self.v5_cache,
-            LABEL_NETFLOW_V9 => &mut self.v9_cache,
-            LABEL_IPFIX => &mut self.ipfix_cache,
-            _ => &mut self.v5_cache, // fallback
-        };
-
-        cache.entry(src).or_insert_with(|| {
-            ExporterCounters::new(&self.metrics, src, LABEL_NETFLOW, version_label)
+    fn get_or_create(&mut self, src: IpAddr, version: &'static str) -> &ExporterCounters {
+        let (metrics, family) = (&self.metrics, self.family);
+        self.counters.entry((src, version)).or_insert_with(|| {
+            let source_ip = src.to_string();
+            let by_source = SourceLabel {
+                source_ip: source_ip.clone(),
+            };
+            let by_family = TypeSourceLabel {
+                r#type: family,
+                source_ip: source_ip.clone(),
+            };
+            let by_version = TypeSourceLabel {
+                r#type: version,
+                source_ip,
+            };
+            ExporterCounters {
+                packets_received: metrics
+                    .packets_received_total
+                    .get_or_create_owned(&by_family),
+                bytes_received: metrics.bytes_received_total.get_or_create_owned(&by_source),
+                flows_processed: metrics
+                    .flows_processed_total
+                    .get_or_create_owned(&by_version),
+                parse_errors: metrics.parse_errors_total.get_or_create_owned(&by_version),
+            }
         })
     }
 
-    /// Record a successful packet with flows.
     pub fn record_packet(
         &mut self,
         src: IpAddr,
-        version_label: &'static str,
+        version: &'static str,
         bytes: usize,
         flow_count: usize,
     ) {
-        let counters = self.get_or_create(src, version_label);
+        let counters = self.get_or_create(src, version);
         counters.packets_received.inc();
         counters.bytes_received.inc_by(bytes as u64);
         counters.flows_processed.inc_by(flow_count as u64);
     }
 
-    /// Record a parse error.
-    pub fn record_parse_error(&mut self, src: IpAddr, version_label: &'static str, bytes: usize) {
-        let counters = self.get_or_create(src, version_label);
+    pub fn record_parse_error(&mut self, src: IpAddr, version: &'static str, bytes: usize) {
+        let counters = self.get_or_create(src, version);
         counters.packets_received.inc();
         counters.bytes_received.inc_by(bytes as u64);
         counters.parse_errors.inc();
     }
 
-    /// Record an unknown version error.
     pub fn record_unknown_version(&mut self, src: IpAddr, bytes: usize) {
-        record_unknown_version(&self.metrics, LABEL_NETFLOW, src, bytes);
-    }
-
-    /// Get reference to underlying metrics for exporter counts.
-    pub fn metrics(&self) -> &Metrics {
-        &self.metrics
-    }
-}
-
-/// Cached metrics for sFlow exporters.
-pub struct SflowMetricsCache {
-    metrics: Arc<Metrics>,
-    cache: FxHashMap<IpAddr, ExporterCounters>,
-}
-
-impl SflowMetricsCache {
-    pub fn new(metrics: Arc<Metrics>) -> Self {
-        Self {
-            metrics,
-            cache: FxHashMap::default(),
-        }
-    }
-
-    fn get_or_create(&mut self, src: IpAddr) -> &ExporterCounters {
-        self.cache.entry(src).or_insert_with(|| {
-            ExporterCounters::new(&self.metrics, src, LABEL_SFLOW, LABEL_SFLOW_V5)
-        })
-    }
-
-    /// Record a successful packet with flows.
-    pub fn record_packet(&mut self, src: IpAddr, bytes: usize, flow_count: usize) {
-        let counters = self.get_or_create(src);
-        counters.packets_received.inc();
-        counters.bytes_received.inc_by(bytes as u64);
-        counters.flows_processed.inc_by(flow_count as u64);
-    }
-
-    /// Record a parse error.
-    pub fn record_parse_error(&mut self, src: IpAddr, bytes: usize) {
-        let counters = self.get_or_create(src);
-        counters.packets_received.inc();
-        counters.bytes_received.inc_by(bytes as u64);
-        counters.parse_errors.inc();
-    }
-
-    /// Record an unknown version error.
-    pub fn record_unknown_version(&mut self, src: IpAddr, bytes: usize) {
-        record_unknown_version(&self.metrics, LABEL_SFLOW, src, bytes);
+        let source_ip = src.to_string();
+        self.metrics
+            .packets_received_total
+            .get_or_create(&TypeSourceLabel {
+                r#type: self.family,
+                source_ip: source_ip.clone(),
+            })
+            .inc();
+        self.metrics
+            .bytes_received_total
+            .get_or_create(&SourceLabel {
+                source_ip: source_ip.clone(),
+            })
+            .inc_by(bytes as u64);
+        self.metrics
+            .unknown_version_total
+            .get_or_create(&SourceLabel { source_ip })
+            .inc();
     }
 }
 

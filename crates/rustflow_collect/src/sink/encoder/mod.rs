@@ -6,16 +6,15 @@ mod protobuf;
 
 use std::io::{self, Write};
 
-use rustflow_core::common::common_flow::CommonFlow;
-use serde::Serialize;
-
-use crate::enrich::Enriched;
-
-pub use self::csv::Csv;
-pub use self::parquet::Parquet;
 pub use discard::Discard;
 pub use ndjson::Ndjson;
 pub use protobuf::{FlowMessage, Protobuf};
+use rustflow_core::common::common_flow::CommonFlow;
+use serde::Serialize;
+
+pub use self::csv::Csv;
+pub use self::parquet::Parquet;
+use crate::enrich::Enriched;
 
 /// Records are not flushed individually; this bounds how often the
 /// encoder calls into the kernel.

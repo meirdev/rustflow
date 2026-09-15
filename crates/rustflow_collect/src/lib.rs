@@ -96,9 +96,9 @@ pub struct CollectArgs {
 
     /// Flow enrichment configuration
     /// Format: type=prefix_lookup|exact,source=file.csv,key_column=col,
-    /// fields=<key>@col:output|col2:output2;<key2>@col:output3[,reload=30s|watch]
-    /// key_column names the CSV column holding the prefixes or keys; it does
-    /// not apply to .mmdb
+    /// fields=<key>@col:output|col2:output2;<key2>@col:output3[,
+    /// reload=30s|watch] key_column names the CSV column holding the
+    /// prefixes or keys; it does not apply to .mmdb
     #[arg(long = "enrich")]
     enrich: Vec<String>,
 }
@@ -254,7 +254,9 @@ fn read_netflow_socket(
         reader.local_addr().unwrap()
     );
 
-    let mut metrics_cache = metrics::NetflowMetricsCache::new(metrics);
+    let v9_exporters = metrics.active_exporters(metrics::LABEL_NETFLOW_V9);
+    let ipfix_exporters = metrics.active_exporters(metrics::LABEL_IPFIX);
+    let mut exporters = metrics::ExporterMetrics::new(metrics, metrics::LABEL_NETFLOW);
 
     while !SHUTDOWN.load(Ordering::Relaxed) {
         match reader.read_raw() {
@@ -262,7 +264,7 @@ fn read_netflow_socket(
                 let version_label = netflow_version_label(&packet);
                 let flow_count = netflow_flow_count(&packet);
 
-                metrics_cache.record_packet(src, version_label, len, flow_count);
+                exporters.record_packet(src, version_label, len, flow_count);
 
                 match output {
                     Output::Raw(raw) => write_netflow_packet_raw(&packet, raw),
@@ -277,24 +279,15 @@ fn read_netflow_socket(
                 }
 
                 let processor = reader.processor();
-                let active_exporters = &metrics_cache.metrics().active_exporters;
-                active_exporters
-                    .get_or_create(&metrics::TypeLabel {
-                        r#type: metrics::LABEL_NETFLOW_V9,
-                    })
-                    .set(processor.v9_parsers.len() as i64);
-                active_exporters
-                    .get_or_create(&metrics::TypeLabel {
-                        r#type: metrics::LABEL_IPFIX,
-                    })
-                    .set(processor.ipfix_parsers.len() as i64);
+                v9_exporters.set(processor.v9_parsers.len() as i64);
+                ipfix_exporters.set(processor.ipfix_parsers.len() as i64);
             }
             Ok(NetflowReadResult::ParseError { len, src, version }) => {
                 if let Some(version) = version {
                     if let Some(label) = netflow_version_to_label(version) {
-                        metrics_cache.record_parse_error(src, label, len);
+                        exporters.record_parse_error(src, label, len);
                     } else {
-                        metrics_cache.record_unknown_version(src, len);
+                        exporters.record_unknown_version(src, len);
                     }
                 }
             }
@@ -382,13 +375,13 @@ fn read_sflow_socket(host: &str, port: u16, metrics: Arc<metrics::Metrics>, outp
         reader.local_addr().unwrap()
     );
 
-    let mut metrics_cache = metrics::SflowMetricsCache::new(metrics);
+    let mut exporters = metrics::ExporterMetrics::new(metrics, metrics::LABEL_SFLOW);
 
     while !SHUTDOWN.load(Ordering::Relaxed) {
         match reader.read_raw() {
             Ok(SflowReadResult::Packet { len, src, packet }) => {
                 let flow_count = sflow_flow_count(&packet);
-                metrics_cache.record_packet(src, len, flow_count);
+                exporters.record_packet(src, metrics::LABEL_SFLOW_V5, len, flow_count);
 
                 match output {
                     Output::Raw(raw) => write_sflow_packet_raw(&packet, raw),
@@ -402,9 +395,9 @@ fn read_sflow_socket(host: &str, port: u16, metrics: Arc<metrics::Metrics>, outp
             Ok(SflowReadResult::ParseError { len, src, version }) => {
                 if let Some(version) = version {
                     if version == 5 {
-                        metrics_cache.record_parse_error(src, len);
+                        exporters.record_parse_error(src, metrics::LABEL_SFLOW_V5, len);
                     } else {
-                        metrics_cache.record_unknown_version(src, len);
+                        exporters.record_unknown_version(src, len);
                     }
                 }
             }

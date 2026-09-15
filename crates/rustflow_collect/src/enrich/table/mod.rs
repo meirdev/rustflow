@@ -4,11 +4,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub mod metrics;
 pub mod reload;
 
-use crate::enrich::{Key, Result, Row, Source, SourceConfig, source};
 use metrics::{SourceMetrics, TableMetrics};
+pub use reload::ReloadPolicy;
 use reload::{ReloadDriver, ReloadEvent, ReloadGuard};
 
-pub use reload::ReloadPolicy;
+use crate::enrich::{Key, Result, Row, Source, SourceConfig, source};
 
 struct Shared {
     config: SourceConfig,

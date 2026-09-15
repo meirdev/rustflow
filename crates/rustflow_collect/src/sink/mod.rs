@@ -7,21 +7,19 @@ pub mod metrics;
 pub mod pipeline;
 pub mod rotating;
 
-use std::fmt;
-use std::io;
 use std::path::PathBuf;
 use std::time::Duration;
+use std::{fmt, io};
 
 use chrono::{DateTime, Utc};
 use clap::ValueEnum;
-use rustflow_core::common::common_flow::CommonFlow;
-use serde::Serialize;
-
 pub use destination::{Destination, MAX_PARTITION_LEVEL, PendingRename};
 pub use encoder::{Csv, Discard, FlowEncoder, Ndjson, Parquet, Protobuf, RawEncoder};
 pub use metrics::OutputMetrics;
 pub use pipeline::{FLUSH_INTERVAL, encoder_loop};
 pub use rotating::RotatingSink;
+use rustflow_core::common::common_flow::CommonFlow;
+use serde::Serialize;
 
 use crate::enrich::Enriched;
 
