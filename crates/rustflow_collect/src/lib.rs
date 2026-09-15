@@ -19,7 +19,7 @@ use rustflow_core::ipfix::parser::IPFIX_VERSION;
 use rustflow_core::netflow_v5::parser::NETFLOW_V5_VERSION;
 use rustflow_core::netflow_v9::parser::NETFLOW_V9_VERSION;
 use sink::pipeline::{CHUNK_FLUSH_TIMEOUT, Output, RawOutput};
-use sink::{Format, MAX_PARTITION_LEVEL, OutputFormat, SinkConfig};
+use sink::{MAX_PARTITION_LEVEL, OutputFormat, Serialization, SinkConfig};
 
 /// Arguments for the `collect` subcommand.
 #[derive(ClapArgs)]
@@ -48,7 +48,7 @@ pub struct CollectArgs {
     /// Serialization format for output (parquet is Snappy-compressed and
     /// requires `--format common` and `--output`)
     #[arg(short, long, value_enum, default_value = "ndjson")]
-    serialization: Format,
+    serialization: Serialization,
 
     /// Output path (stdout if not specified). Without `--interval` this is a
     /// single file; with `--interval` it is the root directory of the
@@ -116,7 +116,7 @@ fn read_netflow_pcap(
     output: &mut Output,
 ) {
     match output {
-        Output::Common(encoder) => {
+        Output::Common(pipeline) => {
             let reader = NetflowPcapReader::open(file_path)
                 .expect("Failed to open pcap file")
                 .with_ie_registry(ie_registry.clone())
@@ -124,7 +124,7 @@ fn read_netflow_pcap(
 
             for result in reader {
                 match result {
-                    Ok(flow) => encoder.push([flow]),
+                    Ok(flow) => pipeline.push([flow]),
                     Err(e) => {
                         eprintln!("Error reading flow: {}", e);
                         break;
@@ -268,13 +268,13 @@ fn read_netflow_socket(
 
                 match output {
                     Output::Raw(raw) => write_netflow_packet_raw(&packet, raw),
-                    Output::Common(encoder) => {
+                    Output::Common(pipeline) => {
                         let time_received_ns = Some(Utc::now().timestamp_nanos_opt().unwrap_or(0));
                         let flows =
                             reader
                                 .processor()
                                 .convert_to_flows(src, &packet, time_received_ns);
-                        encoder.push(flows);
+                        pipeline.push(flows);
                     }
                 }
 
@@ -301,12 +301,12 @@ fn read_netflow_socket(
 
 fn read_sflow_pcap(file_path: &str, output: &mut Output) {
     match output {
-        Output::Common(encoder) => {
+        Output::Common(pipeline) => {
             let reader = SflowPcapReader::open(file_path).expect("Failed to open pcap file");
 
             for result in reader {
                 match result {
-                    Ok(flow) => encoder.push([flow]),
+                    Ok(flow) => pipeline.push([flow]),
                     Err(e) => {
                         eprintln!("Error reading flow: {}", e);
                         break;
@@ -385,10 +385,10 @@ fn read_sflow_socket(host: &str, port: u16, metrics: Arc<metrics::Metrics>, outp
 
                 match output {
                     Output::Raw(raw) => write_sflow_packet_raw(&packet, raw),
-                    Output::Common(encoder) => {
+                    Output::Common(pipeline) => {
                         let time_received_ns = Some(Utc::now().timestamp_nanos_opt().unwrap_or(0));
                         let flows = SflowProcessor::convert_to_flows(&packet, time_received_ns);
-                        encoder.push(flows);
+                        pipeline.push(flows);
                     }
                 }
             }
@@ -418,7 +418,7 @@ fn sink_config(cli: &CollectArgs) -> SinkConfig {
     });
     SinkConfig {
         path: cli.output.as_deref().map(PathBuf::from),
-        format: cli.serialization,
+        serialization: cli.serialization,
         interval,
         level: cli.level,
         prefix: cli.prefix.clone(),

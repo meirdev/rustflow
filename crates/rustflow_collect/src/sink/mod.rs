@@ -1,6 +1,3 @@
-//! Output sinks: encoders turn flows into bytes, destinations say where the
-//! bytes go, and the rotating sink opens and closes files on an interval.
-
 pub mod destination;
 pub mod encoder;
 pub mod metrics;
@@ -46,27 +43,21 @@ pub enum OutputFormat {
 
 /// `--serialization`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-pub enum Format {
-    /// Newline-delimited JSON, one object per line
+pub enum Serialization {
     Ndjson,
     Csv,
-    /// Snappy-compressed Apache Parquet
     Parquet,
-    /// Length-delimited protobuf, see `proto/rustflow.proto`
     Protobuf,
-    /// Decode and count flows but write no output (for load testing)
     Discard,
 }
 
-impl fmt::Display for Format {
+impl fmt::Display for Serialization {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Format::Ndjson => "ndjson",
-            Format::Csv => "csv",
-            Format::Parquet => "parquet",
-            Format::Protobuf => "protobuf",
-            Format::Discard => "discard",
-        })
+        f.write_str(
+            self.to_possible_value()
+                .expect("no hidden variants")
+                .get_name(),
+        )
     }
 }
 
@@ -76,7 +67,7 @@ pub struct SinkConfig {
     /// A file when `interval` is `None`, otherwise the root of the
     /// partitioned tree. `None` writes to stdout.
     pub path: Option<PathBuf>,
-    pub format: Format,
+    pub serialization: Serialization,
     /// Start a new file every interval.
     pub interval: Option<Duration>,
     pub level: u8,
@@ -118,10 +109,10 @@ pub fn build(
 ) -> io::Result<Box<dyn FlowSink>> {
     let dest = config.destination();
     let metrics = metrics.clone();
-    match config.format {
-        Format::Ndjson => open::<Ndjson>(dest, enriched_fields, metrics),
-        Format::Csv => open::<Csv>(dest, enriched_fields, metrics),
-        Format::Parquet => {
+    match config.serialization {
+        Serialization::Ndjson => open::<Ndjson>(dest, enriched_fields, metrics),
+        Serialization::Csv => open::<Csv>(dest, enriched_fields, metrics),
+        Serialization::Parquet => {
             if matches!(dest, Destination::Stdout) {
                 return Err(io::Error::other(
                     "--serialization parquet requires --output <FILE>",
@@ -129,8 +120,8 @@ pub fn build(
             }
             open::<Parquet>(dest, enriched_fields, metrics)
         }
-        Format::Protobuf => open::<Protobuf>(dest, enriched_fields, metrics),
-        Format::Discard => open::<Discard>(Destination::Null, enriched_fields, metrics),
+        Serialization::Protobuf => open::<Protobuf>(dest, enriched_fields, metrics),
+        Serialization::Discard => open::<Discard>(Destination::Null, enriched_fields, metrics),
     }
 }
 
@@ -174,13 +165,13 @@ impl RawSink {
 
 pub fn build_raw(config: &SinkConfig, metrics: &OutputMetrics) -> io::Result<RawSink> {
     let metrics = metrics.clone();
-    Ok(match config.format {
-        Format::Ndjson => RawSink::Ndjson(RotatingSink::open(
+    Ok(match config.serialization {
+        Serialization::Ndjson => RawSink::Ndjson(RotatingSink::open(
             config.destination(),
             Vec::new(),
             metrics,
         )?),
-        Format::Discard => {
+        Serialization::Discard => {
             RawSink::Discard(RotatingSink::open(Destination::Null, Vec::new(), metrics)?)
         }
         other => {
