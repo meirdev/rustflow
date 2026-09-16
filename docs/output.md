@@ -193,6 +193,32 @@ Files are named using the prefix and timestamp, for example:
 netflow-20260820T120000Z.parquet
 ```
 
+## Running a command per file
+
+Use `-x` to run a command after each rotated file is complete:
+
+```bash
+rustflow collect \
+  -t netflow \
+  -p 9995 \
+  -f common \
+  -s parquet \
+  -o flows \
+  --interval 10m \
+  -x "aws s3 cp %f s3://bucket/flows/%t.parquet"
+```
+
+Placeholders in the command are replaced for each file:
+
+| Placeholder | Value                                                    |
+| ----------- | -------------------------------------------------------- |
+| `%f`        | The file's path                                          |
+| `%t`        | The window start as in the file name, `20260820T120000Z` |
+| `%u`        | The window start as a Unix timestamp                     |
+| `%%`        | A percent sign                                           |
+
+`-x` requires `--interval`.
+
 ## Partitioning
 
 Rotated output can be organized into time-based directory partitions using `--level` (`-l`).

@@ -9,6 +9,9 @@ pub const MAX_PARTITION_LEVEL: u8 = 3;
 /// Directory resolution, in minutes, of the deepest partitioning level.
 const LEVEL_3_MINUTES: u32 = 5;
 
+/// The window start as it appears in a rotated file's name.
+pub const STAMP_FORMAT: &str = "%Y%m%dT%H%M%SZ";
+
 /// Where bytes go. Knows about paths, temporary names, and renames, and
 /// nothing about formats.
 #[derive(Clone, Debug)]
@@ -39,6 +42,8 @@ pub struct Opened {
 pub struct PendingRename {
     tmp: PathBuf,
     final_path: PathBuf,
+    /// Start of the window the file holds.
+    window: DateTime<Utc>,
     committed: bool,
 }
 
@@ -63,6 +68,10 @@ impl PendingRename {
 
     pub fn final_path(&self) -> &Path {
         &self.final_path
+    }
+
+    pub fn window(&self) -> DateTime<Utc> {
+        self.window
     }
 }
 
@@ -110,6 +119,7 @@ impl Destination {
                     pending: Some(PendingRename {
                         tmp,
                         final_path,
+                        window: stamp,
                         committed: false,
                     }),
                     rotate_at: Some(window_start + interval_secs),
@@ -171,7 +181,7 @@ pub fn partition_path(
     path.push(format!(
         "{}-{}.{}",
         prefix,
-        stamp.format("%Y%m%dT%H%M%SZ"),
+        stamp.format(STAMP_FORMAT),
         extension
     ));
     path

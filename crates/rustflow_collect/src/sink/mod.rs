@@ -1,5 +1,6 @@
 pub mod destination;
 pub mod encoder;
+pub mod hook;
 pub mod metrics;
 pub mod pipeline;
 pub mod rotating;
@@ -11,6 +12,7 @@ use std::{fmt, io};
 use clap::ValueEnum;
 pub use destination::{Destination, MAX_PARTITION_LEVEL, PendingRename};
 pub use encoder::{Csv, Discard, Encoder, Ndjson, Parquet, Protobuf, Writer};
+pub use hook::{FileHook, Job};
 pub use metrics::OutputMetrics;
 pub use pipeline::{Chunk, FLUSH_INTERVAL, Pipeline, encoder_loop};
 pub use rotating::RotatingSink;
@@ -87,6 +89,8 @@ pub struct SinkConfig {
     pub interval: Option<Duration>,
     pub level: u8,
     pub prefix: String,
+    /// `-x`: run after each completed file.
+    pub exec: Option<String>,
 }
 
 impl SinkConfig {
@@ -127,5 +131,10 @@ pub fn build(
             "--serialization parquet requires --output <FILE>",
         ));
     }
-    RotatingSink::open(serialization, destination, enriched_fields, metrics.clone())
+    let mut sink =
+        RotatingSink::open(serialization, destination, enriched_fields, metrics.clone())?;
+    if let Some(command) = &config.exec {
+        sink = sink.with_hook(FileHook::spawn(command, metrics)?);
+    }
+    Ok(sink)
 }
