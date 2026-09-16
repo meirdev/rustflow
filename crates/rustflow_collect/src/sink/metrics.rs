@@ -1,6 +1,7 @@
 use std::io::{self, Write};
 
 use prometheus_client::metrics::counter::Counter;
+use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::registry::Registry;
 
 #[derive(Clone, Debug, Default)]
@@ -13,6 +14,12 @@ pub struct OutputMetrics {
     /// Failed writes and flushes.
     pub write_errors: Counter,
     pub rotate_errors: Counter,
+    /// `-x` commands running right now.
+    pub hook_running: Gauge,
+    /// `-x` commands that exited successfully.
+    pub hook_completed: Counter,
+    /// `-x` commands that failed or could not run.
+    pub hook_errors: Counter,
 }
 
 impl OutputMetrics {
@@ -46,6 +53,21 @@ impl OutputMetrics {
             "output_rotate_errors",
             "Failed output file rotations",
             self.rotate_errors.clone(),
+        );
+        registry.register(
+            "output_hook_running",
+            "Running -x commands",
+            self.hook_running.clone(),
+        );
+        registry.register(
+            "output_hook_completed",
+            "Successful -x commands",
+            self.hook_completed.clone(),
+        );
+        registry.register(
+            "output_hook_errors",
+            "Failed -x commands",
+            self.hook_errors.clone(),
         );
     }
 }

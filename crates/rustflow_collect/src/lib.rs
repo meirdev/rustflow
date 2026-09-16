@@ -78,6 +78,18 @@ pub struct CollectArgs {
     #[arg(long, default_value = "flows", requires = "interval")]
     prefix: String,
 
+    /// Run a command after each rotated file is complete. `%f` is the file,
+    /// `%t` the window start as in the file name, `%u` the same as Unix
+    /// time; without a placeholder the file is appended. Requires
+    /// `--interval`.
+    #[arg(
+        short = 'x',
+        long = "exec",
+        value_name = "COMMAND",
+        requires = "interval"
+    )]
+    exec: Option<String>,
+
     /// Host address for Prometheus metrics HTTP server
     #[arg(long, default_value = "0.0.0.0")]
     metrics_host: String,
@@ -430,6 +442,7 @@ fn sink_config(cli: &CollectArgs) -> SinkConfig {
         interval,
         level: cli.level,
         prefix: cli.prefix.clone(),
+        exec: cli.exec.clone(),
     }
 }
 
