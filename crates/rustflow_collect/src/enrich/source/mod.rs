@@ -3,14 +3,14 @@ pub mod exact;
 pub mod mmdb;
 pub mod prefix;
 
+pub use exact::ExactTable;
+pub use mmdb::MmdbSource;
+pub use prefix::PrefixTable;
+
 use crate::enrich::config::{SourceConfig, SourceFormat};
 use crate::enrich::key::Key;
 use crate::enrich::row::{Row, Schema};
 use crate::enrich::{Error, Result};
-
-pub use exact::ExactTable;
-pub use mmdb::MmdbSource;
-pub use prefix::PrefixTable;
 
 pub trait Source: Send + Sync {
     fn lookup(&self, key: Key<'_>) -> Option<Row>;

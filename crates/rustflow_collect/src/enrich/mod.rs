@@ -1,6 +1,5 @@
 pub mod config;
 pub mod engine;
-pub mod enriched;
 pub mod key;
 pub mod row;
 pub mod source;
@@ -10,13 +9,12 @@ pub use config::{
     CsvLookup, EnrichmentConfig, FieldMapping, LookupKey, SourceConfig, SourceFormat,
     parse_enrich_arg,
 };
-pub use engine::EnrichmentEngine;
-pub use enriched::Enriched;
+pub use engine::{Enriched, EnrichmentEngine};
 pub use key::{Key, KeyType};
 pub use row::{Row, Schema};
 pub use source::{ExactTable, MmdbSource, PrefixTable, Source};
 pub use table::metrics::{SourceMetrics, TableMetrics};
-pub use table::{ReloadPolicy, Snapshot, Table};
+pub use table::{ReloadPolicy, Table};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

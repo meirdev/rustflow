@@ -13,7 +13,7 @@ use parquet::schema::types::ColumnPath;
 use rustflow_core::common::common_flow::CommonFlow;
 use rustflow_core::for_each_flow_field;
 
-use super::{FlowEncoder, Writer};
+use super::{Encoder, Writer};
 use crate::enrich::Enriched;
 
 const BATCH_ROWS: usize = 32_768;
@@ -247,17 +247,17 @@ impl Drop for Parquet {
     }
 }
 
-impl FlowEncoder for Parquet {
-    const EXTENSION: &'static str = "parquet";
-
-    fn open(out: Writer, enriched_fields: &[String]) -> io::Result<Self> {
+impl Parquet {
+    pub fn open(out: Writer, enriched_fields: &[String]) -> io::Result<Self> {
         Self::open_with_batch_rows(out, enriched_fields, BATCH_ROWS)
     }
+}
 
+impl Encoder for Parquet {
     fn encode(&mut self, flow: &CommonFlow, enriched: &Enriched) -> io::Result<()> {
         self.flow.append(flow);
         for (builder, value) in self.enrichment.iter_mut().zip(enriched.iter()) {
-            builder.append_option(value);
+            builder.append_option(value.as_deref());
         }
         self.rows += 1;
         if self.rows >= self.batch_rows {
@@ -271,7 +271,7 @@ impl FlowEncoder for Parquet {
         Ok(())
     }
 
-    fn finish(mut self) -> io::Result<()> {
+    fn finish(&mut self) -> io::Result<()> {
         self.write_footer()
     }
 }

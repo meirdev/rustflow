@@ -18,8 +18,8 @@ use rustflow::{
 use rustflow_core::ipfix::parser::IPFIX_VERSION;
 use rustflow_core::netflow_v5::parser::NETFLOW_V5_VERSION;
 use rustflow_core::netflow_v9::parser::NETFLOW_V9_VERSION;
-use sink::pipeline::{CHUNK_FLUSH_TIMEOUT, Output, RawOutput};
-use sink::{Format, MAX_PARTITION_LEVEL, OutputFormat, SinkConfig};
+use sink::pipeline::{CHUNK_FLUSH_TIMEOUT, Pipeline};
+use sink::{MAX_PARTITION_LEVEL, OutputFormat, Serialization, SinkConfig};
 
 /// Arguments for the `collect` subcommand.
 #[derive(ClapArgs)]
@@ -48,7 +48,7 @@ pub struct CollectArgs {
     /// Serialization format for output (parquet is Snappy-compressed and
     /// requires `--format common` and `--output`)
     #[arg(short, long, value_enum, default_value = "ndjson")]
-    serialization: Format,
+    serialization: Serialization,
 
     /// Output path (stdout if not specified). Without `--interval` this is a
     /// single file; with `--interval` it is the root directory of the
@@ -96,9 +96,9 @@ pub struct CollectArgs {
 
     /// Flow enrichment configuration
     /// Format: type=prefix_lookup|exact,source=file.csv,key_column=col,
-    /// fields=<key>@col:output|col2:output2;<key2>@col:output3[,reload=30s|watch]
-    /// key_column names the CSV column holding the prefixes or keys; it does
-    /// not apply to .mmdb
+    /// fields=<key>@col:output|col2:output2;<key2>@col:output3[,
+    /// reload=30s|watch] key_column names the CSV column holding the
+    /// prefixes or keys; it does not apply to .mmdb
     #[arg(long = "enrich")]
     enrich: Vec<String>,
 }
@@ -113,10 +113,11 @@ fn read_netflow_pcap(
     file_path: &str,
     ie_registry: &IERegistry,
     timeout: std::time::Duration,
-    output: &mut Output,
+    format: OutputFormat,
+    output: &mut Pipeline,
 ) {
-    match output {
-        Output::Common(encoder) => {
+    match format {
+        OutputFormat::Common => {
             let reader = NetflowPcapReader::open(file_path)
                 .expect("Failed to open pcap file")
                 .with_ie_registry(ie_registry.clone())
@@ -124,7 +125,7 @@ fn read_netflow_pcap(
 
             for result in reader {
                 match result {
-                    Ok(flow) => encoder.push([flow]),
+                    Ok(flow) => output.push([flow]),
                     Err(e) => {
                         eprintln!("Error reading flow: {}", e);
                         break;
@@ -134,7 +135,7 @@ fn read_netflow_pcap(
         }
         // For raw format, we still need to use the low-level parsers
         // to output the original packet structure
-        Output::Raw(raw) => read_netflow_pcap_raw(file_path, ie_registry, timeout, raw),
+        OutputFormat::Raw => read_netflow_pcap_raw(file_path, ie_registry, timeout, output),
     }
 }
 
@@ -142,7 +143,7 @@ fn read_netflow_pcap_raw(
     file_path: &str,
     ie_registry: &IERegistry,
     timeout: std::time::Duration,
-    output: &mut RawOutput,
+    output: &mut Pipeline,
 ) {
     use pcap_file::pcap::PcapReader;
     use rustflow_core::common::utils::parse_udp_packet;
@@ -171,11 +172,11 @@ fn read_netflow_pcap_raw(
 }
 
 /// Write a raw NetFlow packet to output.
-fn write_netflow_packet_raw(packet: &NetflowPacket, output: &mut RawOutput) {
+fn write_netflow_packet_raw(packet: &NetflowPacket, output: &mut Pipeline) {
     match packet {
-        NetflowPacket::V5(p) => output.write(p),
-        NetflowPacket::V9(p) => output.write(p),
-        NetflowPacket::Ipfix(p) => output.write(p),
+        NetflowPacket::V5(p) => output.push_raw(p),
+        NetflowPacket::V9(p) => output.push_raw(p),
+        NetflowPacket::Ipfix(p) => output.push_raw(p),
     }
 }
 
@@ -239,7 +240,8 @@ fn read_netflow_socket(
     ie_registry: &IERegistry,
     timeout: std::time::Duration,
     metrics: Arc<metrics::Metrics>,
-    output: &mut Output,
+    format: OutputFormat,
+    output: &mut Pipeline,
 ) {
     let addr: SocketAddr = format!("{}:{}", host, port).parse().unwrap();
     let mut reader = NetflowReader::bind(addr)
@@ -254,7 +256,9 @@ fn read_netflow_socket(
         reader.local_addr().unwrap()
     );
 
-    let mut metrics_cache = metrics::NetflowMetricsCache::new(metrics);
+    let v9_exporters = metrics.active_exporters(metrics::LABEL_NETFLOW_V9);
+    let ipfix_exporters = metrics.active_exporters(metrics::LABEL_IPFIX);
+    let mut exporters = metrics::ExporterMetrics::new(metrics, metrics::LABEL_NETFLOW);
 
     while !SHUTDOWN.load(Ordering::Relaxed) {
         match reader.read_raw() {
@@ -262,43 +266,34 @@ fn read_netflow_socket(
                 let version_label = netflow_version_label(&packet);
                 let flow_count = netflow_flow_count(&packet);
 
-                metrics_cache.record_packet(src, version_label, len, flow_count);
+                exporters.record_packet(src, version_label, len, flow_count);
 
-                match output {
-                    Output::Raw(raw) => write_netflow_packet_raw(&packet, raw),
-                    Output::Common(encoder) => {
+                match format {
+                    OutputFormat::Raw => write_netflow_packet_raw(&packet, output),
+                    OutputFormat::Common => {
                         let time_received_ns = Some(Utc::now().timestamp_nanos_opt().unwrap_or(0));
                         let flows =
                             reader
                                 .processor()
                                 .convert_to_flows(src, &packet, time_received_ns);
-                        encoder.push(flows);
+                        output.push(flows);
                     }
                 }
 
                 let processor = reader.processor();
-                let active_exporters = &metrics_cache.metrics().active_exporters;
-                active_exporters
-                    .get_or_create(&metrics::TypeLabel {
-                        r#type: metrics::LABEL_NETFLOW_V9,
-                    })
-                    .set(processor.v9_parsers.len() as i64);
-                active_exporters
-                    .get_or_create(&metrics::TypeLabel {
-                        r#type: metrics::LABEL_IPFIX,
-                    })
-                    .set(processor.ipfix_parsers.len() as i64);
+                v9_exporters.set(processor.v9_parsers.len() as i64);
+                ipfix_exporters.set(processor.ipfix_parsers.len() as i64);
             }
             Ok(NetflowReadResult::ParseError { len, src, version }) => {
                 if let Some(version) = version {
                     if let Some(label) = netflow_version_to_label(version) {
-                        metrics_cache.record_parse_error(src, label, len);
+                        exporters.record_parse_error(src, label, len);
                     } else {
-                        metrics_cache.record_unknown_version(src, len);
+                        exporters.record_unknown_version(src, len);
                     }
                 }
             }
-            Ok(NetflowReadResult::Timeout) => output.idle(),
+            Ok(NetflowReadResult::Timeout) => output.flush(),
             Err(err) => {
                 eprintln!("Error receiving data: {:#?}", err);
             }
@@ -306,14 +301,14 @@ fn read_netflow_socket(
     }
 }
 
-fn read_sflow_pcap(file_path: &str, output: &mut Output) {
-    match output {
-        Output::Common(encoder) => {
+fn read_sflow_pcap(file_path: &str, format: OutputFormat, output: &mut Pipeline) {
+    match format {
+        OutputFormat::Common => {
             let reader = SflowPcapReader::open(file_path).expect("Failed to open pcap file");
 
             for result in reader {
                 match result {
-                    Ok(flow) => encoder.push([flow]),
+                    Ok(flow) => output.push([flow]),
                     Err(e) => {
                         eprintln!("Error reading flow: {}", e);
                         break;
@@ -321,11 +316,11 @@ fn read_sflow_pcap(file_path: &str, output: &mut Output) {
                 }
             }
         }
-        Output::Raw(raw) => read_sflow_pcap_raw(file_path, raw),
+        OutputFormat::Raw => read_sflow_pcap_raw(file_path, output),
     }
 }
 
-fn read_sflow_pcap_raw(file_path: &str, output: &mut RawOutput) {
+fn read_sflow_pcap_raw(file_path: &str, output: &mut Pipeline) {
     use pcap_file::pcap::PcapReader;
     use rustflow_core::common::utils::parse_udp_packet;
 
@@ -351,9 +346,9 @@ fn read_sflow_pcap_raw(file_path: &str, output: &mut RawOutput) {
 }
 
 /// Write a raw sFlow packet to output.
-fn write_sflow_packet_raw(packet: &SflowPacket, output: &mut RawOutput) {
+fn write_sflow_packet_raw(packet: &SflowPacket, output: &mut Pipeline) {
     match packet {
-        SflowPacket::V5(p) => output.write(p),
+        SflowPacket::V5(p) => output.push_raw(p),
     }
 }
 
@@ -370,7 +365,13 @@ fn sflow_flow_count(packet: &SflowPacket) -> usize {
     }
 }
 
-fn read_sflow_socket(host: &str, port: u16, metrics: Arc<metrics::Metrics>, output: &mut Output) {
+fn read_sflow_socket(
+    host: &str,
+    port: u16,
+    metrics: Arc<metrics::Metrics>,
+    format: OutputFormat,
+    output: &mut Pipeline,
+) {
     let addr: SocketAddr = format!("{}:{}", host, port).parse().unwrap();
     let mut reader = SflowReader::bind(addr)
         .expect("Failed to bind to socket")
@@ -382,33 +383,33 @@ fn read_sflow_socket(host: &str, port: u16, metrics: Arc<metrics::Metrics>, outp
         reader.local_addr().unwrap()
     );
 
-    let mut metrics_cache = metrics::SflowMetricsCache::new(metrics);
+    let mut exporters = metrics::ExporterMetrics::new(metrics, metrics::LABEL_SFLOW);
 
     while !SHUTDOWN.load(Ordering::Relaxed) {
         match reader.read_raw() {
             Ok(SflowReadResult::Packet { len, src, packet }) => {
                 let flow_count = sflow_flow_count(&packet);
-                metrics_cache.record_packet(src, len, flow_count);
+                exporters.record_packet(src, metrics::LABEL_SFLOW_V5, len, flow_count);
 
-                match output {
-                    Output::Raw(raw) => write_sflow_packet_raw(&packet, raw),
-                    Output::Common(encoder) => {
+                match format {
+                    OutputFormat::Raw => write_sflow_packet_raw(&packet, output),
+                    OutputFormat::Common => {
                         let time_received_ns = Some(Utc::now().timestamp_nanos_opt().unwrap_or(0));
                         let flows = SflowProcessor::convert_to_flows(&packet, time_received_ns);
-                        encoder.push(flows);
+                        output.push(flows);
                     }
                 }
             }
             Ok(SflowReadResult::ParseError { len, src, version }) => {
                 if let Some(version) = version {
                     if version == 5 {
-                        metrics_cache.record_parse_error(src, len);
+                        exporters.record_parse_error(src, metrics::LABEL_SFLOW_V5, len);
                     } else {
-                        metrics_cache.record_unknown_version(src, len);
+                        exporters.record_unknown_version(src, len);
                     }
                 }
             }
-            Ok(SflowReadResult::Timeout) => output.idle(),
+            Ok(SflowReadResult::Timeout) => output.flush(),
             Err(err) => {
                 eprintln!("Error receiving data: {:#?}", err);
             }
@@ -425,20 +426,18 @@ fn sink_config(cli: &CollectArgs) -> SinkConfig {
     });
     SinkConfig {
         path: cli.output.as_deref().map(PathBuf::from),
-        format: cli.serialization,
+        serialization: cli.serialization,
         interval,
         level: cli.level,
         prefix: cli.prefix.clone(),
     }
 }
 
-/// Run the flow collector.
-pub fn run(cli: CollectArgs) {
-    let metrics = Arc::new(metrics::Metrics::new());
-
-    let mut ie_registry = IERegistry::new_with_iana_elements();
-    if let Some(ref path) = cli.ie_mapping {
-        match ie_registry.load_from_csv(path) {
+/// The IANA elements plus the `--ie-mapping` file, if any.
+fn load_ie_registry(path: Option<&str>) -> IERegistry {
+    let mut registry = IERegistry::new_with_iana_elements();
+    if let Some(path) = path {
+        match registry.load_from_csv(path) {
             Ok(count) => eprintln!("Loaded {} custom IE definitions from {}", count, path),
             Err(e) => {
                 eprintln!("Failed to load IE mappings from {}: {}", path, e);
@@ -446,43 +445,34 @@ pub fn run(cli: CollectArgs) {
             }
         }
     }
+    registry
+}
 
-    // Parse and build enrichment engine
-    let mut enrichment_engine = EnrichmentEngine::new(metrics.enrichment.clone());
-    for enrich_arg in &cli.enrich {
-        match parse_enrich_arg(enrich_arg) {
-            Ok(config) => {
-                let source = config.source.source().display().to_string();
-                match enrichment_engine.add(config) {
-                    Ok(count) => eprintln!("Loaded {} rows from {}", count, source),
-                    Err(e) => {
-                        eprintln!("Failed to load enrichment from {}: {}", source, e);
-                        std::process::exit(1);
-                    }
-                }
-            }
+/// The tables named by `--enrich`, loaded; any failure exits.
+fn load_enrichment(cli: &CollectArgs, metrics: &metrics::Metrics) -> EnrichmentEngine {
+    let mut engine = EnrichmentEngine::new(metrics.enrichment.clone());
+    for arg in &cli.enrich {
+        let config = parse_enrich_arg(arg).unwrap_or_else(|e| {
+            eprintln!("Invalid --enrich argument: {}", e);
+            std::process::exit(1);
+        });
+        let source = config.source.source().display().to_string();
+        match engine.add(config) {
+            Ok(count) => eprintln!("Loaded {} rows from {}", count, source),
             Err(e) => {
-                eprintln!("Invalid --enrich argument: {}", e);
+                eprintln!("Failed to load enrichment from {}: {}", source, e);
                 std::process::exit(1);
             }
         }
     }
+    engine
+}
 
-    let mut output = Output::build(
-        cli.format,
-        &sink_config(&cli),
-        enrichment_engine,
-        &metrics.output,
-    )
-    .unwrap_or_else(|e| {
-        eprintln!("Error: {}", e);
-        std::process::exit(1);
-    });
-
-    // Graceful shutdown on Ctrl-C / SIGTERM: flag the ingest loop to stop,
-    // which drains the pipeline and finalizes the output (a parquet file is
-    // unreadable until its footer is written). A second signal forces exit,
-    // so a stuck drain can never trap the operator.
+/// Graceful shutdown on Ctrl-C / SIGTERM: flag the ingest loop to stop,
+/// which drains the pipeline and finalizes the output (a parquet file is
+/// unreadable until its footer is written). A second signal forces exit,
+/// so a stuck drain can never trap the operator.
+fn install_shutdown_handler() {
     if let Err(e) = ctrlc::set_handler(move || {
         if SHUTDOWN.swap(true, Ordering::SeqCst) {
             eprintln!("Forced exit");
@@ -492,12 +482,32 @@ pub fn run(cli: CollectArgs) {
     }) {
         eprintln!("Failed to install shutdown handler: {}", e);
     }
+}
 
+/// Run the flow collector.
+pub fn run(cli: CollectArgs) {
+    let metrics = Arc::new(metrics::Metrics::new());
+    let ie_registry = load_ie_registry(cli.ie_mapping.as_deref());
+    let enrichment = load_enrichment(&cli, &metrics);
+
+    let sink = sink::build(
+        cli.format,
+        &sink_config(&cli),
+        enrichment.output_fields().to_vec(),
+        &metrics.output,
+    )
+    .unwrap_or_else(|e| {
+        eprintln!("Error: {}", e);
+        std::process::exit(1);
+    });
+    let mut output = Pipeline::spawn(sink, enrichment, metrics.output.clone());
+
+    install_shutdown_handler();
     let timeout = std::time::Duration::from_secs(cli.template_timeout);
 
     match (&cli.flow_type, &cli.pcap, &cli.port) {
         (FlowType::Netflow, Some(path), _) => {
-            read_netflow_pcap(path, &ie_registry, timeout, &mut output)
+            read_netflow_pcap(path, &ie_registry, timeout, cli.format, &mut output)
         }
         (FlowType::Netflow, None, Some(port)) => {
             let _metrics_handle = metrics::start_metrics_server(
@@ -511,17 +521,24 @@ pub fn run(cli: CollectArgs) {
                 &ie_registry,
                 timeout,
                 Arc::clone(&metrics),
+                cli.format,
                 &mut output,
             )
         }
-        (FlowType::Sflow, Some(path), _) => read_sflow_pcap(path, &mut output),
+        (FlowType::Sflow, Some(path), _) => read_sflow_pcap(path, cli.format, &mut output),
         (FlowType::Sflow, None, Some(port)) => {
             let _metrics_handle = metrics::start_metrics_server(
                 Arc::clone(&metrics),
                 &cli.metrics_host,
                 cli.metrics_port,
             );
-            read_sflow_socket(&cli.host, *port, Arc::clone(&metrics), &mut output)
+            read_sflow_socket(
+                &cli.host,
+                *port,
+                Arc::clone(&metrics),
+                cli.format,
+                &mut output,
+            )
         }
         (_, None, None) => {
             eprintln!("Error: Either --pcap or --port must be specified");
@@ -531,7 +548,7 @@ pub fn run(cli: CollectArgs) {
 
     // Socket modes return here after a graceful shutdown; pcap modes when the
     // file is exhausted.
-    if let Err(e) = output.finish() {
+    if let Err(e) = output.drain() {
         eprintln!("Failed to finalize output: {}", e);
         std::process::exit(1);
     }
