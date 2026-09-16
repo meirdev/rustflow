@@ -7,6 +7,7 @@ use serde::Serialize;
 use strum::Display;
 
 use crate::common::InformationElement;
+use crate::common::serializer::serialize_mac_as_text;
 use crate::common::timeout_map::TimeoutHashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Display)]
@@ -130,9 +131,11 @@ pub struct CommonFlow {
     pub dst_addr: Option<IpAddr>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(serialize_with = "serialize_mac_as_text")]
     pub src_mac: Option<MacAddr6>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(serialize_with = "serialize_mac_as_text")]
     pub dst_mac: Option<MacAddr6>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -434,7 +437,7 @@ impl NetFlowV9Context<'_> {
                     SourceIpv6PrefixLength => flow.src_net = extract_u8(value),
                     DestinationIpv6PrefixLength => flow.dst_net = extract_u8(value),
                     FlowLabelIpv6 => flow.ipv6_flow_label = extract_u32(value),
-                    IcmpTypeCodeIpv4 => {
+                    IcmpTypeCodeIpv4 | IcmpTypeCodeIpv6 => {
                         if let Some(v) = extract_u16(value) {
                             flow.icmp_type = Some((v >> 8) as u8);
                             flow.icmp_code = Some((v & 0xff) as u8);
@@ -648,7 +651,7 @@ impl IpfixContext<'_> {
                     SourceIpv6PrefixLength => flow.src_net = ipfix_extract_u8(value),
                     DestinationIpv6PrefixLength => flow.dst_net = ipfix_extract_u8(value),
                     FlowLabelIpv6 => flow.ipv6_flow_label = ipfix_extract_u32(value),
-                    IcmpTypeCodeIpv4 => {
+                    IcmpTypeCodeIpv4 | IcmpTypeCodeIpv6 => {
                         if let Some(v) = ipfix_extract_u16(value) {
                             flow.icmp_type = Some((v >> 8) as u8);
                             flow.icmp_code = Some((v & 0xff) as u8);
@@ -760,7 +763,7 @@ pub fn extract_ipfix_sampling_rate(record: &IpfixDataRecord) -> Option<u32> {
     None
 }
 
-use etherparse::{InternetSlice, LinkSlice, SlicedPacket, TransportSlice};
+use etherparse::{InternetSlice, LinkSlice, SlicedPacket, TransportSlice, VlanHeader};
 
 use crate::sflow_v5::parser::{
     AsPathType, ExpandedFlowSample, ExtendedGateway, ExtendedRouter, ExtendedSwitch,
@@ -858,6 +861,16 @@ impl SFlowV5Context<'_> {
             flow.src_mac = Some(MacAddr6::from(header.source));
             flow.dst_mac = Some(MacAddr6::from(header.destination));
             flow.etype = Some(header.ether_type.0);
+        }
+        if let Some(vlan) = sliced.vlan() {
+            let inner = match vlan.to_header() {
+                VlanHeader::Single(h) => h,
+                VlanHeader::Double(h) => h.inner,
+            };
+            flow.etype = Some(inner.ether_type.0);
+            if flow.src_vlan.is_none() {
+                flow.src_vlan = Some(inner.vlan_id.value());
+            }
         }
 
         match &sliced.net {
