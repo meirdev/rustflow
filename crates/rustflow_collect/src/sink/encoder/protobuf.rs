@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::io::{self, BufWriter, Write};
 use std::net::IpAddr;
 
@@ -86,9 +86,8 @@ pub struct FlowMessage {
     pub observation_domain_id: Option<u32>,
     #[prost(uint32, optional, tag = "37")]
     pub template_id: Option<u32>,
-    /// Fields added by `--enrich`, keyed by their output name.
-    #[prost(map = "string, string", tag = "38")]
-    pub enriched: HashMap<String, String>,
+    #[prost(btree_map = "string, string", tag = "38")]
+    pub enriched: BTreeMap<String, String>,
 }
 
 /// An address on the wire: 4 bytes for IPv4, 16 for IPv6.
