@@ -33,6 +33,7 @@ pub enum InformationElement {
     DestinationIpv6PrefixLength = 30,
     FlowLabelIpv6 = 31,
     IcmpTypeCodeIpv4 = 32,
+    IcmpTypeCodeIpv6 = 139,
     SamplingInterval = 34,
     SamplerRandomInterval = 50,
     MinimumTtl = 52,

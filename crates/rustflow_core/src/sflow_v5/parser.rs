@@ -4,7 +4,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use macaddr::MacAddr6;
 use nom::bytes::complete::take;
 use nom::combinator::{fail, map, map_res, peek, verify};
-use nom::multi::{count, many1};
+use nom::multi::count;
 use nom::number::complete::{be_i32, be_u32, be_u64, be_u128};
 use nom::{IResult, Parser, ToUsize};
 use num_enum::TryFromPrimitive;
@@ -430,43 +430,27 @@ fn parse_counter_record(input: &[u8]) -> IResult<&[u8], CounterRecord> {
     let (input, header) = parse_record_header(input)?;
     let (input, data) = take(header.length as usize)(input)?;
 
-    let (_, records) = many1(|v| match CounterType::try_from(header.data_format) {
-        Ok(CounterType::IfCounters) => {
-            let (input, v) = parse_if_counters(v)?;
-            Ok((input, CounterRecordType::IfCounters(v)))
-        }
+    let record = match CounterType::try_from(header.data_format) {
+        Ok(CounterType::IfCounters) => CounterRecordType::IfCounters(parse_if_counters(data)?.1),
         Ok(CounterType::EthernetCounters) => {
-            let (input, v) = parse_ethernet_counters(v)?;
-            Ok((input, CounterRecordType::EthernetCounters(v)))
+            CounterRecordType::EthernetCounters(parse_ethernet_counters(data)?.1)
         }
         Ok(CounterType::TokenringCounters) => {
-            let (input, v) = parse_tokenring_counters(v)?;
-            Ok((input, CounterRecordType::TokenringCounters(v)))
+            CounterRecordType::TokenringCounters(parse_tokenring_counters(data)?.1)
         }
-        Ok(CounterType::VgCounters) => {
-            let (input, v) = parse_vg_counters(v)?;
-            Ok((input, CounterRecordType::VgCounters(v)))
-        }
+        Ok(CounterType::VgCounters) => CounterRecordType::VgCounters(parse_vg_counters(data)?.1),
         Ok(CounterType::VlanCounters) => {
-            let (input, v) = parse_vlan_counters(v)?;
-            Ok((input, CounterRecordType::VlanCounters(v)))
+            CounterRecordType::VlanCounters(parse_vlan_counters(data)?.1)
         }
-        Ok(CounterType::Processor) => {
-            let (input, v) = parse_processor(v)?;
-            Ok((input, CounterRecordType::Processor(v)))
-        }
-        Err(_) => {
-            let (input, data) = take(v.len())(v)?;
-            Ok((input, CounterRecordType::Unknown(data.to_vec())))
-        }
-    })
-    .parse(data)?;
+        Ok(CounterType::Processor) => CounterRecordType::Processor(parse_processor(data)?.1),
+        Err(_) => CounterRecordType::Unknown(data.to_vec()),
+    };
 
     Ok((
         input,
         CounterRecord {
             header,
-            data: records.into_iter().collect(),
+            data: vec![record],
         },
     ))
 }
