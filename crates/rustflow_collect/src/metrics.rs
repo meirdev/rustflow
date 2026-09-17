@@ -246,10 +246,10 @@ impl ExporterMetrics {
 
 pub fn start_metrics_server(
     metrics: Arc<Metrics>,
-    host: &str,
+    host: IpAddr,
     port: u16,
 ) -> thread::JoinHandle<()> {
-    let addr: SocketAddr = format!("{}:{}", host, port).parse().unwrap();
+    let addr = SocketAddr::new(host, port);
 
     thread::spawn(move || {
         let server = Server::http(addr).expect("Failed to start metrics HTTP server");

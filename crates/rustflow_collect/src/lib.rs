@@ -77,7 +77,7 @@ fn open_source<P: Protocol>(cli: &CollectArgs, metrics: &Arc<metrics::Metrics>) 
             std::process::exit(1);
         })),
         (None, Some(port)) => {
-            let addr: SocketAddr = format!("{}:{}", cli.host, port).parse().unwrap();
+            let addr = SocketAddr::new(cli.host, port);
             let socket = source::Socket::bind(addr, CHUNK_FLUSH_TIMEOUT).unwrap_or_else(|e| {
                 eprintln!("Failed to bind to {}: {}", addr, e);
                 std::process::exit(1);
@@ -88,7 +88,7 @@ fn open_source<P: Protocol>(cli: &CollectArgs, metrics: &Arc<metrics::Metrics>) 
                 socket.local_addr().unwrap()
             );
             // Detached; it serves until the process exits.
-            metrics::start_metrics_server(Arc::clone(metrics), &cli.metrics_host, cli.metrics_port);
+            metrics::start_metrics_server(Arc::clone(metrics), cli.metrics_host, cli.metrics_port);
             Box::new(socket)
         }
         (None, None) => {

@@ -1,3 +1,4 @@
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -19,7 +20,7 @@ pub struct CollectArgs {
 
     /// Host address to bind the UDP socket
     #[arg(short = 'H', long, default_value = "0.0.0.0", requires = "port")]
-    pub(crate) host: String,
+    pub(crate) host: IpAddr,
 
     /// UDP port to listen for flow data
     #[arg(short, long, conflicts_with = "pcap")]
@@ -83,7 +84,7 @@ pub struct CollectArgs {
 
     /// Host address for Prometheus metrics HTTP server
     #[arg(long, default_value = "0.0.0.0")]
-    pub(crate) metrics_host: String,
+    pub(crate) metrics_host: IpAddr,
 
     /// Port for Prometheus metrics HTTP server
     #[arg(long, default_value = "9090")]
