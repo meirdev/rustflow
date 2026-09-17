@@ -33,40 +33,43 @@ fn collect<P: Protocol>(
     let mut exporters = metrics::ExporterMetrics::new(metrics, P::FAMILY);
 
     loop {
-        match source.next() {
+        let (src, payload, time_received_ns) = match source.next() {
             Datagram::Packet {
                 src,
                 payload,
                 time_received_ns,
-            } => match protocol.parse(src, payload) {
-                Some(packet) => {
-                    exporters.record_packet(
-                        src,
-                        P::version_label(&packet),
-                        payload.len(),
-                        P::flow_count(&packet),
-                    );
-                    match format {
-                        OutputFormat::Raw => P::push_raw(&packet, output),
-                        OutputFormat::Common => {
-                            output.push(protocol.convert(src, &packet, time_received_ns))
-                        }
-                    }
-                    protocol.update_gauges();
-                }
-                None => match P::version_label_of(payload) {
-                    Some(label) => exporters.record_parse_error(src, label, payload.len()),
-                    None => exporters.record_unknown_version(src, payload.len()),
-                },
-            },
-            Datagram::Idle => output.flush(),
+            } => (src, payload, time_received_ns),
+            Datagram::Idle => {
+                output.flush();
+                continue;
+            }
             Datagram::End => return,
+        };
+
+        let Some(packet) = protocol.parse(src, payload) else {
+            match P::version_label_of(payload) {
+                Some(label) => exporters.record_parse_error(src, label, payload.len()),
+                None => exporters.record_unknown_version(src, payload.len()),
+            }
+            continue;
+        };
+
+        exporters.record_packet(
+            src,
+            P::version_label(&packet),
+            payload.len(),
+            P::flow_count(&packet),
+        );
+
+        match format {
+            OutputFormat::Raw => P::push_raw(&packet, output),
+            OutputFormat::Common => output.push(protocol.convert(src, &packet, time_received_ns)),
         }
+
+        protocol.update_gauges();
     }
 }
 
-/// Open the configured input and start the metrics server for socket
-/// collection.
 fn open_source<P: Protocol>(cli: &CollectArgs, metrics: &Arc<metrics::Metrics>) -> Box<dyn Source> {
     match (&cli.pcap, cli.port) {
         (Some(path), _) => Box::new(source::Pcap::open(path).unwrap_or_else(|e| {
