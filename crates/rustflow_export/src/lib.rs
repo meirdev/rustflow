@@ -1,9 +1,3 @@
-//! IPFIX exporter.
-//!
-//! Capture is a hand-rolled `AF_PACKET` + `PACKET_RX_RING` loop, so this crate
-//! is Linux-only.
-#![cfg(target_os = "linux")]
-
 mod capture;
 mod exporter;
 mod flow;
@@ -15,18 +9,27 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use capture::PacketCapture;
+use capture::Backend;
 use clap::Args as ClapArgs;
 use exporter::Exporter;
 use flow::FlowCache;
 use log::{error, info, warn};
 
+#[cfg(target_os = "macos")]
+const DEFAULT_INTERFACE: &str = "lo0";
+#[cfg(not(target_os = "macos"))]
+const DEFAULT_INTERFACE: &str = "lo";
+
 /// Arguments for the `export` subcommand.
 #[derive(ClapArgs, Debug, Clone)]
 pub struct ExportArgs {
     /// Network interface to capture from
-    #[arg(short, long, default_value = "lo")]
+    #[arg(short, long, default_value = DEFAULT_INTERFACE)]
     pub interface: String,
+
+    /// Capture backend
+    #[arg(long, value_enum, default_value = "auto")]
+    pub capture: Backend,
 
     /// Collector host address
     #[arg(short = 'H', long, default_value = "127.0.0.1")]
@@ -72,7 +75,10 @@ impl ExportArgs {
 /// Run the IPFIX exporter. Logging is initialized by the caller.
 pub fn run(args: ExportArgs) -> Result<()> {
     info!("Configuration:");
-    info!("  Interface: {}", args.interface);
+    info!(
+        "  Interface: {} ({:?} capture)",
+        args.interface, args.capture
+    );
     info!(
         "  Collector: {}:{}",
         args.collector_host, args.collector_port
@@ -88,7 +94,8 @@ pub fn run(args: ExportArgs) -> Result<()> {
     );
 
     // Initialize components
-    let mut capture = PacketCapture::new(
+    let mut capture = capture::open(
+        args.capture,
         &args.interface,
         args.promiscuous,
         args.sampling_packet_interval,
