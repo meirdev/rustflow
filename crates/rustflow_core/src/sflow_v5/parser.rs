@@ -594,16 +594,23 @@ pub struct SampledEthernet {
     pub r#type: u32,
 }
 
+fn parse_padded_mac(input: &[u8]) -> IResult<&[u8], MacAddr6> {
+    let (input, mac) = macaddr6(input)?;
+    let (input, _pad) = take(2usize)(input)?;
+
+    Ok((input, mac))
+}
+
 fn parse_sampled_ethernet(input: &[u8]) -> IResult<&[u8], SampledEthernet> {
-    let (input, legnth) = be_u32(input)?;
-    let (input, src_mac) = macaddr6(input)?;
-    let (input, dst_mac) = macaddr6(input)?;
+    let (input, length) = be_u32(input)?;
+    let (input, src_mac) = parse_padded_mac(input)?;
+    let (input, dst_mac) = parse_padded_mac(input)?;
     let (input, type_) = be_u32(input)?;
 
     Ok((
         input,
         SampledEthernet {
-            length: legnth,
+            length,
             src_mac,
             dst_mac,
             r#type: type_,
