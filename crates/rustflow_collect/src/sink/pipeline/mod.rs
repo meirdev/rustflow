@@ -167,8 +167,9 @@ pub fn encoder_loop(
                 errors.rotate(sink.rotate_if_due(Utc::now()));
                 match chunk {
                     Chunk::Flows(flows) => {
+                        let tables = enrichment.snapshot();
                         for flow in &flows {
-                            enrichment.enrich(flow, &mut enriched);
+                            tables.enrich(flow, &mut enriched);
                             errors.write(sink.write(flow, &enriched));
                         }
                         metrics.flows.inc_by(flows.len() as u64);

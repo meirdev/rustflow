@@ -5,7 +5,7 @@ use rustflow_core::common::common_flow::CommonFlow;
 use crate::enrich::config::{EnrichmentConfig, LookupKey};
 use crate::enrich::table::Table;
 use crate::enrich::table::metrics::TableMetrics;
-use crate::enrich::{Result, Row};
+use crate::enrich::{Result, Row, Source};
 
 pub type Enriched = Vec<Option<Arc<str>>>;
 
@@ -73,14 +73,29 @@ impl EnrichmentEngine {
         &self.output_fields
     }
 
-    /// Fills `out` in the order of [`output_fields`](Self::output_fields);
-    /// a field without a match stays `None`.
+    /// Pins the current version of every table. Taking one per chunk
+    /// keeps the per-flow path free of locks; a reload shows up on the
+    /// next chunk.
+    pub fn snapshot(&self) -> Snapshot<'_> {
+        Snapshot {
+            engine: self,
+            sources: self.lookups.iter().map(|l| l.table.snapshot()).collect(),
+        }
+    }
+}
+
+/// The tables as they were when the snapshot was taken.
+pub struct Snapshot<'a> {
+    engine: &'a EnrichmentEngine,
+    sources: Vec<Arc<dyn Source>>,
+}
+
+impl Snapshot<'_> {
     pub fn enrich(&self, flow: &CommonFlow, out: &mut Enriched) {
         out.fill(None);
-        for lookup in &self.lookups {
-            let snapshot = lookup.table.snapshot();
+        for (lookup, source) in self.engine.lookups.iter().zip(&self.sources) {
             for group in &lookup.groups {
-                let row: Option<Row> = group.key.extract(flow).and_then(|key| snapshot.lookup(key));
+                let row: Option<Row> = group.key.extract(flow).and_then(|key| source.lookup(key));
                 let Some(row) = row else {
                     continue;
                 };
