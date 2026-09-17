@@ -4,9 +4,11 @@ use crate::flow::FlowKey;
 
 #[cfg(target_os = "linux")]
 mod af_packet;
+#[cfg(target_os = "macos")]
+mod bpf;
 #[cfg(feature = "pcap")]
 mod libpcap;
-#[cfg(any(target_os = "linux", feature = "pcap"))]
+#[cfg(any(target_os = "linux", target_os = "macos", feature = "pcap"))]
 mod packet;
 
 pub trait Capture {
@@ -19,6 +21,8 @@ pub enum Backend {
     Auto,
     /// AF_PACKET mmap ring (Linux only)
     AfPacket,
+    /// BPF device, `/dev/bpfN` (macOS only)
+    Bpf,
     /// libpcap / Npcap
     Pcap,
 }
@@ -33,8 +37,12 @@ pub fn open(
         Backend::Auto if cfg!(target_os = "linux") => {
             open_af_packet(interface, promiscuous, sampling_interval)
         }
+        Backend::Auto if cfg!(target_os = "macos") => {
+            open_bpf(interface, promiscuous, sampling_interval)
+        }
         Backend::Auto | Backend::Pcap => open_pcap(interface, promiscuous, sampling_interval),
         Backend::AfPacket => open_af_packet(interface, promiscuous, sampling_interval),
+        Backend::Bpf => open_bpf(interface, promiscuous, sampling_interval),
     }
 }
 
@@ -54,6 +62,24 @@ fn open_af_packet(
 #[cfg(not(target_os = "linux"))]
 fn open_af_packet(_: &str, _: bool, _: u32) -> Result<Box<dyn Capture>> {
     anyhow::bail!("The af-packet capture backend requires Linux; use --capture pcap")
+}
+
+#[cfg(target_os = "macos")]
+fn open_bpf(
+    interface: &str,
+    promiscuous: bool,
+    sampling_interval: u32,
+) -> Result<Box<dyn Capture>> {
+    Ok(Box::new(bpf::Bpf::new(
+        interface,
+        promiscuous,
+        sampling_interval,
+    )?))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn open_bpf(_: &str, _: bool, _: u32) -> Result<Box<dyn Capture>> {
+    anyhow::bail!("The bpf capture backend requires macOS; use --capture pcap")
 }
 
 #[cfg(feature = "pcap")]
