@@ -105,11 +105,12 @@ rustflow export \
 
 `--capture` selects how packets are captured:
 
-| Backend     | Platforms                  | Notes                                               |
-| ----------- | -------------------------- | --------------------------------------------------- |
-| `auto`      | all                        | The default: `af-packet` on Linux, `pcap` elsewhere |
-| `af-packet` | Linux                      | `AF_PACKET` mmap ring                               |
-| `pcap`      | Linux, macOS, BSD, Windows | libpcap, or Npcap on Windows                        |
+| Backend     | Platforms                  | Notes                                                               |
+| ----------- | -------------------------- | ------------------------------------------------------------------- |
+| `auto`      | all                        | The default: `af-packet` on Linux, `bpf` on macOS, `pcap` elsewhere |
+| `af-packet` | Linux                      | `AF_PACKET` mmap ring                                               |
+| `bpf`       | macOS                      | The `/dev/bpf` device, read directly                                |
+| `pcap`      | Linux, macOS, BSD, Windows | libpcap, or Npcap on Windows                                        |
 
 > The `pcap` backend is compiled in with the `pcap` cargo feature, which links against libpcap.
 

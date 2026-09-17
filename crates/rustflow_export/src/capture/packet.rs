@@ -44,7 +44,7 @@ pub fn parse_ethernet(data: &[u8]) -> Option<PacketInfo> {
 }
 
 /// Parse a packet starting at the IP header (loopback and raw-IP links).
-#[cfg(feature = "pcap")]
+#[cfg(any(feature = "pcap", target_os = "macos"))]
 pub fn parse_ip(data: &[u8]) -> Option<PacketInfo> {
     match LaxSlicedPacket::from_ip(data) {
         Ok(sliced) => packet_info(&sliced),
