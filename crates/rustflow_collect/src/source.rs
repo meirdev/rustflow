@@ -100,6 +100,9 @@ impl Pcap {
 impl Source for Pcap {
     fn next(&mut self) -> Datagram<'_> {
         loop {
+            if SHUTDOWN.load(Ordering::Relaxed) {
+                return Datagram::End;
+            }
             match self.reader.next_packet() {
                 Some(Ok(packet)) => {
                     let Some((src, payload)) = parse_udp_packet(&packet.data) else {
