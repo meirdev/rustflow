@@ -231,10 +231,20 @@ impl Parquet {
             .map_err(|e| io::Error::other(format!("row group of {rows} rows lost: {e}")))
     }
 
+    /// The footer goes out even when the last row group cannot be written:
+    /// the row groups already on disk stay readable, and that partial batch
+    /// is lost either way.
     fn write_footer(&mut self) -> io::Result<()> {
         self.finished = true;
-        self.flush_batch()?;
-        self.writer.finish().map(drop).map_err(io::Error::other)
+        let flushed = self.flush_batch();
+        let closed = self.writer.finish().map(drop).map_err(io::Error::other);
+        match (flushed, closed) {
+            (Err(flush), Err(close)) => Err(io::Error::new(
+                flush.kind(),
+                format!("{flush}; footer: {close}"),
+            )),
+            (flushed, closed) => flushed.and(closed),
+        }
     }
 }
 
