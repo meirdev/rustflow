@@ -7,8 +7,6 @@ use crate::enrich::key::parse_prefix;
 use crate::enrich::row::{Row, Schema};
 use crate::enrich::{Error, Result};
 
-/// Read the whole file into the table `lookup` asks for, keyed by
-/// `key_column`. Only the schema's columns are kept per row.
 pub fn open(
     path: &Path,
     key_column: &str,
