@@ -38,6 +38,10 @@ pub struct Opened {
 /// A file being written under a temporary name. It gets its final,
 /// glob-visible name once it is complete, or when it is dropped, so a
 /// panic on the writing thread does not hide the file.
+///
+/// The final name is never taken from an existing file: a restart inside
+/// an interval window, or two collectors sharing a tree, produce
+/// `flows-X-1.parquet`, `flows-X-2.parquet`, ... next to `flows-X.parquet`.
 #[derive(Debug)]
 pub struct PendingRename {
     tmp: PathBuf,
@@ -48,13 +52,14 @@ pub struct PendingRename {
 }
 
 impl PendingRename {
-    pub fn commit(mut self) -> io::Result<()> {
+    /// Returns the name the file ended up with.
+    pub fn commit(mut self) -> io::Result<PathBuf> {
         self.committed = true;
-        self.rename()
+        self.claim()
     }
 
-    fn rename(&self) -> io::Result<()> {
-        std::fs::rename(&self.tmp, &self.final_path).map_err(|e| {
+    fn claim(&self) -> io::Result<PathBuf> {
+        claim_final_name(&self.tmp, &self.final_path).map_err(|e| {
             io::Error::new(
                 e.kind(),
                 format!(
@@ -66,10 +71,6 @@ impl PendingRename {
         })
     }
 
-    pub fn final_path(&self) -> &Path {
-        &self.final_path
-    }
-
     pub fn window(&self) -> DateTime<Utc> {
         self.window
     }
@@ -78,9 +79,61 @@ impl PendingRename {
 impl Drop for PendingRename {
     fn drop(&mut self) {
         if !self.committed {
-            let _ = self.rename();
+            let _ = self.claim();
         }
     }
+}
+
+/// How many `-N` suffixes to try before giving up on a window.
+const MAX_NAME_ATTEMPTS: u32 = 1000;
+
+/// Moves `tmp` to `wanted`, or to the first free `wanted-N`, without ever
+/// replacing a file. A hard link fails when the target exists, unlike
+/// `rename`, which makes the claim atomic. File systems without hard links
+/// fall back to a check-then-rename.
+fn claim_final_name(tmp: &Path, wanted: &Path) -> io::Result<PathBuf> {
+    for candidate in candidates(wanted) {
+        match std::fs::hard_link(tmp, &candidate) {
+            Ok(()) => {
+                std::fs::remove_file(tmp)?;
+                return Ok(candidate);
+            }
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return claim_by_rename(tmp, wanted),
+        }
+    }
+    Err(io::Error::other(format!(
+        "no free name after {MAX_NAME_ATTEMPTS} attempts"
+    )))
+}
+
+fn claim_by_rename(tmp: &Path, wanted: &Path) -> io::Result<PathBuf> {
+    for candidate in candidates(wanted) {
+        if candidate.exists() {
+            continue;
+        }
+        std::fs::rename(tmp, &candidate)?;
+        return Ok(candidate);
+    }
+    Err(io::Error::other(format!(
+        "no free name after {MAX_NAME_ATTEMPTS} attempts"
+    )))
+}
+
+fn candidates(wanted: &Path) -> impl Iterator<Item = PathBuf> + '_ {
+    let stem = wanted
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "output".to_string());
+    let extension = wanted
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+
+    std::iter::once(wanted.to_path_buf()).chain(
+        (1..MAX_NAME_ATTEMPTS)
+            .map(move |n| wanted.with_file_name(format!("{stem}-{n}{extension}"))),
+    )
 }
 
 impl Destination {
@@ -140,14 +193,17 @@ fn create(path: &Path) -> io::Result<File> {
         .open(path)
 }
 
-/// `flows-X.parquet` is written as `.flows-X.parquet.tmp` in the same
-/// directory, so the final rename is atomic and `*.parquet` globs skip it.
+/// `flows-X.parquet` is written as `.flows-X.parquet.<pid>.tmp` in the
+/// same directory, so the final move is atomic and `*.parquet` globs skip
+/// it. The pid keeps two collectors in the same window off each other's
+/// temporary file.
 fn temp_path(final_path: &Path) -> PathBuf {
     let name = final_path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "output".to_string());
-    final_path.with_file_name(format!(".{name}.tmp"))
+
+    final_path.with_file_name(format!(".{name}.{}.tmp", std::process::id()))
 }
 
 /// The file holding the interval window starting at `stamp`:

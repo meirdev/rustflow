@@ -34,17 +34,14 @@ impl Window {
     /// than one hidden behind a `.tmp` name.
     fn close(mut self, hook: Option<&FileHook>) -> io::Result<()> {
         let finished = self.encoder.finish();
-        let job = self.pending.as_ref().map(|p| Job {
-            path: p.final_path().to_path_buf(),
-            window: p.window(),
-        });
-        let committed = self.pending.map_or(Ok(()), PendingRename::commit);
-        let result = finished.and(committed);
+        let window = self.pending.as_ref().map(PendingRename::window);
+        let committed = self.pending.map(PendingRename::commit).transpose();
         // Only a complete file is handed to the command.
-        if let (Ok(()), Some(hook), Some(job)) = (&result, hook, job) {
-            hook.run(job);
+        let path = finished.and(committed)?;
+        if let (Some(hook), Some(path), Some(window)) = (hook, path, window) {
+            hook.run(Job { path, window });
         }
-        result
+        Ok(())
     }
 }
 
