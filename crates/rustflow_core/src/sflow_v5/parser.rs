@@ -1001,17 +1001,6 @@ fn parse_if_counters(input: &[u8]) -> IResult<&[u8], IfCounters> {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct DiscardedPacket {
-    pub sequence_number: u32,
-    pub source_id: u32,
-    pub drops: u32,
-    pub inputifindex: u32,
-    pub outputifindex: u32,
-    pub reason: DropReason,
-    pub discard_records: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
 pub struct EthernetCounters {
     pub dot3_stats_alignment_errors: u32,
     pub dot3_stats_fcs_errors: u32,
