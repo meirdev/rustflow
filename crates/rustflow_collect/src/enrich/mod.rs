@@ -5,16 +5,13 @@ pub mod row;
 pub mod source;
 pub mod table;
 
-pub use config::{
-    CsvLookup, EnrichmentConfig, FieldMapping, LookupKey, SourceConfig, SourceFormat,
-    parse_enrich_arg,
-};
+pub use config::{EnrichmentConfig, SourceConfig, parse_enrich_arg};
 pub use engine::{Enriched, EnrichmentEngine};
 pub use key::{Key, KeyType};
-pub use row::{Row, Schema};
-pub use source::{ExactTable, MmdbSource, PrefixTable, Source};
-pub use table::metrics::{SourceMetrics, TableMetrics};
-pub use table::{ReloadPolicy, Table};
+pub use row::Row;
+pub use source::Source;
+pub use table::ReloadPolicy;
+pub use table::metrics::TableMetrics;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -28,8 +25,6 @@ pub enum Error {
         #[source]
         error: Box<Error>,
     },
-    #[error("Watcher error: {0}")]
-    Watcher(String),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]

@@ -13,13 +13,9 @@ use crate::enrich::row::{Row, Schema};
 use crate::enrich::{Error, Result};
 
 pub trait Source: Send + Sync {
-    fn lookup(&self, key: Key<'_>) -> Option<Row>;
+    fn lookup(&self, key: Key) -> Option<Row>;
 
     fn len(&self) -> usize;
-
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
 }
 
 pub fn open(config: &SourceConfig) -> Result<Box<dyn Source>> {

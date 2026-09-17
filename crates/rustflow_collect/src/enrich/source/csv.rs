@@ -19,7 +19,7 @@ pub fn open(
         CsvLookup::Exact(key_type) => {
             let mut table = ExactTable::default();
             read(path, key_column, schema, |key, row| {
-                table.insert(key_type.parse(key)?.into_owned(), row);
+                table.insert(key_type.parse(key)?, row);
                 Ok(())
             })?;
             Box::new(table)

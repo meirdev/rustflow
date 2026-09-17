@@ -118,7 +118,7 @@ impl FromStr for ReloadPolicy {
 pub struct LookupKey {
     name: &'static str,
     key_type: KeyType,
-    extract: fn(&CommonFlow) -> Option<Key<'static>>,
+    extract: fn(&CommonFlow) -> Option<Key>,
 }
 
 macro_rules! lookup_fields {
@@ -174,7 +174,7 @@ impl LookupKey {
         self.key_type
     }
 
-    pub fn extract(self, flow: &CommonFlow) -> Option<Key<'static>> {
+    pub fn extract(self, flow: &CommonFlow) -> Option<Key> {
         (self.extract)(flow)
     }
 }

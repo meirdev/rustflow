@@ -38,11 +38,6 @@ pub struct Row {
 }
 
 impl Row {
-    pub fn get(&self, column: &str) -> Option<&str> {
-        let index = self.schema.columns().iter().position(|c| c == column)?;
-        self.values[index].as_deref()
-    }
-
     pub fn values(&self) -> &[Option<Arc<str>>] {
         &self.values
     }

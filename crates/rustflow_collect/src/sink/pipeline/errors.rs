@@ -61,8 +61,4 @@ impl SinkErrors {
         let counter = &self.metrics.rotate_errors;
         observe("output rotation", &mut self.rotate_failing, counter, result);
     }
-
-    pub fn write_failing(&self) -> bool {
-        self.write_failing
-    }
 }

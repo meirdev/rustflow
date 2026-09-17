@@ -8,7 +8,7 @@ use std::io::{self, Write};
 
 pub use discard::Discard;
 pub use ndjson::Ndjson;
-pub use protobuf::{FlowMessage, Protobuf};
+pub use protobuf::Protobuf;
 use rustflow_core::common::common_flow::CommonFlow;
 
 pub use self::csv::Csv;

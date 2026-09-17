@@ -1475,7 +1475,6 @@ dependencies = [
  "csv",
  "ctrlc",
  "duration-str",
- "hashbrown 0.16.1",
  "ipnet",
  "macaddr",
  "maxminddb",
