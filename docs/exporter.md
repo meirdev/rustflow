@@ -2,8 +2,6 @@
 
 RustFlow can capture packets from a network interface, aggregate them into flows, and export them as IPFIX to a collector.
 
-> The exporter is currently supported on Linux.
-
 ## Basic Usage
 
 By default, the exporter captures from the loopback interface and sends IPFIX to `127.0.0.1:4739`.
@@ -102,6 +100,18 @@ rustflow export \
   -i eth0 \
   --promiscuous
 ```
+
+## Capture Backends
+
+`--capture` selects how packets are captured:
+
+| Backend     | Platforms                  | Notes                                               |
+| ----------- | -------------------------- | --------------------------------------------------- |
+| `auto`      | all                        | The default: `af-packet` on Linux, `pcap` elsewhere |
+| `af-packet` | Linux                      | `AF_PACKET` mmap ring                               |
+| `pcap`      | Linux, macOS, BSD, Windows | libpcap, or Npcap on Windows                        |
+
+> The `pcap` backend is compiled in with the `pcap` cargo feature, which links against libpcap.
 
 ## Permissions
 

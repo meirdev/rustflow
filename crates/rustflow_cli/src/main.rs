@@ -24,19 +24,8 @@ enum Command {
     /// Generate synthetic IPFIX traffic for testing a collector
     Generate(Box<GenerateArgs>),
 
-    /// Capture packets on an interface and export them as IPFIX (Linux only)
-    #[cfg(target_os = "linux")]
+    /// Capture packets on an interface and export them as IPFIX
     Export(Box<rustflow_export::ExportArgs>),
-
-    /// Capture packets on an interface and export them as IPFIX (Linux only)
-    #[cfg(not(target_os = "linux"))]
-    #[command(disable_help_flag = true)]
-    Export {
-        /// Accepted so the platform error is reported instead of clap's
-        /// "unrecognized subcommand".
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true, hide = true)]
-        _args: Vec<String>,
-    },
 }
 
 fn main() -> Result<()> {
@@ -51,12 +40,6 @@ fn main() -> Result<()> {
             rustflow_generate::run(*args)?;
             Ok(())
         }
-        #[cfg(target_os = "linux")]
         Command::Export(args) => rustflow_export::run(*args),
-        #[cfg(not(target_os = "linux"))]
-        Command::Export { .. } => anyhow::bail!(
-            "`rustflow export` requires Linux: packet capture uses AF_PACKET, \
-             which this platform does not provide"
-        ),
     }
 }
