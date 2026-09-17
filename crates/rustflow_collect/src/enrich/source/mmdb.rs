@@ -40,7 +40,7 @@ impl MmdbSource {
 }
 
 impl Source for MmdbSource {
-    fn lookup(&self, key: Key<'_>) -> Option<Row> {
+    fn lookup(&self, key: Key) -> Option<Row> {
         let Key::Ip(ip) = key else {
             return None;
         };

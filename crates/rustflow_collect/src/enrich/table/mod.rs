@@ -8,7 +8,7 @@ use metrics::{SourceMetrics, TableMetrics};
 pub use reload::ReloadPolicy;
 use reload::{ReloadDriver, ReloadEvent, ReloadGuard};
 
-use crate::enrich::{Key, Result, Row, Source, SourceConfig, source};
+use crate::enrich::{Result, Source, SourceConfig, source};
 
 struct Shared {
     config: SourceConfig,
@@ -94,27 +94,11 @@ impl Table {
         })
     }
 
-    pub fn metrics(&self) -> &SourceMetrics {
-        &self.shared.metrics
-    }
-
     pub fn len(&self) -> usize {
         self.shared.source().len()
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    pub fn reload(&self) -> Result<usize> {
-        self.shared.reload()
-    }
-
     pub fn snapshot(&self) -> Arc<dyn Source> {
         Arc::clone(&self.shared.source())
-    }
-
-    pub fn lookup(&self, key: Key<'_>) -> Option<Row> {
-        self.snapshot().lookup(key)
     }
 }

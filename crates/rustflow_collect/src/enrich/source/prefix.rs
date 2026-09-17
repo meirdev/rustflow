@@ -27,7 +27,7 @@ impl PrefixTable {
 }
 
 impl Source for PrefixTable {
-    fn lookup(&self, key: Key<'_>) -> Option<Row> {
+    fn lookup(&self, key: Key) -> Option<Row> {
         let row = match key {
             Key::Ip(IpAddr::V4(ip)) => self.ipv4.get_lpm(&Ipv4Net::from(ip)).map(|(_, row)| row),
             Key::Ip(IpAddr::V6(ip)) => self.ipv6.get_lpm(&Ipv6Net::from(ip)).map(|(_, row)| row),

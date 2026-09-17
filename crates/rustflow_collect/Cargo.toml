@@ -23,7 +23,6 @@ prefix-trie = "0.10.1"
 ipnet = "2"
 duration-str = "0.21.0"
 maxminddb = "0.30.3"
-hashbrown = { version = "0.16", default-features = false }
 notify-debouncer-full = "0.7.0"
 thiserror = "2.0.20"
 parquet = { version = "59.2.0", default-features = false, features = ["arrow", "snap"] }

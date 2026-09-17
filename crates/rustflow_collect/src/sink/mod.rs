@@ -10,11 +10,10 @@ use std::time::Duration;
 use std::{fmt, io};
 
 use clap::ValueEnum;
-pub use destination::{Destination, MAX_PARTITION_LEVEL, PendingRename};
+pub use destination::{Destination, MAX_PARTITION_LEVEL};
 pub use encoder::{Csv, Discard, Encoder, Ndjson, Parquet, Protobuf, Writer};
-pub use hook::{FileHook, Job};
+pub use hook::FileHook;
 pub use metrics::OutputMetrics;
-pub use pipeline::{Chunk, FLUSH_INTERVAL, Pipeline, encoder_loop};
 pub use rotating::RotatingSink;
 
 /// `--format`: the original packet structure, or the normalized flow.
