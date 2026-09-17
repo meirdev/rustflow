@@ -23,7 +23,7 @@ It can collect flows from the network or PCAP files, normalize them into a commo
 - Flow enrichment using CSV or MaxMind databases
 - Prometheus metrics
 - IPFIX traffic generator
-- IPFIX exporter, native on Linux and via libpcap elsewhere
+- IPFIX exporter, native on Linux and macOS and via libpcap elsewhere
 
 ## Installation
 
