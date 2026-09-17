@@ -1,0 +1,48 @@
+flow_type: string not null
+  time_received_ns: timestamp[ns, tz=UTC]
+  sequence_num: uint32 not null
+  sampling_rate: uint32
+  sampler_address: string
+  time_flow_start_ns: timestamp[ns, tz=UTC]
+  time_flow_end_ns: timestamp[ns, tz=UTC]
+  bytes: uint64 not null
+  packets: uint64 not null
+  src_addr: string
+  dst_addr: string
+  src_mac: string
+  dst_mac: string
+  etype: uint16
+  proto: uint8
+  src_port: uint16
+  dst_port: uint16
+  in_if: uint32
+  out_if: uint32
+  ip_tos: uint8
+  ip_ttl: uint8
+  tcp_flags: uint16
+  icmp_type: uint8
+  icmp_code: uint8
+  ipv6_flow_label: uint32
+  fragment_id: uint32
+  fragment_offset: uint16
+  src_as: uint32
+  dst_as: uint32
+  next_hop: string
+  src_net: uint8
+  dst_net: uint8
+  bgp_next_hop: string
+  src_vlan: uint16
+  dst_vlan: uint16
+  observation_domain_id: uint32
+  template_id: uint16
+
+{"flow_type": "IPFIX", "time_received_ns": "2023-11-14T22:13:23+00:00", "sequence_num": 500004, "sampling_rate": 100, "sampler_address": "192.0.2.10", "time_flow_start_ns": "2023-11-14T22:13:15.800000+00:00", "time_flow_end_ns": "2023-11-14T22:13:19.900000+00:00", "bytes": 48211, "packets": 37, "src_addr": "192.0.2.1", "dst_addr": "198.51.100.20", "src_mac": null, "dst_mac": null, "etype": 2048, "proto": 6, "src_port": 443, "dst_port": 51001, "in_if": 11, "out_if": 21, "ip_tos": 0, "ip_ttl": 64, "tcp_flags": 27, "icmp_type": 0, "icmp_code": 0, "ipv6_flow_label": null, "fragment_id": 6699, "fragment_offset": null, "src_as": 64496, "dst_as": 64500, "next_hop": "203.0.113.1", "src_net": 24, "dst_net": 22, "bgp_next_hop": "203.0.113.254", "src_vlan": 100, "dst_vlan": null, "observation_domain_id": 256, "template_id": 256}
+{"flow_type": "IPFIX", "time_received_ns": "2023-11-14T22:13:23+00:00", "sequence_num": 500004, "sampling_rate": 100, "sampler_address": "192.0.2.10", "time_flow_start_ns": "2023-11-14T22:13:19.100000+00:00", "time_flow_end_ns": "2023-11-14T22:13:19.120000+00:00", "bytes": 180, "packets": 2, "src_addr": "192.0.2.2", "dst_addr": "198.51.100.53", "src_mac": null, "dst_mac": null, "etype": 2048, "proto": 17, "src_port": 51002, "dst_port": 53, "in_if": 11, "out_if": 21, "ip_tos": 0, "ip_ttl": 63, "tcp_flags": 0, "icmp_type": 0, "icmp_code": 0, "ipv6_flow_label": null, "fragment_id": 0, "fragment_offset": null, "src_as": 64496, "dst_as": 64501, "next_hop": "203.0.113.1", "src_net": 24, "dst_net": 24, "bgp_next_hop": "203.0.113.254", "src_vlan": 100, "dst_vlan": null, "observation_domain_id": 256, "template_id": 256}
+{"flow_type": "IPFIX", "time_received_ns": "2023-11-14T22:13:23+00:00", "sequence_num": 500004, "sampling_rate": 100, "sampler_address": "192.0.2.10", "time_flow_start_ns": "2023-11-14T22:13:19.500000+00:00", "time_flow_end_ns": "2023-11-14T22:13:19.500000+00:00", "bytes": 84, "packets": 1, "src_addr": "198.51.100.7", "dst_addr": "192.0.2.3", "src_mac": null, "dst_mac": null, "etype": 2048, "proto": 1, "src_port": 0, "dst_port": 0, "in_if": 21, "out_if": 11, "ip_tos": 184, "ip_ttl": 57, "tcp_flags": 0, "icmp_type": 8, "icmp_code": 0, "ipv6_flow_label": null, "fragment_id": 15437, "fragment_offset": null, "src_as": 64502, "dst_as": 64496, "next_hop": "203.0.113.2", "src_net": 22, "dst_net": 24, "bgp_next_hop": "203.0.113.253", "src_vlan": 200, "dst_vlan": null, "observation_domain_id": 256, "template_id": 256}
+{"flow_type": "IPFIX", "time_received_ns": "2023-11-14T22:13:24+00:00", "sequence_num": 500007, "sampling_rate": 100, "sampler_address": "192.0.2.10", "time_flow_start_ns": "2023-11-14T22:13:17+00:00", "time_flow_end_ns": "2023-11-14T22:13:19.800000+00:00", "bytes": 9300, "packets": 12, "src_addr": "2001:db8:1::1", "dst_addr": "2001:db8:2::443", "src_mac": null, "dst_mac": null, "etype": 34525, "proto": 6, "src_port": 52001, "dst_port": 443, "in_if": 11, "out_if": 21, "ip_tos": 0, "ip_ttl": 64, "tcp_flags": 27, "icmp_type": 0, "icmp_code": 0, "ipv6_flow_label": null, "fragment_id": 0, "fragment_offset": null, "src_as": 64496, "dst_as": 64506, "next_hop": "2001:db8:ffff::1", "src_net": 48, "dst_net": 64, "bgp_next_hop": "2001:db8:ffff::fe", "src_vlan": 100, "dst_vlan": null, "observation_domain_id": 256, "template_id": 257}
+{"flow_type": "IPFIX", "time_received_ns": "2023-11-14T22:13:24+00:00", "sequence_num": 500007, "sampling_rate": 100, "sampler_address": "192.0.2.10", "time_flow_start_ns": "2023-11-14T22:13:19.300000+00:00", "time_flow_end_ns": "2023-11-14T22:13:19.300000+00:00", "bytes": 320, "packets": 1, "src_addr": "2001:db8:2::53", "dst_addr": "2001:db8:1::2", "src_mac": null, "dst_mac": null, "etype": 34525, "proto": 17, "src_port": 53, "dst_port": 52002, "in_if": 21, "out_if": 11, "ip_tos": 0, "ip_ttl": 61, "tcp_flags": 0, "icmp_type": 0, "icmp_code": 0, "ipv6_flow_label": null, "fragment_id": 0, "fragment_offset": null, "src_as": 64507, "dst_as": 64496, "next_hop": "2001:db8:ffff::2", "src_net": 64, "dst_net": 48, "bgp_next_hop": "2001:db8:ffff::fd", "src_vlan": 200, "dst_vlan": null, "observation_domain_id": 256, "template_id": 257}
+{"flow_type": "IPFIX", "time_received_ns": "2023-11-14T22:13:25+00:00", "sequence_num": 500009, "sampling_rate": 100, "sampler_address": "192.0.2.10", "time_flow_start_ns": "2023-11-14T22:13:19.940000+00:00", "time_flow_end_ns": "2023-11-14T22:13:19.940000+00:00", "bytes": 60, "packets": 1, "src_addr": "192.0.2.4", "dst_addr": "198.51.100.80", "src_mac": null, "dst_mac": null, "etype": 2048, "proto": 6, "src_port": 51003, "dst_port": 80, "in_if": 11, "out_if": 21, "ip_tos": 40, "ip_ttl": 64, "tcp_flags": 2, "icmp_type": 0, "icmp_code": 0, "ipv6_flow_label": null, "fragment_id": 0, "fragment_offset": null, "src_as": 64496, "dst_as": 64503, "next_hop": "203.0.113.1", "src_net": 24, "dst_net": 20, "bgp_next_hop": "203.0.113.254", "src_vlan": 100, "dst_vlan": null, "observation_domain_id": 256, "template_id": 256}
+{"flow_type": "IPFIX", "time_received_ns": "2023-11-14T22:13:25+00:00", "sequence_num": 500009, "sampling_rate": 100, "sampler_address": "192.0.2.10", "time_flow_start_ns": "2023-11-14T22:12:21+00:00", "time_flow_end_ns": "2023-11-14T22:13:19+00:00", "bytes": 1073741824, "packets": 741411, "src_addr": "198.51.100.99", "dst_addr": "192.0.2.5", "src_mac": null, "dst_mac": null, "etype": 2048, "proto": 6, "src_port": 8443, "dst_port": 51004, "in_if": 21, "out_if": 11, "ip_tos": 0, "ip_ttl": 52, "tcp_flags": 24, "icmp_type": 0, "icmp_code": 0, "ipv6_flow_label": null, "fragment_id": 24175, "fragment_offset": null, "src_as": 64504, "dst_as": 64496, "next_hop": "203.0.113.2", "src_net": 16, "dst_net": 24, "bgp_next_hop": "203.0.113.253", "src_vlan": 200, "dst_vlan": null, "observation_domain_id": 256, "template_id": 256}
+{"flow_type": "IPFIX", "time_received_ns": "2023-11-14T22:13:25+00:00", "sequence_num": 500009, "sampling_rate": 100, "sampler_address": "192.0.2.10", "time_flow_start_ns": "2023-11-14T22:13:19.850000+00:00", "time_flow_end_ns": "2023-11-14T22:13:19.850000+00:00", "bytes": 104, "packets": 1, "src_addr": "2001:db8:1::3", "dst_addr": "2001:db8:3::1", "src_mac": null, "dst_mac": null, "etype": 34525, "proto": 58, "src_port": 0, "dst_port": 0, "in_if": 11, "out_if": 21, "ip_tos": 0, "ip_ttl": 64, "tcp_flags": 0, "icmp_type": 128, "icmp_code": 0, "ipv6_flow_label": null, "fragment_id": 0, "fragment_offset": null, "src_as": 64496, "dst_as": 64508, "next_hop": "2001:db8:ffff::1", "src_net": 48, "dst_net": 32, "bgp_next_hop": "2001:db8:ffff::fe", "src_vlan": 100, "dst_vlan": null, "observation_domain_id": 256, "template_id": 257}
+{"flow_type": "IPFIX", "time_received_ns": "2023-11-14T22:13:27+00:00", "sequence_num": 500013, "sampling_rate": 100, "sampler_address": "192.0.2.10", "time_flow_start_ns": "2023-11-14T22:13:18+00:00", "time_flow_end_ns": "2023-11-14T22:13:18+00:00", "bytes": 76, "packets": 1, "src_addr": "192.0.2.6", "dst_addr": "198.51.100.123", "src_mac": null, "dst_mac": null, "etype": 2048, "proto": 17, "src_port": 123, "dst_port": 123, "in_if": 11, "out_if": 21, "ip_tos": 0, "ip_ttl": 64, "tcp_flags": 0, "icmp_type": 0, "icmp_code": 0, "ipv6_flow_label": null, "fragment_id": 0, "fragment_offset": null, "src_as": 64496, "dst_as": 64505, "next_hop": "203.0.113.1", "src_net": 24, "dst_net": 24, "bgp_next_hop": "203.0.113.254", "src_vlan": 100, "dst_vlan": null, "observation_domain_id": 256, "template_id": 256}
+{"flow_type": "IPFIX", "time_received_ns": "2023-11-14T22:13:27+00:00", "sequence_num": 500013, "sampling_rate": 100, "sampler_address": "192.0.2.10", "time_flow_start_ns": "2023-11-14T22:12:50+00:00", "time_flow_end_ns": "2023-11-14T22:13:19.600000+00:00", "bytes": 2900000, "packets": 2010, "src_addr": "2001:db8:4::9", "dst_addr": "2001:db8:1::4", "src_mac": null, "dst_mac": null, "etype": 34525, "proto": 6, "src_port": 443, "dst_port": 52003, "in_if": 21, "out_if": 11, "ip_tos": 32, "ip_ttl": 49, "tcp_flags": 16, "icmp_type": 0, "icmp_code": 0, "ipv6_flow_label": null, "fragment_id": 0, "fragment_offset": null, "src_as": 64509, "dst_as": 64496, "next_hop": "2001:db8:ffff::2", "src_net": 32, "dst_net": 48, "bgp_next_hop": "2001:db8:ffff::fd", "src_vlan": 200, "dst_vlan": null, "observation_domain_id": 256, "template_id": 257}
