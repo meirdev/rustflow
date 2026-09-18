@@ -1,4 +1,5 @@
 pub mod common_flow;
+pub mod cryptopan;
 pub mod ie_registry;
 pub mod information_element;
 pub mod parser;
