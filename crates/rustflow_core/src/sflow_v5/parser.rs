@@ -7,7 +7,7 @@ use nom::combinator::{fail, map, map_res, peek, verify};
 use nom::multi::count;
 use nom::number::complete::{be_i32, be_u32, be_u64, be_u128};
 use nom::{IResult, Parser, ToUsize};
-use num_enum::TryFromPrimitive;
+use num_enum::{FromPrimitive, TryFromPrimitive};
 use serde::Serialize;
 
 use crate::common::parser::{ipv4_addr, ipv6_addr, macaddr6};
@@ -80,12 +80,15 @@ fn parse_sflow_v5(input: &[u8]) -> IResult<&[u8], SFlowV5> {
                     let (input, v) = parse_expanded_flow_sample(v)?;
                     Ok((input, Sample::ExpandedFlow(v)))
                 }
-                Ok(SampleFormat::ExpandedCounter) | Ok(SampleFormat::Drop) | Err(_) => {
-                    // Every sample is `data_format` + `opaque sample_data<>`,
-                    // so an unsupported format is skipped by reading only
-                    // the format and length words: `length` already covers
-                    // everything after it, sequence number and source id
-                    // included.
+                Ok(SampleFormat::ExpandedCounter) => {
+                    let (input, v) = parse_counter_sample(v)?;
+                    Ok((input, Sample::ExpandedCounter(v)))
+                }
+                Ok(SampleFormat::Drop) => {
+                    let (input, v) = parse_drop_sample(v)?;
+                    Ok((input, Sample::Drop(v)))
+                }
+                Err(_) => {
                     let (input, _format) = be_u32(input)?;
                     let (input, length) = be_u32(input)?;
                     let (input, data) = take(length as usize)(input)?;
@@ -115,6 +118,7 @@ pub enum Sample {
     Flow(FlowSample),
     Counter(CounterSample),
     ExpandedFlow(ExpandedFlowSample),
+    ExpandedCounter(ExpandedCounterSample),
     Drop(DropSample),
     Unknown(Vec<u8>),
 }
@@ -214,6 +218,10 @@ pub struct CounterSample {
     pub records: Vec<CounterRecord>,
 }
 
+/// Format 4 differs from format 2 only in its two-word source id, which
+/// [`parse_sample_header`] already reads either way.
+pub type ExpandedCounterSample = CounterSample;
+
 fn parse_counter_sample(input: &[u8]) -> IResult<&[u8], CounterSample> {
     let (input, header) = parse_sample_header(input)?;
     let (input, records_count) = be_u32(input)?;
@@ -263,6 +271,9 @@ fn parse_expanded_flow_sample(input: &[u8]) -> IResult<&[u8], ExpandedFlowSample
     ))
 }
 
+/// Dropped packet notification, format 5 (sflow_drops.txt): the expanded
+/// source id in the header, then the interfaces as plain indexes, never the
+/// expanded form.
 #[derive(Debug, Clone, Serialize)]
 pub struct DropSample {
     pub header: SampleHeader,
@@ -271,6 +282,28 @@ pub struct DropSample {
     pub output: u32,
     pub reason: DropReason,
     pub records: Vec<FlowRecord>,
+}
+
+fn parse_drop_sample(input: &[u8]) -> IResult<&[u8], DropSample> {
+    let (input, header) = parse_sample_header(input)?;
+    let (input, drops) = be_u32(input)?;
+    let (input, input_) = be_u32(input)?;
+    let (input, output) = be_u32(input)?;
+    let (input, reason) = map(be_u32, DropReason::from).parse(input)?;
+    let (input, records_count) = be_u32(input)?;
+    let (input, records) = count(parse_flow_record, records_count.to_usize()).parse(input)?;
+
+    Ok((
+        input,
+        DropSample {
+            header,
+            drops,
+            input: input_,
+            output,
+            reason,
+            records,
+        },
+    ))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -474,7 +507,7 @@ pub enum HeaderProtocol {
     Pos = 14,
 }
 
-#[derive(Debug, Clone, Serialize, TryFromPrimitive)]
+#[derive(Debug, Clone, Serialize, FromPrimitive)]
 #[repr(u32)]
 pub enum DropReason {
     NetUnreachable = 0,
@@ -541,6 +574,8 @@ pub enum DropReason {
     EgressVlanFilter = 301,
     UcReversePathForwarding = 302,
     SplitHorizon = 303,
+    #[num_enum(catch_all)]
+    Unrecognized(u32),
 }
 
 #[derive(Debug, Clone, Serialize, TryFromPrimitive)]
@@ -594,16 +629,23 @@ pub struct SampledEthernet {
     pub r#type: u32,
 }
 
+fn parse_padded_mac(input: &[u8]) -> IResult<&[u8], MacAddr6> {
+    let (input, mac) = macaddr6(input)?;
+    let (input, _pad) = take(2usize)(input)?;
+
+    Ok((input, mac))
+}
+
 fn parse_sampled_ethernet(input: &[u8]) -> IResult<&[u8], SampledEthernet> {
-    let (input, legnth) = be_u32(input)?;
-    let (input, src_mac) = macaddr6(input)?;
-    let (input, dst_mac) = macaddr6(input)?;
+    let (input, length) = be_u32(input)?;
+    let (input, src_mac) = parse_padded_mac(input)?;
+    let (input, dst_mac) = parse_padded_mac(input)?;
     let (input, type_) = be_u32(input)?;
 
     Ok((
         input,
         SampledEthernet {
-            length: legnth,
+            length,
             src_mac,
             dst_mac,
             r#type: type_,
@@ -998,17 +1040,6 @@ fn parse_if_counters(input: &[u8]) -> IResult<&[u8], IfCounters> {
             if_promiscuous_mode,
         },
     ))
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct DiscardedPacket {
-    pub sequence_number: u32,
-    pub source_id: u32,
-    pub drops: u32,
-    pub inputifindex: u32,
-    pub outputifindex: u32,
-    pub reason: DropReason,
-    pub discard_records: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

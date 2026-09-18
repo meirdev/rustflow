@@ -23,7 +23,6 @@ impl TableMetrics {
         Self::default()
     }
 
-    /// Counters are registered without `_total`; the encoder appends it.
     pub fn register(&self, registry: &mut Registry) {
         registry.register(
             "enrichment_loaded_rows",
