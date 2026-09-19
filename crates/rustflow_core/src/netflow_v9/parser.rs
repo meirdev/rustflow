@@ -89,8 +89,9 @@ impl NetflowV9Parser {
                 let (input, templates) = many0(parse_template_record).parse(input)?;
 
                 for template in &templates {
-                    self.templates
-                        .insert((source_id, template.id), template.clone());
+                    let mut template = template.clone();
+                    template.resolve(&self.ie_registry);
+                    self.templates.insert((source_id, template.id), template);
                 }
 
                 Ok((input, templates.into_iter().map(Record::Template).collect()))
@@ -100,8 +101,10 @@ impl NetflowV9Parser {
                     many0(parse_options_template_record).parse(input)?;
 
                 for template in &options_templates {
+                    let mut template = template.clone();
+                    template.resolve(&self.ie_registry);
                     self.options_templates
-                        .insert((source_id, template.id), template.clone());
+                        .insert((source_id, template.id), template);
                 }
 
                 Ok((
@@ -130,19 +133,20 @@ impl NetflowV9Parser {
         // the whole packet with it, so templates without fields yield no
         // records instead.
         if let Some(template) = self.templates.get(&(source_id, template_id)) {
-            if template.fields.is_empty() {
+            if template.resolved.is_empty() {
                 return Ok((input, vec![]));
             }
-            let (input, records) = many0(|i| self.parse_data_record(template, i)).parse(input)?;
+            let (input, records) =
+                many0(|i| parse_data_record(&template.resolved, i)).parse(input)?;
             return Ok((input, records.into_iter().map(Record::Data).collect()));
         }
 
         if let Some(template) = self.options_templates.get(&(source_id, template_id)) {
-            if template.scope_fields.is_empty() && template.option_fields.is_empty() {
+            if template.resolved.is_empty() {
                 return Ok((input, vec![]));
             }
             let (input, records) =
-                many0(|i| self.parse_options_data_record(template, i)).parse(input)?;
+                many0(|i| parse_data_record(&template.resolved, i)).parse(input)?;
             return Ok((
                 input,
                 records.into_iter().map(Record::OptionsData).collect(),
@@ -159,64 +163,27 @@ impl NetflowV9Parser {
 
         Ok((input, vec![]))
     }
+}
 
-    fn parse_data_record<'a>(
-        &self,
-        template: &TemplateRecord,
-        input: &'a [u8],
-    ) -> IResult<&'a [u8], DataRecord> {
-        let mut values = Vec::with_capacity(template.fields.len());
-        let mut remaining = input;
+/// One record of a template whose fields were resolved when it was installed.
+fn parse_data_record<'a>(
+    fields: &Arc<[ResolvedField]>,
+    input: &'a [u8],
+) -> IResult<&'a [u8], DataRecord> {
+    let mut values = Vec::with_capacity(fields.len());
+    let mut remaining = input;
 
-        for field in &template.fields {
-            let (data_type, name): (DataType, Arc<str>) =
-                self.ie_registry.lookup(field.r#type, None).map_or_else(
-                    || (DataType::OctetArray, Arc::from(field.r#type.to_string())),
-                    |ie| (ie.data_type, ie.name.clone()),
-                );
-
-            let (input, value) = parse_field_value(data_type, field.length.to_usize())(remaining)?;
-            values.push((field.r#type, name, value));
-
-            remaining = input;
-        }
-
-        Ok((remaining, DataRecord(values)))
+    for field in fields.iter() {
+        let (input, value) =
+            parse_field_value(field.data_type, field.length.to_usize())(remaining)?;
+        values.push(value);
+        remaining = input;
     }
 
-    fn parse_options_data_record<'a>(
-        &self,
-        template: &OptionsTemplateRecord,
-        input: &'a [u8],
-    ) -> IResult<&'a [u8], DataRecord> {
-        let field_count = template.scope_fields.len() + template.option_fields.len();
-        let mut values = Vec::with_capacity(field_count);
-        let mut remaining = input;
-
-        for field in &template.scope_fields {
-            let (input, value) =
-                parse_field_value(DataType::Unsigned, field.length.to_usize())(remaining)?;
-            let name: Arc<str> = Arc::from(field.r#type.to_string());
-            values.push((field.r#type.clone().into(), name, value));
-
-            remaining = input;
-        }
-
-        for field in &template.option_fields {
-            let (data_type, name): (DataType, Arc<str>) =
-                self.ie_registry.lookup(field.r#type, None).map_or_else(
-                    || (DataType::OctetArray, Arc::from(field.r#type.to_string())),
-                    |ie| (ie.data_type, ie.name.clone()),
-                );
-
-            let (input, value) = parse_field_value(data_type, field.length.to_usize())(remaining)?;
-            values.push((field.r#type, name, value));
-
-            remaining = input;
-        }
-
-        Ok((remaining, DataRecord(values)))
-    }
+    Ok((
+        remaining,
+        DataRecord::from_template(Arc::clone(fields), values),
+    ))
 }
 
 impl Default for NetflowV9Parser {
@@ -291,6 +258,20 @@ pub enum Record {
 pub struct TemplateRecord {
     pub id: u16,
     pub fields: Vec<TemplateField>,
+    /// `fields` with their registry entries, filled by [`resolve`](Self::resolve)
+    /// when the parser installs the template; empty until then.
+    #[serde(skip)]
+    pub resolved: Arc<[ResolvedField]>,
+}
+
+impl TemplateRecord {
+    pub fn resolve(&mut self, registry: &IERegistry) {
+        self.resolved = self
+            .fields
+            .iter()
+            .map(|field| ResolvedField::from_registry(registry, field.r#type, field.length))
+            .collect();
+    }
 }
 
 fn parse_template_record(input: &[u8]) -> IResult<&[u8], TemplateRecord> {
@@ -298,7 +279,39 @@ fn parse_template_record(input: &[u8]) -> IResult<&[u8], TemplateRecord> {
     let (input, field_count) = be_u16(input)?;
     let (input, fields) = count(parse_template_field, field_count.to_usize()).parse(input)?;
 
-    Ok((input, TemplateRecord { id, fields }))
+    Ok((
+        input,
+        TemplateRecord {
+            id,
+            fields,
+            resolved: Arc::from([]),
+        },
+    ))
+}
+
+/// A template field with what the registry says about it, looked up once
+/// per template instead of once per record.
+#[derive(Debug, Clone)]
+pub struct ResolvedField {
+    pub r#type: u16,
+    pub length: u16,
+    pub data_type: DataType,
+    pub name: Arc<str>,
+}
+
+impl ResolvedField {
+    fn from_registry(registry: &IERegistry, r#type: u16, length: u16) -> Self {
+        let (data_type, name) = registry.lookup(r#type, None).map_or_else(
+            || (DataType::OctetArray, Arc::from(r#type.to_string())),
+            |ie| (ie.data_type, ie.name.clone()),
+        );
+        Self {
+            r#type,
+            length,
+            data_type,
+            name,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -321,6 +334,27 @@ pub struct OptionsTemplateRecord {
     pub option_length: u16,
     pub scope_fields: Vec<ScopeField>,
     pub option_fields: Vec<OptionField>,
+    /// Scope fields then option fields, see [`TemplateRecord::resolved`].
+    #[serde(skip)]
+    pub resolved: Arc<[ResolvedField]>,
+}
+
+impl OptionsTemplateRecord {
+    /// Scope fields are unsigned and named after their scope type; option
+    /// fields resolve through the registry.
+    pub fn resolve(&mut self, registry: &IERegistry) {
+        let scope = self.scope_fields.iter().map(|field| ResolvedField {
+            r#type: field.r#type.clone().into(),
+            length: field.length,
+            data_type: DataType::Unsigned,
+            name: Arc::from(field.r#type.to_string()),
+        });
+        let options = self
+            .option_fields
+            .iter()
+            .map(|field| ResolvedField::from_registry(registry, field.r#type, field.length));
+        self.resolved = scope.chain(options).collect();
+    }
 }
 
 fn parse_options_template_record(input: &[u8]) -> IResult<&[u8], OptionsTemplateRecord> {
@@ -343,6 +377,7 @@ fn parse_options_template_record(input: &[u8]) -> IResult<&[u8], OptionsTemplate
             option_length,
             scope_fields,
             option_fields,
+            resolved: Arc::from([]),
         },
     ))
 }
@@ -416,8 +451,44 @@ fn parse_option_field(input: &[u8]) -> IResult<&[u8], OptionField> {
     Ok((input, OptionField { r#type, length }))
 }
 
+/// One data record: the values, plus the template's field descriptions
+/// shared with every other record of that template.
 #[derive(Debug, Clone)]
-pub struct DataRecord(pub Vec<(u16, Arc<str>, FieldValue)>);
+pub struct DataRecord {
+    fields: Arc<[ResolvedField]>,
+    values: Vec<FieldValue>,
+}
+
+impl DataRecord {
+    pub fn from_template(fields: Arc<[ResolvedField]>, values: Vec<FieldValue>) -> Self {
+        debug_assert_eq!(fields.len(), values.len());
+        Self { fields, values }
+    }
+
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+
+    pub fn fields(&self) -> &[ResolvedField] {
+        &self.fields
+    }
+
+    pub fn values(&self) -> &[FieldValue] {
+        &self.values
+    }
+
+    /// Each field's type, registry name and value, in template order.
+    pub fn iter(&self) -> impl Iterator<Item = (u16, &str, &FieldValue)> {
+        self.fields
+            .iter()
+            .zip(&self.values)
+            .map(|(field, value)| (field.r#type, &*field.name, value))
+    }
+}
 
 impl Serialize for DataRecord {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -426,8 +497,8 @@ impl Serialize for DataRecord {
     {
         use serde::ser::SerializeMap;
 
-        let mut map = serializer.serialize_map(Some(self.0.len()))?;
-        for (_, key, value) in &self.0 {
+        let mut map = serializer.serialize_map(Some(self.values.len()))?;
+        for (_, key, value) in self.iter() {
             map.serialize_entry(key, value)?;
         }
 

@@ -119,7 +119,7 @@ impl Encode for Record {
 
 impl Encode for DataRecord {
     fn encode<B: BufMut>(&self, buf: &mut B) {
-        for (field, _, value) in &self.0 {
+        for (field, _, value) in self.iter() {
             encode_field_value(value, field.field_length, buf);
         }
     }
