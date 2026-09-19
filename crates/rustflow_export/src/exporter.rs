@@ -1,4 +1,4 @@
-use std::net::UdpSocket;
+use std::net::{SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
@@ -23,6 +23,8 @@ const MAX_RECORDS_PER_SET: usize = 30;
 
 pub struct Exporter {
     socket: UdpSocket,
+    /// Resolved once at startup.
+    collector_addr: SocketAddr,
     args: ExportArgs,
     sequence_number: AtomicU32,
     last_template_send: Instant,
@@ -33,10 +35,16 @@ impl Exporter {
         let collector_addr = args.collector_addr()?;
         info!("Connecting to collector at {}", collector_addr);
 
-        let socket = UdpSocket::bind("0.0.0.0:0")?;
+        // The socket family has to match what the host resolved to.
+        let socket = UdpSocket::bind(if collector_addr.is_ipv6() {
+            "[::]:0"
+        } else {
+            "0.0.0.0:0"
+        })?;
 
         Ok(Self {
             socket,
+            collector_addr,
             args,
             sequence_number: AtomicU32::new(0),
             last_template_send: Instant::now() - Duration::from_secs(9999), // Force initial send
@@ -75,7 +83,7 @@ impl Exporter {
 
         let mut encoded = Vec::new();
         packet.encode(&mut encoded);
-        self.socket.send_to(&encoded, self.args.collector_addr()?)?;
+        self.socket.send_to(&encoded, self.collector_addr)?;
 
         self.last_template_send = Instant::now();
         debug!("Templates sent successfully");
@@ -108,7 +116,7 @@ impl Exporter {
 
         let mut encoded = Vec::new();
         packet.encode(&mut encoded);
-        self.socket.send_to(&encoded, self.args.collector_addr()?)?;
+        self.socket.send_to(&encoded, self.collector_addr)?;
 
         debug!("Options data sent successfully");
 
@@ -122,7 +130,6 @@ impl Exporter {
 
         info!("Exporting {} flows", flows.len());
 
-        let collector_addr = self.args.collector_addr()?;
         let mut total_exported = 0;
         let mut num_packets = 0;
 
@@ -151,7 +158,7 @@ impl Exporter {
 
             let mut encoded = Vec::new();
             packet.encode(&mut encoded);
-            self.socket.send_to(&encoded, collector_addr)?;
+            self.socket.send_to(&encoded, self.collector_addr)?;
 
             self.sequence_number.fetch_add(chunk_len, Ordering::SeqCst);
             total_exported += chunk_len;

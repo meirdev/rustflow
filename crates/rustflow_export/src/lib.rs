@@ -3,7 +3,7 @@ mod exporter;
 mod flow;
 mod ipfix;
 
-use std::net::SocketAddr;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -31,7 +31,7 @@ pub struct ExportArgs {
     #[arg(long, value_enum, default_value = "auto")]
     pub capture: Backend,
 
-    /// Collector host address
+    /// Collector host: an IP address or a hostname
     #[arg(short = 'H', long, default_value = "127.0.0.1")]
     pub collector_host: String,
 
@@ -66,9 +66,23 @@ pub struct ExportArgs {
 
 impl ExportArgs {
     pub fn collector_addr(&self) -> Result<SocketAddr> {
-        let addr = format!("{}:{}", self.collector_host, self.collector_port);
-        addr.parse()
-            .map_err(|e| anyhow::anyhow!("Invalid collector address: {}", e))
+        (self.collector_host.as_str(), self.collector_port)
+            .to_socket_addrs()
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Cannot resolve collector address {}:{}: {e}",
+                    self.collector_host,
+                    self.collector_port
+                )
+            })?
+            .next()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Collector address {}:{} resolved to nothing",
+                    self.collector_host,
+                    self.collector_port
+                )
+            })
     }
 }
 
@@ -93,14 +107,13 @@ pub fn run(args: ExportArgs) -> Result<()> {
         args.sampling_packet_interval
     );
 
-    // Initialize components
+    let mut exporter = Exporter::new(args.clone())?;
     let mut capture = capture::open(
         args.capture,
         &args.interface,
         args.promiscuous,
         args.sampling_packet_interval,
     )?;
-    let mut exporter = Exporter::new(args.clone())?;
     let mut flow_cache = FlowCache::new(args.active_timeout, args.inactive_timeout);
 
     // Send initial templates and options
