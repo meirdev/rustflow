@@ -67,23 +67,6 @@ impl IpfixParser {
         Ok((input, IpfixPacket { header, sets }))
     }
 
-    fn lookup_field_info(&self, field: &FieldSpecifier) -> (DataType, Arc<str>) {
-        self.ie_registry
-            .lookup(
-                field.information_element_identifier,
-                field.enterprise_number,
-            )
-            .map_or_else(
-                || {
-                    (
-                        DataType::OctetArray,
-                        Arc::from(field.information_element_identifier.to_string()),
-                    )
-                },
-                |ie| (ie.data_type, ie.name.clone()),
-            )
-    }
-
     fn parse_templated_records<'a>(
         &self,
         observation_domain_id: u32,
@@ -92,11 +75,12 @@ impl IpfixParser {
     ) -> IResult<&'a [u8], Vec<Record>> {
         let key = (observation_domain_id, template_id);
 
-        let (fields, wrap): (&[FieldSpecifier], fn(DataRecord) -> Record) =
+        type Wrap = fn(DataRecord) -> Record;
+        let (fields, wrap): (&Arc<[ResolvedField]>, Wrap) =
             if let Some(t) = self.templates.get(&key) {
-                (&t.fields, Record::Data)
+                (&t.resolved, Record::Data)
             } else if let Some(t) = self.options_templates.get(&key) {
-                (&t.fields, Record::OptionsData)
+                (&t.resolved, Record::OptionsData)
             } else {
                 return Ok((input, vec![]));
             };
@@ -182,10 +166,10 @@ impl IpfixParser {
                             IPFIX_TEMPLATE_SET_ID,
                         );
                     } else {
-                        self.templates.insert(
-                            (observation_domain_id, template.template_id),
-                            template.clone(),
-                        );
+                        let mut template = template.clone();
+                        template.resolve(&self.ie_registry);
+                        self.templates
+                            .insert((observation_domain_id, template.template_id), template);
                     }
                 }
 
@@ -204,10 +188,10 @@ impl IpfixParser {
                             IPFIX_OPTIONS_TEMPLATE_SET_ID,
                         );
                     } else {
-                        self.options_templates.insert(
-                            (observation_domain_id, template.template_id),
-                            template.clone(),
-                        );
+                        let mut template = template.clone();
+                        template.resolve(&self.ie_registry);
+                        self.options_templates
+                            .insert((observation_domain_id, template.template_id), template);
                     }
                 }
 
@@ -244,25 +228,28 @@ impl IpfixParser {
     fn parse_record_from_fields<'a>(
         &self,
         observation_domain_id: u32,
-        fields: &[FieldSpecifier],
+        fields: &Arc<[ResolvedField]>,
         input: &'a [u8],
     ) -> IResult<&'a [u8], DataRecord> {
         let mut values = Vec::with_capacity(fields.len());
         let mut remaining = input;
 
-        for field in fields {
-            // RFC 7011 section 3.4.2.1: scope fields are ordinary Information
-            // Elements, so they resolve through the registry like any other field.
-            let (data_type, name): (DataType, Arc<str>) = self.lookup_field_info(field);
-
-            let (input, field_length) = parse_field_length(field.field_length, remaining)?;
-            let (input, value) =
-                self.parse_field_value(observation_domain_id, data_type, field_length, input)?;
-            values.push((*field, name, value));
+        for field in fields.iter() {
+            let (input, field_length) = parse_field_length(field.spec.field_length, remaining)?;
+            let (input, value) = self.parse_field_value(
+                observation_domain_id,
+                field.data_type,
+                field_length,
+                input,
+            )?;
+            values.push(value);
             remaining = input;
         }
 
-        Ok((remaining, DataRecord(values)))
+        Ok((
+            remaining,
+            DataRecord::from_template(Arc::clone(fields), values),
+        ))
     }
 
     fn parse_field_value<'a>(
@@ -328,7 +315,13 @@ impl IpfixParser {
         let (data, semantic) = map(be_u8, Semantic::from).parse(data)?;
         let (data, field) = parse_field_specifier(data)?;
 
-        let (element_data_type, _) = self.lookup_field_info(&field);
+        let element_data_type = self
+            .ie_registry
+            .lookup(
+                field.information_element_identifier,
+                field.enterprise_number,
+            )
+            .map_or(DataType::OctetArray, |ie| ie.data_type);
         let mut content = Vec::new();
         let mut list_data = data;
 
@@ -572,6 +565,10 @@ pub struct TemplateRecord {
     pub template_id: u16,
     pub field_count: u16,
     pub fields: Vec<FieldSpecifier>,
+    /// `fields` with their registry entries, filled by [`resolve`](Self::resolve)
+    /// when the parser installs the template; empty until then.
+    #[serde(skip)]
+    pub resolved: Arc<[ResolvedField]>,
 }
 
 impl TemplateRecord {
@@ -581,8 +578,48 @@ impl TemplateRecord {
             template_id,
             field_count,
             fields,
+            resolved: Arc::from([]),
         }
     }
+
+    pub fn resolve(&mut self, registry: &IERegistry) {
+        self.resolved = resolve_fields(registry, &self.fields);
+    }
+}
+
+/// A template field with what the registry says about it, looked up once
+/// per template instead of once per record.
+#[derive(Debug, Clone)]
+pub struct ResolvedField {
+    pub spec: FieldSpecifier,
+    pub data_type: DataType,
+    pub name: Arc<str>,
+}
+
+/// RFC 7011 section 3.4.2.1: scope fields are ordinary Information
+/// Elements, so every field resolves through the registry the same way.
+fn resolve_fields(registry: &IERegistry, fields: &[FieldSpecifier]) -> Arc<[ResolvedField]> {
+    fields
+        .iter()
+        .map(|spec| {
+            let (data_type, name) = registry
+                .lookup(spec.information_element_identifier, spec.enterprise_number)
+                .map_or_else(
+                    || {
+                        (
+                            DataType::OctetArray,
+                            Arc::from(spec.information_element_identifier.to_string()),
+                        )
+                    },
+                    |ie| (ie.data_type, ie.name.clone()),
+                );
+            ResolvedField {
+                spec: *spec,
+                data_type,
+                name,
+            }
+        })
+        .collect()
 }
 
 /// Template ID and field count of a (Options) Template Record. A field count
@@ -612,6 +649,7 @@ fn parse_template_record(input: &[u8]) -> IResult<&[u8], TemplateRecord> {
             template_id,
             field_count,
             fields,
+            resolved: Arc::from([]),
         },
     ))
 }
@@ -622,6 +660,9 @@ pub struct OptionsTemplateRecord {
     pub field_count: u16,
     pub scope_field_count: u16,
     pub fields: Vec<FieldSpecifier>,
+    /// See [`TemplateRecord::resolved`].
+    #[serde(skip)]
+    pub resolved: Arc<[ResolvedField]>,
 }
 
 impl OptionsTemplateRecord {
@@ -632,7 +673,12 @@ impl OptionsTemplateRecord {
             field_count,
             scope_field_count,
             fields,
+            resolved: Arc::from([]),
         }
+    }
+
+    pub fn resolve(&mut self, registry: &IERegistry) {
+        self.resolved = resolve_fields(registry, &self.fields);
     }
 }
 
@@ -655,6 +701,7 @@ fn parse_options_template_record(input: &[u8]) -> IResult<&[u8], OptionsTemplate
             field_count,
             scope_field_count,
             fields,
+            resolved: Arc::from([]),
         },
     ))
 }
@@ -718,19 +765,58 @@ fn parse_field_specifier(input: &[u8]) -> IResult<&[u8], FieldSpecifier> {
     ))
 }
 
+/// One data record: the values, plus the template's field descriptions
+/// shared with every other record of that template.
 #[derive(Debug, Clone)]
-pub struct DataRecord(pub Vec<(FieldSpecifier, Arc<str>, FieldValue)>);
+pub struct DataRecord {
+    fields: Arc<[ResolvedField]>,
+    values: Vec<FieldValue>,
+}
 
 static EMPTY_NAME: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from(""));
 
 impl DataRecord {
+    /// A record with placeholder field specifiers, for building packets to
+    /// send; the encoder writes each value at its natural width.
     pub fn new(values: Vec<FieldValue>) -> Self {
-        Self(
-            values
-                .into_iter()
-                .map(|value| (FieldSpecifier::iana(0, 0), EMPTY_NAME.clone(), value))
-                .collect(),
-        )
+        let fields = values
+            .iter()
+            .map(|_| ResolvedField {
+                spec: FieldSpecifier::iana(0, 0),
+                data_type: DataType::OctetArray,
+                name: EMPTY_NAME.clone(),
+            })
+            .collect();
+        Self { fields, values }
+    }
+
+    pub fn from_template(fields: Arc<[ResolvedField]>, values: Vec<FieldValue>) -> Self {
+        debug_assert_eq!(fields.len(), values.len());
+        Self { fields, values }
+    }
+
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+
+    pub fn fields(&self) -> &[ResolvedField] {
+        &self.fields
+    }
+
+    pub fn values(&self) -> &[FieldValue] {
+        &self.values
+    }
+
+    /// Each field with its specifier, registry name and value, in template order.
+    pub fn iter(&self) -> impl Iterator<Item = (&FieldSpecifier, &str, &FieldValue)> {
+        self.fields
+            .iter()
+            .zip(&self.values)
+            .map(|(field, value)| (&field.spec, &*field.name, value))
     }
 }
 
@@ -741,8 +827,8 @@ impl Serialize for DataRecord {
     {
         use serde::ser::SerializeMap;
 
-        let mut map = serializer.serialize_map(Some(self.0.len()))?;
-        for (_, key, value) in &self.0 {
+        let mut map = serializer.serialize_map(Some(self.values.len()))?;
+        for (_, key, value) in self.iter() {
             map.serialize_entry(key, value)?;
         }
 
@@ -976,10 +1062,13 @@ mod tests {
         let Record::Data(record) = &packet.sets[1].records[0] else {
             panic!("expected data record");
         };
-        assert!(matches!(record.0[0].2, FieldValue::Unsigned32(0x010203)));
-        assert!(matches!(record.0[1].2, FieldValue::Unsigned64(256)));
-        assert!(matches!(record.0[2].2, FieldValue::Signed32(-1)));
-        assert!(matches!(record.0[3].2, FieldValue::Signed64(-2)));
+        assert!(matches!(
+            record.values()[0],
+            FieldValue::Unsigned32(0x010203)
+        ));
+        assert!(matches!(record.values()[1], FieldValue::Unsigned64(256)));
+        assert!(matches!(record.values()[2], FieldValue::Signed32(-1)));
+        assert!(matches!(record.values()[3], FieldValue::Signed64(-2)));
     }
 
     #[test]
@@ -1009,10 +1098,10 @@ mod tests {
         let Record::OptionsData(record) = &packet.sets[1].records[0] else {
             panic!("expected options data record");
         };
-        assert_eq!(&*record.0[0].1, "selectorId");
-        assert!(matches!(record.0[0].2, FieldValue::Unsigned16(7)));
-        assert_eq!(&*record.0[1].1, "samplingPacketInterval");
-        assert!(matches!(record.0[1].2, FieldValue::Unsigned32(1000)));
+        assert_eq!(&*record.fields()[0].name, "selectorId");
+        assert!(matches!(record.values()[0], FieldValue::Unsigned16(7)));
+        assert_eq!(&*record.fields()[1].name, "samplingPacketInterval");
+        assert!(matches!(record.values()[1], FieldValue::Unsigned32(1000)));
     }
 
     fn template(id: u16, fields: &[(u16, u16)]) -> Vec<u8> {
@@ -1056,7 +1145,7 @@ mod tests {
         let Record::Data(record) = &packet.sets[3].records[0] else {
             panic!("expected data record");
         };
-        assert!(matches!(record.0[0].2, FieldValue::Unsigned32(5)));
+        assert!(matches!(record.values()[0], FieldValue::Unsigned32(5)));
     }
 
     #[test]
@@ -1169,8 +1258,8 @@ mod tests {
         let Record::Data(record) = &packet.sets[1].records[0] else {
             panic!("expected data record");
         };
-        let FieldValue::BasicList(parsed) = &record.0[0].2 else {
-            panic!("expected basicList, got {:?}", record.0[0].2);
+        let FieldValue::BasicList(parsed) = &record.values()[0] else {
+            panic!("expected basicList, got {:?}", record.values()[0]);
         };
         assert_eq!(parsed.content.len(), 3);
         assert!(matches!(
