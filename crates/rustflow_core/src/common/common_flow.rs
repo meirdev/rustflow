@@ -581,12 +581,29 @@ impl IpfixContext<'_> {
             flow.sampling_rate = Some(rate);
         }
 
+        // RFC 7133 packet sections, applied after the loop so that the
+        // elements the record states explicitly win whatever the order.
+        let mut frame_section: Option<&[u8]> = None;
+        let mut ip_section: Option<&[u8]> = None;
+        let mut frame_size: Option<u64> = None;
+
         for (field, _, value) in record.iter() {
             let field_type = &field.information_element_identifier;
             if let Some(ie) = InformationElement::from_id(*field_type) {
                 match ie {
                     OctetDeltaCount => flow.bytes = ipfix_extract_u64(value),
                     PacketDeltaCount => flow.packets = ipfix_extract_u64(value),
+                    DataLinkFrameSize => frame_size = Some(ipfix_extract_u64(value)),
+                    DataLinkFrameSection => {
+                        if let IpfixFieldValue::OctetArray(bytes) = value {
+                            frame_section = Some(bytes);
+                        }
+                    }
+                    IpHeaderPacketSection => {
+                        if let IpfixFieldValue::OctetArray(bytes) = value {
+                            ip_section = Some(bytes);
+                        }
+                    }
                     ProtocolIdentifier => flow.proto = ipfix_extract_u8(value),
                     IpClassOfService => flow.ip_tos = ipfix_extract_u8(value),
                     TcpControlBits => flow.tcp_flags = ipfix_extract_u16(value),
@@ -693,9 +710,53 @@ impl IpfixContext<'_> {
             }
         }
 
+        if frame_section.is_some() || ip_section.is_some() {
+            apply_packet_section(&mut flow, frame_section, ip_section, frame_size);
+        }
+
         flow
     }
 }
+
+fn apply_packet_section(
+    flow: &mut CommonFlow,
+    frame_section: Option<&[u8]>,
+    ip_section: Option<&[u8]>,
+    frame_size: Option<u64>,
+) {
+    let (sliced, section_len) = match (frame_section, ip_section) {
+        (Some(bytes), _) => (SlicedPacket::from_ethernet(bytes).ok(), bytes.len()),
+        (None, Some(bytes)) => (SlicedPacket::from_ip(bytes).ok(), bytes.len()),
+        (None, None) => return,
+    };
+    if let Some(sliced) = &sliced {
+        let mut decoded = CommonFlow::new(flow.flow_type);
+        apply_packet_header(&mut decoded, sliced);
+        fill_missing(flow, &decoded);
+    }
+    if flow.bytes == 0 {
+        flow.bytes = frame_size.unwrap_or(section_len as u64);
+    }
+    if flow.packets == 0 {
+        flow.packets = 1;
+    }
+}
+
+macro_rules! fill_missing {
+    ($( $name:ident : $kind:ident $presence:ident ),* $(,)?) => {
+        /// Copies every optional field that `flow` lacks from `from`.
+        fn fill_missing(flow: &mut CommonFlow, from: &CommonFlow) {
+            $( fill_missing!(@field flow, from, $name, $presence); )*
+        }
+    };
+    (@field $flow:ident, $from:ident, $name:ident, optional) => {
+        if $flow.$name.is_none() {
+            $flow.$name = $from.$name;
+        }
+    };
+    (@field $flow:ident, $from:ident, $name:ident, required) => {};
+}
+for_each_flow_field!(fill_missing);
 
 fn ipfix_extract_u8(value: &IpfixFieldValue) -> Option<u8> {
     match value {
@@ -856,6 +917,14 @@ impl SFlowV5Context<'_> {
     }
 
     fn apply_sliced_packet(&self, flow: &mut CommonFlow, sliced: &SlicedPacket) {
+        apply_packet_header(flow, sliced);
+    }
+}
+
+/// Fills the link, network and transport fields of `flow` from a decoded
+/// packet header.
+pub fn apply_packet_header(flow: &mut CommonFlow, sliced: &SlicedPacket) {
+    {
         if let Some(LinkSlice::Ethernet2(eth)) = &sliced.link {
             let header = eth.to_header();
             flow.src_mac = Some(MacAddr6::from(header.source));
@@ -952,7 +1021,9 @@ impl SFlowV5Context<'_> {
             _ => {}
         }
     }
+}
 
+impl SFlowV5Context<'_> {
     fn apply_sampled_ipv4(&self, flow: &mut CommonFlow, ipv4: &SampledIpv4) {
         flow.src_addr = Some(IpAddr::V4(ipv4.src_ip));
         flow.dst_addr = Some(IpAddr::V4(ipv4.dst_ip));

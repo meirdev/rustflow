@@ -258,8 +258,9 @@ pub enum Record {
 pub struct TemplateRecord {
     pub id: u16,
     pub fields: Vec<TemplateField>,
-    /// `fields` with their registry entries, filled by [`resolve`](Self::resolve)
-    /// when the parser installs the template; empty until then.
+    /// `fields` with their registry entries, filled by
+    /// [`resolve`](Self::resolve) when the parser installs the template;
+    /// empty until then.
     #[serde(skip)]
     pub resolved: Arc<[ResolvedField]>,
 }

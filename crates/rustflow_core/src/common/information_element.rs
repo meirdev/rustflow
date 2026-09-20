@@ -21,6 +21,7 @@ pub enum InformationElement {
     DestinationIpv4Address = 12,
     DestinationIpv4PrefixLength = 13,
     EgressInterface = 14,
+    FlowDirection = 61,
     IpNextHopIpv4Address = 15,
     BgpSourceAsNumber = 16,
     BgpDestinationAsNumber = 17,
@@ -64,10 +65,13 @@ pub enum InformationElement {
     IcmpTypeIpv6 = 178,
     IcmpCodeIpv6 = 179,
     SamplingPacketInterval = 305,
+    DataLinkFrameSize = 312,
+    IpHeaderPacketSection = 313,
+    DataLinkFrameSection = 315,
 }
 
 /// Largest discriminant in [`InformationElement`].
-const MAX_IE_ID: u16 = 305;
+const MAX_IE_ID: u16 = 315;
 
 /// Identifier-indexed lookup table for [`InformationElement::from_id`].
 static IE_BY_ID: LazyLock<Box<[Option<InformationElement>]>> = LazyLock::new(|| {

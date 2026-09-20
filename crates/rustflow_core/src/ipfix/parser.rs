@@ -565,8 +565,9 @@ pub struct TemplateRecord {
     pub template_id: u16,
     pub field_count: u16,
     pub fields: Vec<FieldSpecifier>,
-    /// `fields` with their registry entries, filled by [`resolve`](Self::resolve)
-    /// when the parser installs the template; empty until then.
+    /// `fields` with their registry entries, filled by
+    /// [`resolve`](Self::resolve) when the parser installs the template;
+    /// empty until then.
     #[serde(skip)]
     pub resolved: Arc<[ResolvedField]>,
 }
@@ -811,7 +812,8 @@ impl DataRecord {
         &self.values
     }
 
-    /// Each field with its specifier, registry name and value, in template order.
+    /// Each field with its specifier, registry name and value, in template
+    /// order.
     pub fn iter(&self) -> impl Iterator<Item = (&FieldSpecifier, &str, &FieldValue)> {
         self.fields
             .iter()
