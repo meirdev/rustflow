@@ -22,7 +22,7 @@ use crate::common::parser::{
     ipv4_addr, ipv6_addr, macaddr6, string, timestamp_micros, timestamp_millis, timestamp_nanos,
     timestamp_secs, vector, verify_version,
 };
-use crate::common::serializer::serialize_as_hex;
+use crate::common::serializer::{serialize_as_hex, serialize_mac};
 use crate::common::timeout_map::TimeoutHashMap;
 
 pub const IPFIX_VERSION: u16 = 10;
@@ -853,7 +853,7 @@ pub enum FieldValue {
     Float32(f32),
     Float64(f64),
     Boolean(bool),
-    MacAddress(MacAddr6),
+    MacAddress(#[serde(serialize_with = "serialize_mac")] MacAddr6),
     #[serde(serialize_with = "serialize_as_hex")]
     OctetArray(Vec<u8>),
     String(String),

@@ -18,7 +18,7 @@ use crate::common::parser::{
     ipv4_addr, ipv6_addr, macaddr6, string, timestamp_micros, timestamp_millis, timestamp_nanos,
     timestamp_secs, vector, verify_version,
 };
-use crate::common::serializer::serialize_as_hex;
+use crate::common::serializer::{serialize_as_hex, serialize_mac};
 use crate::common::timeout_map::TimeoutHashMap;
 
 pub const NETFLOW_V9_VERSION: u16 = 9;
@@ -520,7 +520,7 @@ pub enum FieldValue {
     Signed64(i64),
     Float32(f32),
     Float64(f64),
-    MacAddress(MacAddr6),
+    MacAddress(#[serde(serialize_with = "serialize_mac")] MacAddr6),
     #[serde(serialize_with = "serialize_as_hex")]
     OctetArray(Vec<u8>),
     String(String),

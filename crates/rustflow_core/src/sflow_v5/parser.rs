@@ -11,6 +11,7 @@ use num_enum::{FromPrimitive, TryFromPrimitive};
 use serde::Serialize;
 
 use crate::common::parser::{ipv4_addr, ipv6_addr, macaddr6};
+use crate::common::serializer::serialize_mac;
 
 pub const SFLOW_V5_VERSION: u32 = 5;
 
@@ -36,7 +37,7 @@ pub enum DataValue {
     Null,
     Ipv4(Ipv4Addr),
     Ipv6(Ipv6Addr),
-    MacAddr(MacAddr6),
+    MacAddr(#[serde(serialize_with = "serialize_mac")] MacAddr6),
     U8(u8),
     U16(u16),
     U32(u32),
@@ -624,7 +625,9 @@ fn parse_sampled_header(input: &[u8]) -> IResult<&[u8], SampledHeader> {
 #[derive(Debug, Clone, Serialize)]
 pub struct SampledEthernet {
     pub length: u32,
+    #[serde(serialize_with = "serialize_mac")]
     pub src_mac: MacAddr6,
+    #[serde(serialize_with = "serialize_mac")]
     pub dst_mac: MacAddr6,
     pub r#type: u32,
 }
