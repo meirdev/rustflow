@@ -11,6 +11,7 @@ use nom::number::complete::{
     be_f32, be_f64, be_i8, be_i16, be_i32, be_i64, be_u8, be_u16, be_u32, be_u64,
 };
 use nom::{IResult, Parser, ToUsize};
+use num_enum::{FromPrimitive, IntoPrimitive};
 use serde::Serialize;
 
 use crate::common::ie_registry::{DataType, IERegistry};
@@ -86,25 +87,23 @@ impl NetflowV9Parser {
     ) -> IResult<&'a [u8], Vec<Record>> {
         match flow_set_id {
             NETFLOW_V9_TEMPLATE_FLOW_SET_ID => {
-                let (input, templates) = many0(parse_template_record).parse(input)?;
+                let (input, templates) =
+                    many0(|i| parse_template_record(&self.ie_registry, i)).parse(input)?;
 
                 for template in &templates {
-                    let mut template = template.clone();
-                    template.resolve(&self.ie_registry);
-                    self.templates.insert((source_id, template.id), template);
+                    self.templates
+                        .insert((source_id, template.id), template.clone());
                 }
 
                 Ok((input, templates.into_iter().map(Record::Template).collect()))
             }
             NETFLOW_V9_OPTIONS_TEMPLATE_FLOW_SET_ID => {
                 let (input, options_templates) =
-                    many0(parse_options_template_record).parse(input)?;
+                    many0(|i| parse_options_template_record(&self.ie_registry, i)).parse(input)?;
 
                 for template in &options_templates {
-                    let mut template = template.clone();
-                    template.resolve(&self.ie_registry);
                     self.options_templates
-                        .insert((source_id, template.id), template);
+                        .insert((source_id, template.id), template.clone());
                 }
 
                 Ok((
@@ -129,43 +128,36 @@ impl NetflowV9Parser {
         template_id: u16,
         input: &'a [u8],
     ) -> IResult<&'a [u8], Vec<Record>> {
-        // A record parser that consumes nothing makes `many0` fail and takes
-        // the whole packet with it, so templates without fields yield no
-        // records instead.
-        if let Some(template) = self.templates.get(&(source_id, template_id)) {
-            if template.resolved.is_empty() {
-                return Ok((input, vec![]));
-            }
-            let (input, records) =
-                many0(|i| parse_data_record(&template.resolved, i)).parse(input)?;
-            return Ok((input, records.into_iter().map(Record::Data).collect()));
+        type Wrap = fn(DataRecord) -> Record;
+
+        let key = (source_id, template_id);
+        let template = self
+            .templates
+            .get(&key)
+            .map(|t| (&t.resolved, Record::Data as Wrap));
+        let options_template = || {
+            self.options_templates
+                .get(&key)
+                .map(|t| (&t.resolved, Record::OptionsData as Wrap))
+        };
+
+        let Some((fields, wrap)) = template.or_else(options_template) else {
+            log::debug!("Unknown template for source_id: {source_id}, template_id: {template_id}");
+            return Ok((&input[input.len()..], vec![]));
+        };
+
+        if fields.is_empty() {
+            return Ok((input, vec![]));
         }
 
-        if let Some(template) = self.options_templates.get(&(source_id, template_id)) {
-            if template.resolved.is_empty() {
-                return Ok((input, vec![]));
-            }
-            let (input, records) =
-                many0(|i| parse_data_record(&template.resolved, i)).parse(input)?;
-            return Ok((
-                input,
-                records.into_iter().map(Record::OptionsData).collect(),
-            ));
-        }
+        let (input, records) = many0(|i| parse_data_record(fields, i)).parse(input)?;
 
-        log::warn!(
-            "Unknown template for source_id: {}, template_id: {}. Parsing raw data as fallback.",
-            source_id,
-            template_id
-        );
-
-        let (input, _) = take(input.len())(input)?;
-
-        Ok((input, vec![]))
+        Ok((input, records.into_iter().map(wrap).collect()))
     }
 }
 
-/// One record of a template whose fields were resolved when it was installed.
+/// One record of a template. `fields` is the template's resolved slice,
+/// passed as the `Arc` so the record can share it rather than copy it.
 fn parse_data_record<'a>(
     fields: &Arc<[ResolvedField]>,
     input: &'a [u8],
@@ -175,7 +167,7 @@ fn parse_data_record<'a>(
 
     for field in fields.iter() {
         let (input, value) =
-            parse_field_value(field.data_type, field.length.to_usize())(remaining)?;
+            parse_field_value(field.data_type, field.length.to_usize(), remaining)?;
         values.push(value);
         remaining = input;
     }
@@ -188,14 +180,7 @@ fn parse_data_record<'a>(
 
 impl Default for NetflowV9Parser {
     fn default() -> Self {
-        let ie_registry = IERegistry::default();
-        let timeout = std::time::Duration::from_mins(10);
-
-        Self {
-            ie_registry,
-            templates: TimeoutHashMap::new(timeout),
-            options_templates: TimeoutHashMap::new(timeout),
-        }
+        Self::new(IERegistry::default(), Duration::from_mins(10))
     }
 }
 
@@ -258,34 +243,30 @@ pub enum Record {
 pub struct TemplateRecord {
     pub id: u16,
     pub fields: Vec<TemplateField>,
-    /// `fields` with their registry entries, filled by
-    /// [`resolve`](Self::resolve) when the parser installs the template;
-    /// empty until then.
+    /// `fields` with their registry entries, looked up once here rather
+    /// than once per record.
     #[serde(skip)]
     pub resolved: Arc<[ResolvedField]>,
 }
 
-impl TemplateRecord {
-    pub fn resolve(&mut self, registry: &IERegistry) {
-        self.resolved = self
-            .fields
-            .iter()
-            .map(|field| ResolvedField::from_registry(registry, field.r#type, field.length))
-            .collect();
-    }
-}
-
-fn parse_template_record(input: &[u8]) -> IResult<&[u8], TemplateRecord> {
+fn parse_template_record<'a>(
+    registry: &IERegistry,
+    input: &'a [u8],
+) -> IResult<&'a [u8], TemplateRecord> {
     let (input, id) = be_u16(input)?;
     let (input, field_count) = be_u16(input)?;
     let (input, fields) = count(parse_template_field, field_count.to_usize()).parse(input)?;
+    let resolved = fields
+        .iter()
+        .map(|field| ResolvedField::from_registry(registry, field.r#type, field.length))
+        .collect();
 
     Ok((
         input,
         TemplateRecord {
             id,
             fields,
-            resolved: Arc::from([]),
+            resolved,
         },
     ))
 }
@@ -336,29 +317,16 @@ pub struct OptionsTemplateRecord {
     pub scope_fields: Vec<ScopeField>,
     pub option_fields: Vec<OptionField>,
     /// Scope fields then option fields, see [`TemplateRecord::resolved`].
+    /// Scope fields are unsigned and named after their scope type; option
+    /// fields resolve through the registry.
     #[serde(skip)]
     pub resolved: Arc<[ResolvedField]>,
 }
 
-impl OptionsTemplateRecord {
-    /// Scope fields are unsigned and named after their scope type; option
-    /// fields resolve through the registry.
-    pub fn resolve(&mut self, registry: &IERegistry) {
-        let scope = self.scope_fields.iter().map(|field| ResolvedField {
-            r#type: field.r#type.clone().into(),
-            length: field.length,
-            data_type: DataType::Unsigned,
-            name: Arc::from(field.r#type.to_string()),
-        });
-        let options = self
-            .option_fields
-            .iter()
-            .map(|field| ResolvedField::from_registry(registry, field.r#type, field.length));
-        self.resolved = scope.chain(options).collect();
-    }
-}
-
-fn parse_options_template_record(input: &[u8]) -> IResult<&[u8], OptionsTemplateRecord> {
+fn parse_options_template_record<'a>(
+    registry: &IERegistry,
+    input: &'a [u8],
+) -> IResult<&'a [u8], OptionsTemplateRecord> {
     let (input, id) = be_u16(input)?;
     let (input, option_scope_length) = be_u16(input)?;
     let (input, option_length) = be_u16(input)?;
@@ -369,6 +337,16 @@ fn parse_options_template_record(input: &[u8]) -> IResult<&[u8], OptionsTemplate
     .parse(input)?;
     let (input, option_fields) =
         map_parser(take(option_length.to_usize()), many0(parse_option_field)).parse(input)?;
+    let scope = scope_fields.iter().map(|field| ResolvedField {
+        r#type: field.r#type.clone().into(),
+        length: field.length,
+        data_type: DataType::Unsigned,
+        name: Arc::from(field.r#type.to_string()),
+    });
+    let options = option_fields
+        .iter()
+        .map(|field| ResolvedField::from_registry(registry, field.r#type, field.length));
+    let resolved = scope.chain(options).collect();
 
     Ok((
         input,
@@ -378,12 +356,12 @@ fn parse_options_template_record(input: &[u8]) -> IResult<&[u8], OptionsTemplate
             option_length,
             scope_fields,
             option_fields,
-            resolved: Arc::from([]),
+            resolved,
         },
     ))
 }
 
-#[derive(Debug, Clone, Serialize, strum_macros::Display)]
+#[derive(Debug, Clone, Serialize, strum_macros::Display, FromPrimitive, IntoPrimitive)]
 #[repr(u16)]
 pub enum ScopeFieldType {
     System = 1,
@@ -391,33 +369,8 @@ pub enum ScopeFieldType {
     LineCard = 3,
     Cache = 4,
     Template = 5,
+    #[num_enum(catch_all)]
     Unknown(u16),
-}
-
-impl From<u16> for ScopeFieldType {
-    fn from(value: u16) -> Self {
-        match value {
-            1 => ScopeFieldType::System,
-            2 => ScopeFieldType::Interface,
-            3 => ScopeFieldType::LineCard,
-            4 => ScopeFieldType::Cache,
-            5 => ScopeFieldType::Template,
-            other => ScopeFieldType::Unknown(other),
-        }
-    }
-}
-
-impl From<ScopeFieldType> for u16 {
-    fn from(value: ScopeFieldType) -> Self {
-        match value {
-            ScopeFieldType::System => 1,
-            ScopeFieldType::Interface => 2,
-            ScopeFieldType::LineCard => 3,
-            ScopeFieldType::Cache => 4,
-            ScopeFieldType::Template => 5,
-            ScopeFieldType::Unknown(v) => v,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -427,16 +380,10 @@ pub struct ScopeField {
 }
 
 fn parse_scope_field(input: &[u8]) -> IResult<&[u8], ScopeField> {
-    let (input, r#type) = be_u16(input)?;
+    let (input, r#type) = map(be_u16, ScopeFieldType::from).parse(input)?;
     let (input, length) = be_u16(input)?;
 
-    Ok((
-        input,
-        ScopeField {
-            r#type: ScopeFieldType::from(r#type),
-            length,
-        },
-    ))
+    Ok((input, ScopeField { r#type, length }))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -536,8 +483,9 @@ pub enum FieldValue {
 fn parse_field_value(
     data_type: DataType,
     length: usize,
-) -> impl Fn(&[u8]) -> IResult<&[u8], FieldValue> {
-    move |input: &[u8]| match (data_type, length) {
+    input: &[u8],
+) -> IResult<&[u8], FieldValue> {
+    match (data_type, length) {
         (_, 0) => Ok((input, FieldValue::Null)),
         (DataType::Unsigned, 1) => map(be_u8, FieldValue::Unsigned8).parse(input),
         (DataType::Unsigned, 2) => map(be_u16, FieldValue::Unsigned16).parse(input),
