@@ -1,6 +1,6 @@
 use std::net::IpAddr;
 
-use etherparse::{EtherType, InternetSlice, LinkSlice, SlicedPacket, TransportSlice, VlanHeader};
+use etherparse::{EtherType, LaxNetSlice, LaxSlicedPacket, LinkSlice, TransportSlice, VlanHeader};
 use macaddr::MacAddr6;
 
 use crate::common::common_flow::CommonFlow;
@@ -26,7 +26,7 @@ fn apply(flow: &mut CommonFlow, peeled: &Peeled) {
 /// The Ethernet header and VLAN tags. A VLAN already on the flow is kept:
 /// an sFlow extended switch record knows the VLAN better than the frame's
 /// tag does, whichever order the records arrive in.
-fn apply_link(flow: &mut CommonFlow, sliced: &SlicedPacket) {
+fn apply_link(flow: &mut CommonFlow, sliced: &LaxSlicedPacket) {
     if let Some(LinkSlice::Ethernet2(eth)) = &sliced.link {
         let header = eth.to_header();
         flow.src_mac = Some(MacAddr6::from(header.source));
@@ -45,9 +45,9 @@ fn apply_link(flow: &mut CommonFlow, sliced: &SlicedPacket) {
     }
 }
 
-fn apply_net_transport(flow: &mut CommonFlow, sliced: &SlicedPacket) {
+fn apply_net_transport(flow: &mut CommonFlow, sliced: &LaxSlicedPacket) {
     match &sliced.net {
-        Some(InternetSlice::Ipv4(ipv4_slice)) => {
+        Some(LaxNetSlice::Ipv4(ipv4_slice)) => {
             let ipv4_header = ipv4_slice.header();
             flow.src_addr = Some(IpAddr::V4(ipv4_header.source_addr()));
             flow.dst_addr = Some(IpAddr::V4(ipv4_header.destination_addr()));
@@ -60,7 +60,7 @@ fn apply_net_transport(flow: &mut CommonFlow, sliced: &SlicedPacket) {
                 flow.etype = Some(EtherType::IPV4.0);
             }
         }
-        Some(InternetSlice::Ipv6(ipv6_slice)) => {
+        Some(LaxNetSlice::Ipv6(ipv6_slice)) => {
             let ipv6_header = ipv6_slice.header();
             flow.src_addr = Some(IpAddr::V6(ipv6_header.source_addr()));
             flow.dst_addr = Some(IpAddr::V6(ipv6_header.destination_addr()));
@@ -71,7 +71,7 @@ fn apply_net_transport(flow: &mut CommonFlow, sliced: &SlicedPacket) {
                 flow.etype = Some(EtherType::IPV6.0);
             }
         }
-        Some(InternetSlice::Arp(_)) | None => {}
+        Some(LaxNetSlice::Arp(_)) | None => {}
     }
 
     match &sliced.transport {

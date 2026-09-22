@@ -1,18 +1,24 @@
 //! Packet slicing with support for MPLS, VXLAN, Geneve, GRE, and ERSPAN
 //! encapsulation, plus UDP payload extraction from captured packets.
+//!
+//! Slicing is lax: a sampled header is a clip of the first bytes of a
+//! packet, so the IP length field claims more bytes than are present. The
+//! headers that fit are decoded and the rest is ignored. Callers that need
+//! a whole packet, like [`parse_udp_packet`], check for truncation
+//! themselves.
 
 use std::net::IpAddr;
 
-use etherparse::{EtherType, InternetSlice, IpNumber, SlicedPacket, TransportSlice};
+use etherparse::{EtherType, IpNumber, LaxNetSlice, LaxSlicedPacket, TransportSlice};
 
 /// The deepest packet successfully parsed within the tunnel depth limit.
 pub struct Peeled<'a> {
     /// The enclosing packet retained for its link-layer metadata when
     /// `packet` has no link header. `None` if `packet` has its own link
     /// header or no enclosing link layer was available.
-    pub link: Option<SlicedPacket<'a>>,
+    pub link: Option<LaxSlicedPacket<'a>>,
     /// The last successfully parsed packet, which may still be encapsulated.
-    pub packet: SlicedPacket<'a>,
+    pub packet: LaxSlicedPacket<'a>,
 }
 
 /// Maximum number of decapsulation steps; an MPLS label stack is one step.
@@ -25,28 +31,28 @@ const MAX_TUNNEL_DEPTH: u8 = 4;
 /// or malformed encapsulation, or when the tunnel depth limit is reached.
 /// Returns `None` if the initial Ethernet frame cannot be parsed.
 pub fn peel_ethernet(frame: &[u8]) -> Option<Peeled<'_>> {
-    SlicedPacket::from_ethernet(frame).ok().map(peel)
+    LaxSlicedPacket::from_ethernet(frame).ok().map(peel)
 }
 
 /// Like [`peel_ethernet`], but starts at an IPv4 or IPv6 header.
 pub fn peel_ip(packet: &[u8]) -> Option<Peeled<'_>> {
-    SlicedPacket::from_ip(packet).ok().map(peel)
+    LaxSlicedPacket::from_ip(packet).ok().map(peel)
 }
 
 /// Peels an already sliced packet.
-pub fn peel(sliced: SlicedPacket<'_>) -> Peeled<'_> {
+pub fn peel(sliced: LaxSlicedPacket<'_>) -> Peeled<'_> {
     let mut link = None;
     let mut packet = sliced;
     for _ in 0..MAX_TUNNEL_DEPTH {
         match encapsulated(&packet) {
-            Some(Inner::Ethernet(frame)) => match SlicedPacket::from_ethernet(frame) {
+            Some(Inner::Ethernet(frame)) => match LaxSlicedPacket::from_ethernet(frame) {
                 Ok(inner) => {
                     link = None;
                     packet = inner;
                 }
                 Err(_) => break,
             },
-            Some(Inner::Ip(bytes)) => match SlicedPacket::from_ip(bytes) {
+            Some(Inner::Ip(bytes)) => match LaxSlicedPacket::from_ip(bytes) {
                 Ok(inner) => {
                     if link.is_none() && packet.link.is_some() {
                         link = Some(packet);
@@ -77,24 +83,21 @@ const ERSPAN_III: EtherType = EtherType(0x22eb);
 const UDP_PORT_VXLAN: u16 = 4789;
 const UDP_PORT_GENEVE: u16 = 6081;
 
-fn encapsulated<'a>(sliced: &SlicedPacket<'a>) -> Option<Inner<'a>> {
+fn encapsulated<'a>(sliced: &LaxSlicedPacket<'a>) -> Option<Inner<'a>> {
     // Check after any link-layer extensions, such as VLAN tags, because
     // etherparse leaves the MPLS label stack in the Ethernet payload.
-    let ether_payload = match sliced.link_exts.last() {
-        Some(ext) => ext.ether_payload(),
-        None => sliced.link.as_ref().and_then(|link| link.ether_payload()),
-    };
-    if let Some(payload) = ether_payload
+    if let Some(payload) = sliced.ether_payload()
         && matches!(payload.ether_type, MPLS_UNICAST | MPLS_MULTICAST)
     {
         return mpls_inner(payload.payload);
     }
 
-    let ip_payload = match &sliced.net {
-        Some(InternetSlice::Ipv4(ipv4)) => ipv4.payload(),
-        Some(InternetSlice::Ipv6(ipv6)) => ipv6.payload(),
-        _ => return None,
-    };
+    let ip_payload = sliced.ip_payload()?;
+    // A fragment carries a slice of some payload, not a header, whatever
+    // its bytes happen to look like.
+    if ip_payload.fragmented {
+        return None;
+    }
     if ip_payload.ip_number == IpNumber::GRE {
         return gre_inner(ip_payload.payload);
     }
@@ -111,8 +114,9 @@ fn encapsulated<'a>(sliced: &SlicedPacket<'a>) -> Option<Inner<'a>> {
 /// Skips the MPLS label stack and guesses the payload type from its first
 /// nibble: 4 or 6 means IP, 0 means a four-byte pseudowire control word
 /// followed by Ethernet, and any other value means Ethernet directly.
-/// This is a heuristic: Ethernet destination addresses can have the same
-/// leading nibbles, so some frames are ambiguous without pseudowire metadata.
+/// Ethernet destination addresses can have the same leading nibbles, so
+/// each reading is tried in order of likelihood and the first one that
+/// slices to a network layer wins.
 fn mpls_inner(mut bytes: &[u8]) -> Option<Inner<'_>> {
     loop {
         let (label, rest) = bytes.split_first_chunk::<4>()?;
@@ -121,10 +125,35 @@ fn mpls_inner(mut bytes: &[u8]) -> Option<Inner<'_>> {
             break;
         }
     }
-    match bytes.first()? >> 4 {
-        4 | 6 => Some(Inner::Ip(bytes)),
-        0 => Some(Inner::Ethernet(bytes.get(4..)?)),
-        _ => Some(Inner::Ethernet(bytes)),
+    let readings: [Option<Inner<'_>>; 2] = match bytes.first()? >> 4 {
+        4 | 6 => [Some(Inner::Ip(bytes)), Some(Inner::Ethernet(bytes))],
+        0 => [
+            bytes.get(4..).map(Inner::Ethernet),
+            Some(Inner::Ethernet(bytes)),
+        ],
+        _ => [Some(Inner::Ethernet(bytes)), None],
+    };
+    readings.into_iter().flatten().find(plausible)
+}
+
+/// Whether bytes read as `inner` decode to something with a network layer,
+/// or to another MPLS stack. An IPv4 reading must also carry a correct
+/// header checksum, which a MAC address mistaken for a header will not.
+fn plausible(inner: &Inner<'_>) -> bool {
+    match inner {
+        Inner::Ip(bytes) => LaxSlicedPacket::from_ip(bytes).is_ok_and(|s| match &s.net {
+            Some(LaxNetSlice::Ipv4(ipv4)) => {
+                let header = ipv4.header();
+                header.to_header().calc_header_checksum() == header.header_checksum()
+            }
+            Some(LaxNetSlice::Ipv6(_)) => true,
+            _ => false,
+        }),
+        Inner::Ethernet(frame) => LaxSlicedPacket::from_ethernet(frame).is_ok_and(|s| {
+            s.net.is_some()
+                || s.ether_payload()
+                    .is_some_and(|p| matches!(p.ether_type, MPLS_UNICAST | MPLS_MULTICAST))
+        }),
     }
 }
 
@@ -191,39 +220,75 @@ fn geneve_inner(payload: &[u8]) -> Option<Inner<'_>> {
     }
 }
 
+/// The link layer a capture file declares for its frames.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LinkType {
+    Ethernet,
+    /// Linux cooked capture, `tcpdump -i any` on older kernels.
+    LinuxSll,
+    /// Linux cooked capture v2.
+    LinuxSll2,
+    /// Frames start at the IP header.
+    RawIp,
+}
+
+impl LinkType {
+    /// From a pcap link-layer header type number.
+    fn from_pcap(link_type: u32) -> Option<Self> {
+        match link_type {
+            1 => Some(Self::Ethernet),
+            113 => Some(Self::LinuxSll),
+            276 => Some(Self::LinuxSll2),
+            12 | 14 | 101 | 228 | 229 => Some(Self::RawIp),
+            _ => None,
+        }
+    }
+}
+
+const LINUX_SLL_HEADER_LEN: usize = 16;
+const LINUX_SLL2_HEADER_LEN: usize = 20;
+
 /// Extracts the source IP address and a copy of the UDP payload after
 /// peeling supported tunnels, for replaying captured exporter traffic.
 ///
-/// Guesses the capture format by trying Ethernet, Linux cooked capture v1,
-/// a 20-byte Linux cooked capture v2 header followed by IP, and raw IP, in
-/// that order. The first candidate with a network layer after peeling is
-/// selected; returns `None` if that packet is not IP/UDP or no candidate fits.
-pub fn parse_udp_packet(packet: &[u8]) -> Option<(IpAddr, Vec<u8>)> {
-    // Check for a network layer after peeling so MPLS frames can qualify.
-    fn with_net(sliced: Result<SlicedPacket<'_>, impl std::error::Error>) -> Option<Peeled<'_>> {
-        let peeled = peel(sliced.ok()?);
-        peeled.packet.net.is_some().then_some(peeled)
+/// `link_type` is the capture's pcap link-layer header type number
+/// (Ethernet, Linux cooked v1 and v2, and raw IP are read; frames of any
+/// other type are `None`). Only a whole datagram is returned: a truncated
+/// or fragmented one is `None`.
+pub fn parse_udp_packet(link_type: u32, frame: &[u8]) -> Option<(IpAddr, Vec<u8>)> {
+    let sliced = match LinkType::from_pcap(link_type)? {
+        LinkType::Ethernet => LaxSlicedPacket::from_ethernet(frame).ok()?,
+        // Both cooked headers carry the protocol as an ethertype: v1 in
+        // its last two bytes, v2 in its first two.
+        LinkType::LinuxSll => {
+            let (header, payload) = frame.split_at_checked(LINUX_SLL_HEADER_LEN)?;
+            let ether_type = EtherType(u16::from_be_bytes([header[14], header[15]]));
+            LaxSlicedPacket::from_ether_type(ether_type, payload)
+        }
+        LinkType::LinuxSll2 => {
+            let (header, payload) = frame.split_at_checked(LINUX_SLL2_HEADER_LEN)?;
+            let ether_type = EtherType(u16::from_be_bytes([header[0], header[1]]));
+            LaxSlicedPacket::from_ether_type(ether_type, payload)
+        }
+        LinkType::RawIp => LaxSlicedPacket::from_ip(frame).ok()?,
+    };
+    let Peeled { packet, .. } = peel(sliced);
+
+    let ip_payload = packet.ip_payload()?;
+    if ip_payload.incomplete || ip_payload.fragmented {
+        return None;
     }
-    let Peeled { packet, .. } = with_net(SlicedPacket::from_ethernet(packet))
-        .or_else(|| with_net(SlicedPacket::from_linux_sll(packet)))
-        // SLL2 fallback: skip its fixed header without validating its fields.
-        .or_else(|| {
-            packet
-                .get(20..)
-                .and_then(|p| with_net(SlicedPacket::from_ip(p)))
-        })
-        .or_else(|| with_net(SlicedPacket::from_ip(packet)))?;
-
-    let source_ip = match packet.net {
-        Some(InternetSlice::Ipv4(ipv4)) => IpAddr::V4(ipv4.header().source_addr()),
-        Some(InternetSlice::Ipv6(ipv6)) => IpAddr::V6(ipv6.header().source_addr()),
+    let source_ip = match &packet.net {
+        Some(LaxNetSlice::Ipv4(ipv4)) => IpAddr::V4(ipv4.header().source_addr()),
+        Some(LaxNetSlice::Ipv6(ipv6)) => IpAddr::V6(ipv6.header().source_addr()),
         _ => return None,
     };
-
-    let payload = match packet.transport {
-        Some(TransportSlice::Udp(udp)) => udp.payload().to_vec(),
-        _ => return None,
+    let Some(TransportSlice::Udp(udp)) = &packet.transport else {
+        return None;
     };
-
-    Some((source_ip, payload))
+    let payload = udp.payload();
+    if payload.len() + 8 != usize::from(udp.length()) {
+        return None;
+    }
+    Some((source_ip, payload.to_vec()))
 }
