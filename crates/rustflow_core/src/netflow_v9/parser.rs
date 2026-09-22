@@ -130,39 +130,35 @@ impl NetflowV9Parser {
         template_id: u16,
         input: &'a [u8],
     ) -> IResult<&'a [u8], Vec<Record>> {
-        // A record parser that consumes nothing makes `many0` fail and takes
-        // the whole packet with it, so templates without fields yield no
-        // records instead.
-        if let Some(template) = self.templates.get(&(source_id, template_id)) {
-            if template.resolved.is_empty() {
-                return Ok((input, vec![]));
-            }
-            let (input, records) =
-                many0(|i| parse_data_record(&template.resolved, i)).parse(input)?;
-            return Ok((input, records.into_iter().map(Record::Data).collect()));
+        type Wrap = fn(DataRecord) -> Record;
+
+        let key = (source_id, template_id);
+        let template = self
+            .templates
+            .get(&key)
+            .map(|t| (&t.resolved, Record::Data as Wrap));
+        let options_template = || {
+            self.options_templates
+                .get(&key)
+                .map(|t| (&t.resolved, Record::OptionsData as Wrap))
+        };
+
+        let Some((fields, wrap)) = template.or_else(options_template) else {
+            log::warn!(
+                "Unknown template for source_id: {}, template_id: {}. Parsing raw data as fallback.",
+                source_id,
+                template_id
+            );
+            return Ok((&input[input.len()..], vec![]));
+        };
+
+        if fields.is_empty() {
+            return Ok((input, vec![]));
         }
 
-        if let Some(template) = self.options_templates.get(&(source_id, template_id)) {
-            if template.resolved.is_empty() {
-                return Ok((input, vec![]));
-            }
-            let (input, records) =
-                many0(|i| parse_data_record(&template.resolved, i)).parse(input)?;
-            return Ok((
-                input,
-                records.into_iter().map(Record::OptionsData).collect(),
-            ));
-        }
+        let (input, records) = many0(|i| parse_data_record(fields, i)).parse(input)?;
 
-        log::warn!(
-            "Unknown template for source_id: {}, template_id: {}. Parsing raw data as fallback.",
-            source_id,
-            template_id
-        );
-
-        let (input, _) = take(input.len())(input)?;
-
-        Ok((input, vec![]))
+        Ok((input, records.into_iter().map(wrap).collect()))
     }
 }
 
