@@ -87,25 +87,23 @@ impl NetflowV9Parser {
     ) -> IResult<&'a [u8], Vec<Record>> {
         match flow_set_id {
             NETFLOW_V9_TEMPLATE_FLOW_SET_ID => {
-                let (input, templates) = many0(parse_template_record).parse(input)?;
+                let (input, templates) =
+                    many0(|i| parse_template_record(&self.ie_registry, i)).parse(input)?;
 
                 for template in &templates {
-                    let mut template = template.clone();
-                    template.resolve(&self.ie_registry);
-                    self.templates.insert((source_id, template.id), template);
+                    self.templates
+                        .insert((source_id, template.id), template.clone());
                 }
 
                 Ok((input, templates.into_iter().map(Record::Template).collect()))
             }
             NETFLOW_V9_OPTIONS_TEMPLATE_FLOW_SET_ID => {
                 let (input, options_templates) =
-                    many0(parse_options_template_record).parse(input)?;
+                    many0(|i| parse_options_template_record(&self.ie_registry, i)).parse(input)?;
 
                 for template in &options_templates {
-                    let mut template = template.clone();
-                    template.resolve(&self.ie_registry);
                     self.options_templates
-                        .insert((source_id, template.id), template);
+                        .insert((source_id, template.id), template.clone());
                 }
 
                 Ok((
@@ -144,11 +142,7 @@ impl NetflowV9Parser {
         };
 
         let Some((fields, wrap)) = template.or_else(options_template) else {
-            log::warn!(
-                "Unknown template for source_id: {}, template_id: {}. Parsing raw data as fallback.",
-                source_id,
-                template_id
-            );
+            log::debug!("Unknown template for source_id: {source_id}, template_id: {template_id}");
             return Ok((&input[input.len()..], vec![]));
         };
 
@@ -162,7 +156,8 @@ impl NetflowV9Parser {
     }
 }
 
-/// One record of a template whose fields were resolved when it was installed.
+/// One record of a template. `fields` is the template's resolved slice,
+/// passed as the `Arc` so the record can share it rather than copy it.
 fn parse_data_record<'a>(
     fields: &Arc<[ResolvedField]>,
     input: &'a [u8],
@@ -248,34 +243,30 @@ pub enum Record {
 pub struct TemplateRecord {
     pub id: u16,
     pub fields: Vec<TemplateField>,
-    /// `fields` with their registry entries, filled by
-    /// [`resolve`](Self::resolve) when the parser installs the template;
-    /// empty until then.
+    /// `fields` with their registry entries, looked up once here rather
+    /// than once per record.
     #[serde(skip)]
     pub resolved: Arc<[ResolvedField]>,
 }
 
-impl TemplateRecord {
-    pub fn resolve(&mut self, registry: &IERegistry) {
-        self.resolved = self
-            .fields
-            .iter()
-            .map(|field| ResolvedField::from_registry(registry, field.r#type, field.length))
-            .collect();
-    }
-}
-
-fn parse_template_record(input: &[u8]) -> IResult<&[u8], TemplateRecord> {
+fn parse_template_record<'a>(
+    registry: &IERegistry,
+    input: &'a [u8],
+) -> IResult<&'a [u8], TemplateRecord> {
     let (input, id) = be_u16(input)?;
     let (input, field_count) = be_u16(input)?;
     let (input, fields) = count(parse_template_field, field_count.to_usize()).parse(input)?;
+    let resolved = fields
+        .iter()
+        .map(|field| ResolvedField::from_registry(registry, field.r#type, field.length))
+        .collect();
 
     Ok((
         input,
         TemplateRecord {
             id,
             fields,
-            resolved: Arc::from([]),
+            resolved,
         },
     ))
 }
@@ -326,29 +317,16 @@ pub struct OptionsTemplateRecord {
     pub scope_fields: Vec<ScopeField>,
     pub option_fields: Vec<OptionField>,
     /// Scope fields then option fields, see [`TemplateRecord::resolved`].
+    /// Scope fields are unsigned and named after their scope type; option
+    /// fields resolve through the registry.
     #[serde(skip)]
     pub resolved: Arc<[ResolvedField]>,
 }
 
-impl OptionsTemplateRecord {
-    /// Scope fields are unsigned and named after their scope type; option
-    /// fields resolve through the registry.
-    pub fn resolve(&mut self, registry: &IERegistry) {
-        let scope = self.scope_fields.iter().map(|field| ResolvedField {
-            r#type: field.r#type.clone().into(),
-            length: field.length,
-            data_type: DataType::Unsigned,
-            name: Arc::from(field.r#type.to_string()),
-        });
-        let options = self
-            .option_fields
-            .iter()
-            .map(|field| ResolvedField::from_registry(registry, field.r#type, field.length));
-        self.resolved = scope.chain(options).collect();
-    }
-}
-
-fn parse_options_template_record(input: &[u8]) -> IResult<&[u8], OptionsTemplateRecord> {
+fn parse_options_template_record<'a>(
+    registry: &IERegistry,
+    input: &'a [u8],
+) -> IResult<&'a [u8], OptionsTemplateRecord> {
     let (input, id) = be_u16(input)?;
     let (input, option_scope_length) = be_u16(input)?;
     let (input, option_length) = be_u16(input)?;
@@ -359,6 +337,16 @@ fn parse_options_template_record(input: &[u8]) -> IResult<&[u8], OptionsTemplate
     .parse(input)?;
     let (input, option_fields) =
         map_parser(take(option_length.to_usize()), many0(parse_option_field)).parse(input)?;
+    let scope = scope_fields.iter().map(|field| ResolvedField {
+        r#type: field.r#type.clone().into(),
+        length: field.length,
+        data_type: DataType::Unsigned,
+        name: Arc::from(field.r#type.to_string()),
+    });
+    let options = option_fields
+        .iter()
+        .map(|field| ResolvedField::from_registry(registry, field.r#type, field.length));
+    let resolved = scope.chain(options).collect();
 
     Ok((
         input,
@@ -368,7 +356,7 @@ fn parse_options_template_record(input: &[u8]) -> IResult<&[u8], OptionsTemplate
             option_length,
             scope_fields,
             option_fields,
-            resolved: Arc::from([]),
+            resolved,
         },
     ))
 }
