@@ -11,6 +11,7 @@ use nom::number::complete::{
     be_f32, be_f64, be_i8, be_i16, be_i32, be_i64, be_u8, be_u16, be_u32, be_u64,
 };
 use nom::{IResult, Parser, ToUsize};
+use num_enum::{FromPrimitive, IntoPrimitive};
 use serde::Serialize;
 
 use crate::common::ie_registry::{DataType, IERegistry};
@@ -383,7 +384,7 @@ fn parse_options_template_record(input: &[u8]) -> IResult<&[u8], OptionsTemplate
     ))
 }
 
-#[derive(Debug, Clone, Serialize, strum_macros::Display)]
+#[derive(Debug, Clone, Serialize, strum_macros::Display, FromPrimitive, IntoPrimitive)]
 #[repr(u16)]
 pub enum ScopeFieldType {
     System = 1,
@@ -391,33 +392,8 @@ pub enum ScopeFieldType {
     LineCard = 3,
     Cache = 4,
     Template = 5,
+    #[num_enum(catch_all)]
     Unknown(u16),
-}
-
-impl From<u16> for ScopeFieldType {
-    fn from(value: u16) -> Self {
-        match value {
-            1 => ScopeFieldType::System,
-            2 => ScopeFieldType::Interface,
-            3 => ScopeFieldType::LineCard,
-            4 => ScopeFieldType::Cache,
-            5 => ScopeFieldType::Template,
-            other => ScopeFieldType::Unknown(other),
-        }
-    }
-}
-
-impl From<ScopeFieldType> for u16 {
-    fn from(value: ScopeFieldType) -> Self {
-        match value {
-            ScopeFieldType::System => 1,
-            ScopeFieldType::Interface => 2,
-            ScopeFieldType::LineCard => 3,
-            ScopeFieldType::Cache => 4,
-            ScopeFieldType::Template => 5,
-            ScopeFieldType::Unknown(v) => v,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -427,16 +403,10 @@ pub struct ScopeField {
 }
 
 fn parse_scope_field(input: &[u8]) -> IResult<&[u8], ScopeField> {
-    let (input, r#type) = be_u16(input)?;
+    let (input, r#type) = map(be_u16, ScopeFieldType::from).parse(input)?;
     let (input, length) = be_u16(input)?;
 
-    Ok((
-        input,
-        ScopeField {
-            r#type: ScopeFieldType::from(r#type),
-            length,
-        },
-    ))
+    Ok((input, ScopeField { r#type, length }))
 }
 
 #[derive(Debug, Clone, Serialize)]
