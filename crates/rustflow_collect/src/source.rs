@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 use pcap_file::pcap::PcapReader;
-use rustflow_core::common::utils::parse_udp_packet;
+use rustflow_core::common::packet::parse_udp_packet;
 
 use crate::SHUTDOWN;
 

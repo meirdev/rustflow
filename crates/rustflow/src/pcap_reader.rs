@@ -6,7 +6,7 @@ use std::time::Duration;
 use pcap_file::pcap::PcapReader;
 use rustflow_core::common::common_flow::CommonFlow;
 use rustflow_core::common::ie_registry::IERegistry;
-use rustflow_core::common::utils::parse_udp_packet;
+use rustflow_core::common::packet::parse_udp_packet;
 
 use crate::processor::{NetflowProcessor, SflowProcessor};
 
