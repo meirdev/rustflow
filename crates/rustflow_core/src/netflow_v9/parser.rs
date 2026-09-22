@@ -176,7 +176,7 @@ fn parse_data_record<'a>(
 
     for field in fields.iter() {
         let (input, value) =
-            parse_field_value(field.data_type, field.length.to_usize())(remaining)?;
+            parse_field_value(field.data_type, field.length.to_usize(), remaining)?;
         values.push(value);
         remaining = input;
     }
@@ -189,14 +189,7 @@ fn parse_data_record<'a>(
 
 impl Default for NetflowV9Parser {
     fn default() -> Self {
-        let ie_registry = IERegistry::default();
-        let timeout = std::time::Duration::from_mins(10);
-
-        Self {
-            ie_registry,
-            templates: TimeoutHashMap::new(timeout),
-            options_templates: TimeoutHashMap::new(timeout),
-        }
+        Self::new(IERegistry::default(), Duration::from_mins(10))
     }
 }
 
@@ -506,8 +499,9 @@ pub enum FieldValue {
 fn parse_field_value(
     data_type: DataType,
     length: usize,
-) -> impl Fn(&[u8]) -> IResult<&[u8], FieldValue> {
-    move |input: &[u8]| match (data_type, length) {
+    input: &[u8],
+) -> IResult<&[u8], FieldValue> {
+    match (data_type, length) {
         (_, 0) => Ok((input, FieldValue::Null)),
         (DataType::Unsigned, 1) => map(be_u8, FieldValue::Unsigned8).parse(input),
         (DataType::Unsigned, 2) => map(be_u16, FieldValue::Unsigned16).parse(input),
