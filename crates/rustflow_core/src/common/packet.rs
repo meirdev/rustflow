@@ -41,9 +41,24 @@ pub fn peel_ip(packet: &[u8]) -> Option<Peeled<'_>> {
 
 /// Peels an already sliced packet.
 pub fn peel(sliced: LaxSlicedPacket<'_>) -> Peeled<'_> {
+    peel_with(sliced, false)
+}
+
+/// Like [`peel`], but only descends through an enclosing packet that is
+/// whole: a truncated outer IP packet or a UDP header whose length does
+/// not match its bytes stops the peeling there, so the caller's checks
+/// see the bad layer rather than something inside it.
+fn peel_strict(sliced: LaxSlicedPacket<'_>) -> Peeled<'_> {
+    peel_with(sliced, true)
+}
+
+fn peel_with(sliced: LaxSlicedPacket<'_>, require_complete: bool) -> Peeled<'_> {
     let mut link = None;
     let mut packet = sliced;
     for _ in 0..MAX_TUNNEL_DEPTH {
+        if require_complete && !is_complete(&packet) {
+            break;
+        }
         match encapsulated(&packet) {
             Some(Inner::Ethernet(frame)) => match LaxSlicedPacket::from_ethernet(frame) {
                 Ok(inner) => {
@@ -65,6 +80,23 @@ pub fn peel(sliced: LaxSlicedPacket<'_>) -> Peeled<'_> {
         }
     }
     Peeled { link, packet }
+}
+
+/// Whether the IP packet is all there: not truncated, not a fragment, and
+/// with a UDP length that matches the bytes when the transport is UDP. A
+/// packet with no IP layer yet, such as a frame carrying an MPLS stack,
+/// has nothing to check.
+fn is_complete(sliced: &LaxSlicedPacket<'_>) -> bool {
+    let Some(ip_payload) = sliced.ip_payload() else {
+        return true;
+    };
+    if ip_payload.incomplete || ip_payload.fragmented {
+        return false;
+    }
+    match &sliced.transport {
+        Some(TransportSlice::Udp(udp)) => udp.payload().len() + 8 == usize::from(udp.length()),
+        _ => true,
+    }
 }
 
 /// What a recognised encapsulation carries.
@@ -162,8 +194,9 @@ fn gre_inner(bytes: &[u8]) -> Option<Inner<'_>> {
     let (fixed, _) = bytes.split_first_chunk::<4>()?;
     let flags = u16::from_be_bytes([fixed[0], fixed[1]]);
     let protocol = EtherType(u16::from_be_bytes([fixed[2], fixed[3]]));
-    if flags & 0x0007 != 0 {
-        // Only GRE version 0 is supported.
+    // Only GRE version 0 is supported, and RFC 2784 section 2.3 requires
+    // rejecting the RFC 1701 routing fields that the R flag announces.
+    if flags & 0x0007 != 0 || flags & 0x4000 != 0 {
         return None;
     }
     let mut offset = 4;
@@ -272,10 +305,8 @@ pub fn parse_udp_packet(link_type: u32, frame: &[u8]) -> Option<(IpAddr, Vec<u8>
         }
         LinkType::RawIp => LaxSlicedPacket::from_ip(frame).ok()?,
     };
-    let Peeled { packet, .. } = peel(sliced);
-
-    let ip_payload = packet.ip_payload()?;
-    if ip_payload.incomplete || ip_payload.fragmented {
+    let Peeled { packet, .. } = peel_strict(sliced);
+    if !is_complete(&packet) {
         return None;
     }
     let source_ip = match &packet.net {
@@ -286,9 +317,5 @@ pub fn parse_udp_packet(link_type: u32, frame: &[u8]) -> Option<(IpAddr, Vec<u8>
     let Some(TransportSlice::Udp(udp)) = &packet.transport else {
         return None;
     };
-    let payload = udp.payload();
-    if payload.len() + 8 != usize::from(udp.length()) {
-        return None;
-    }
-    Some((source_ip, payload.to_vec()))
+    Some((source_ip, udp.payload().to_vec()))
 }
