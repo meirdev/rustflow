@@ -6,7 +6,7 @@ use std::time::Duration;
 use pcap_file::pcap::PcapReader;
 use rustflow_core::common::common_flow::CommonFlow;
 use rustflow_core::common::ie_registry::IERegistry;
-use rustflow_core::common::utils::parse_udp_packet;
+use rustflow_core::common::packet::parse_udp_packet;
 
 use crate::processor::{NetflowProcessor, SflowProcessor};
 
@@ -56,11 +56,12 @@ impl NetflowPcapReader {
 
         // Read next packet from pcap
         loop {
+            let link_type = self.reader.header().datalink.into();
             match self.reader.next_packet() {
                 Some(Ok(packet)) => {
                     let time_received_ns = Some(pcap_ts_to_nanos(packet.timestamp));
 
-                    if let Some((src, payload)) = parse_udp_packet(&packet.data) {
+                    if let Some((src, payload)) = parse_udp_packet(link_type, &packet.data) {
                         self.pending_flows.extend(self.processor.process(
                             src,
                             &payload,
@@ -124,11 +125,12 @@ impl SflowPcapReader {
 
         // Read next packet from pcap
         loop {
+            let link_type = self.reader.header().datalink.into();
             match self.reader.next_packet() {
                 Some(Ok(packet)) => {
                     let time_received_ns = Some(pcap_ts_to_nanos(packet.timestamp));
 
-                    if let Some((_src, payload)) = parse_udp_packet(&packet.data) {
+                    if let Some((_src, payload)) = parse_udp_packet(link_type, &packet.data) {
                         self.pending_flows
                             .extend(self.processor.process(&payload, time_received_ns));
 

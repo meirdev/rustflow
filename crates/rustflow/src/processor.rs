@@ -2,9 +2,10 @@ use std::net::IpAddr;
 use std::time::Duration;
 
 use rustc_hash::FxHashMap;
-use rustflow_core::common::common_flow::{
-    CommonFlow, IpfixContext, NetFlowV5Context, NetFlowV9Context, SFlowV5Context,
-    SamplingRateCache, extract_ipfix_sampling_rate, extract_v9_sampling_rate,
+use rustflow_core::common::common_flow::{CommonFlow, SamplingRateCache};
+use rustflow_core::common::convert::{
+    IpfixContext, NetFlowV5Context, NetFlowV9Context, SFlowV5Context, extract_ipfix_sampling_rate,
+    extract_v9_sampling_rate,
 };
 use rustflow_core::common::ie_registry::IERegistry;
 use rustflow_core::ipfix::parser::{

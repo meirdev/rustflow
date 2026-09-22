@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 use pcap_file::pcap::PcapReader;
-use rustflow_core::common::utils::parse_udp_packet;
+use rustflow_core::common::packet::parse_udp_packet;
 
 use crate::SHUTDOWN;
 
@@ -103,9 +103,10 @@ impl Source for Pcap {
             if SHUTDOWN.load(Ordering::Relaxed) {
                 return Datagram::End;
             }
+            let link_type = self.reader.header().datalink.into();
             match self.reader.next_packet() {
                 Some(Ok(packet)) => {
-                    let Some((src, payload)) = parse_udp_packet(&packet.data) else {
+                    let Some((src, payload)) = parse_udp_packet(link_type, &packet.data) else {
                         continue;
                     };
                     let time_received_ns = Some(packet.timestamp.as_nanos() as i64);
