@@ -16,17 +16,7 @@ pub struct NetFlowV5Parser;
 
 impl NetFlowV5Parser {
     pub fn parse<'a>(&mut self, input: &'a [u8]) -> IResult<&'a [u8], NetFlowV5Packet> {
-        let (input, header) = parse_header(input)?;
-        let (input, flow_records) =
-            many(header.count.to_usize(), parse_flow_record).parse(input)?;
-
-        Ok((
-            input,
-            NetFlowV5Packet {
-                header,
-                flow_records,
-            },
-        ))
+        parse_netflow_v5_packet(input)
     }
 }
 
@@ -41,6 +31,19 @@ pub struct NetFlowV5Packet {
     #[serde(flatten)]
     pub header: Header,
     pub flow_records: Vec<FlowRecord>,
+}
+
+fn parse_netflow_v5_packet(input: &[u8]) -> IResult<&[u8], NetFlowV5Packet> {
+    let (input, header) = parse_header(input)?;
+    let (input, flow_records) = many(header.count.to_usize(), parse_flow_record).parse(input)?;
+
+    Ok((
+        input,
+        NetFlowV5Packet {
+            header,
+            flow_records,
+        },
+    ))
 }
 
 #[derive(Debug, Clone, Serialize)]
