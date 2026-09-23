@@ -2,11 +2,12 @@ use std::fmt::{self, Display, Formatter};
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::ops::RangeInclusive;
 use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use macaddr::MacAddr6;
 use nom::bytes::complete::take;
-use nom::combinator::{cond, fail, map, map_parser, verify};
+use nom::combinator::{cond, fail, map, verify};
 use nom::multi::{count, many0};
 use nom::number::complete::{
     be_f32, be_f64, be_i8, be_i16, be_i24, be_i32, be_i64, be_u8, be_u16, be_u24, be_u32, be_u64,
@@ -50,7 +51,7 @@ pub struct IpfixParser {
 }
 
 impl IpfixParser {
-    pub fn new(ie_registry: IERegistry, timeout: std::time::Duration) -> Self {
+    pub fn new(ie_registry: IERegistry, timeout: Duration) -> Self {
         Self {
             ie_registry,
             templates: TimeoutHashMap::new(timeout),
@@ -61,92 +62,24 @@ impl IpfixParser {
     pub fn parse<'a>(&mut self, input: &'a [u8]) -> IResult<&'a [u8], IpfixPacket> {
         let (input, header) = parse_header(input)?;
         let data_length = (header.length as usize).saturating_sub(IPFIX_HEADER_SIZE);
-        let (input, sets) = map_parser(take(data_length), |data| {
-            many0(|i| self.parse_set(header.observation_domain_id, i)).parse(data)
+        let (input, data) = take(data_length)(input)?;
+        let (_, sets) = many0(|input| {
+            let (input, set) = parse_raw_set(input)?;
+            // Install templates before decoding later Sets in this message.
+            let (_, records) =
+                self.parse_records(header.observation_domain_id, set.id, set.body)?;
+            Ok((
+                input,
+                Set {
+                    id: set.id,
+                    length: set.length,
+                    records,
+                },
+            ))
         })
-        .parse(input)?;
+        .parse(data)?;
 
         Ok((input, IpfixPacket { header, sets }))
-    }
-
-    fn parse_templated_records<'a>(
-        &self,
-        observation_domain_id: u32,
-        template_id: u16,
-        input: &'a [u8],
-    ) -> IResult<&'a [u8], Vec<Record>> {
-        let key = (observation_domain_id, template_id);
-
-        type Wrap = fn(DataRecord) -> Record;
-        let (fields, wrap): (&Arc<[ResolvedField]>, Wrap) =
-            if let Some(t) = self.templates.get(&key) {
-                (t, Record::Data)
-            } else if let Some(t) = self.options_templates.get(&key) {
-                (t, Record::OptionsData)
-            } else {
-                return Ok((input, vec![]));
-            };
-
-        // A record parser that consumes nothing makes `many0` fail, which
-        // would discard every remaining set in the message.
-        if fields.is_empty() {
-            return Ok((input, vec![]));
-        }
-
-        let (input, records) =
-            many0(|i| self.parse_record_from_fields(observation_domain_id, fields, i))
-                .parse(input)?;
-        Ok((input, records.into_iter().map(wrap).collect()))
-    }
-
-    /// Apply a Template Withdrawal (RFC 7011 section 8.1): a template record
-    /// with a field count of zero withdraws that template, and one carrying
-    /// the set ID itself (2 or 3) withdraws every template of that kind for
-    /// the observation domain.
-    fn withdraw_templates<V>(
-        map: &mut TimeoutHashMap<TemplateKey, V>,
-        observation_domain_id: u32,
-        template_id: u16,
-        all_id: u16,
-    ) {
-        if template_id == all_id {
-            log::debug!(
-                "Withdrawing all templates for observation_domain_id: {}",
-                observation_domain_id
-            );
-            map.retain(|(odid, _), _| *odid != observation_domain_id);
-        } else {
-            log::debug!(
-                "Withdrawing template for observation_domain_id: {}, template_id: {}",
-                observation_domain_id,
-                template_id
-            );
-            map.remove(&(observation_domain_id, template_id));
-        }
-    }
-
-    fn parse_set<'a>(
-        &mut self,
-        observation_domain_id: u32,
-        input: &'a [u8],
-    ) -> IResult<&'a [u8], Set> {
-        let (input, id) = be_u16(input)?;
-        let (input, length) = be_u16(input)?;
-
-        let value_length = (length as usize).saturating_sub(SET_HEADER_SIZE);
-        let (input, records) = map_parser(take(value_length), |data| {
-            self.parse_records(observation_domain_id, id, data)
-        })
-        .parse(input)?;
-
-        Ok((
-            input,
-            Set {
-                id,
-                length,
-                records,
-            },
-        ))
     }
 
     fn parse_records<'a>(
@@ -157,106 +90,181 @@ impl IpfixParser {
     ) -> IResult<&'a [u8], Vec<Record>> {
         match set_id {
             IPFIX_TEMPLATE_SET_ID => {
-                let (input, templates) = many0(parse_template_record).parse(input)?;
-
-                for template in &templates {
-                    if template.fields.is_empty() {
-                        Self::withdraw_templates(
+                let (input, records) = many0(parse_template_record).parse(input)?;
+                let records = records
+                    .into_iter()
+                    .map(|template| {
+                        install_template(
                             &mut self.templates,
-                            observation_domain_id,
-                            template.template_id,
+                            &self.ie_registry,
+                            (observation_domain_id, template.template_id),
+                            &template.fields,
                             IPFIX_TEMPLATE_SET_ID,
                         );
-                    } else {
-                        self.templates.insert(
-                            (observation_domain_id, template.template_id),
-                            resolve_fields(&self.ie_registry, &template.fields),
-                        );
-                    }
-                }
-
-                Ok((input, templates.into_iter().map(Record::Template).collect()))
+                        Record::Template(template)
+                    })
+                    .collect();
+                Ok((input, records))
             }
             IPFIX_OPTIONS_TEMPLATE_SET_ID => {
-                let (input, options_templates) =
-                    many0(parse_options_template_record).parse(input)?;
-
-                for template in &options_templates {
-                    if template.fields.is_empty() {
-                        Self::withdraw_templates(
+                let (input, records) = many0(parse_options_template_record).parse(input)?;
+                let records = records
+                    .into_iter()
+                    .map(|template| {
+                        install_template(
                             &mut self.options_templates,
-                            observation_domain_id,
-                            template.template_id,
+                            &self.ie_registry,
+                            (observation_domain_id, template.template_id),
+                            &template.fields,
                             IPFIX_OPTIONS_TEMPLATE_SET_ID,
                         );
-                    } else {
-                        self.options_templates.insert(
-                            (observation_domain_id, template.template_id),
-                            resolve_fields(&self.ie_registry, &template.fields),
-                        );
-                    }
-                }
-
-                Ok((
-                    input,
-                    options_templates
-                        .into_iter()
-                        .map(Record::OptionsTemplate)
-                        .collect(),
-                ))
+                        Record::OptionsTemplate(template)
+                    })
+                    .collect();
+                Ok((input, records))
             }
             template_id if IPFIX_VALID_TEMPLATE_ID.contains(&template_id) => {
-                let (remaining, records) =
-                    self.parse_templated_records(observation_domain_id, template_id, input)?;
-
-                if records.is_empty() && !input.is_empty() {
-                    log::warn!(
-                        "Unknown template for observation_domain_id: {}, template_id: {}",
-                        observation_domain_id,
-                        template_id
+                let decoder = self.decoder(observation_domain_id);
+                let key = (observation_domain_id, template_id);
+                if let Some(fields) = self.templates.get(&key) {
+                    map(
+                        |input| decoder.data_records(fields, input),
+                        |records| records.into_iter().map(Record::Data).collect(),
+                    )
+                    .parse(input)
+                } else if let Some(fields) = self.options_templates.get(&key) {
+                    map(
+                        |input| decoder.data_records(fields, input),
+                        |records| records.into_iter().map(Record::OptionsData).collect(),
+                    )
+                    .parse(input)
+                } else {
+                    log::debug!(
+                        "Unknown template for observation_domain_id: {observation_domain_id}, template_id: {template_id}"
                     );
+                    Ok((&input[input.len()..], vec![]))
                 }
-
-                Ok((remaining, records))
             }
             _ => {
-                log::warn!("Invalid set ID: {}. Skipping.", set_id);
-
+                log::warn!("Invalid set ID: {set_id}. Skipping.");
                 Ok((input, vec![]))
             }
         }
     }
 
-    fn parse_record_from_fields<'a>(
+    fn decoder(&self, observation_domain_id: u32) -> Decoder<'_> {
+        Decoder {
+            registry: &self.ie_registry,
+            templates: &self.templates,
+            options_templates: &self.options_templates,
+            observation_domain_id,
+        }
+    }
+}
+
+impl Default for IpfixParser {
+    fn default() -> Self {
+        Self::new(IERegistry::default(), Duration::from_mins(10))
+    }
+}
+
+/// Installs a template, or applies a Template Withdrawal (RFC 7011 section
+/// 8.1): a record without fields withdraws that template, and one carrying
+/// the set ID itself (`all_id`) withdraws every template of that kind for
+/// the observation domain.
+fn install_template(
+    cache: &mut TemplateCache,
+    registry: &IERegistry,
+    (observation_domain_id, template_id): TemplateKey,
+    fields: &[FieldSpecifier],
+    all_id: u16,
+) {
+    if !fields.is_empty() {
+        cache.insert(
+            (observation_domain_id, template_id),
+            resolve_fields(registry, fields),
+        );
+    } else if template_id == all_id {
+        log::debug!("Withdrawing all templates for observation_domain_id: {observation_domain_id}");
+        cache.retain(|(odid, _), _| *odid != observation_domain_id);
+    } else {
+        log::debug!(
+            "Withdrawing template for observation_domain_id: {observation_domain_id}, template_id: {template_id}"
+        );
+        cache.remove(&(observation_domain_id, template_id));
+    }
+}
+
+struct RawSet<'a> {
+    id: u16,
+    length: u16,
+    body: &'a [u8],
+}
+
+fn parse_raw_set(input: &[u8]) -> IResult<&[u8], RawSet<'_>> {
+    let (input, id) = be_u16(input)?;
+    let (input, length) = be_u16(input)?;
+    let (input, body) = take(length.to_usize().saturating_sub(SET_HEADER_SIZE))(input)?;
+
+    Ok((input, RawSet { id, length, body }))
+}
+
+/// Decodes data records of one observation domain. Read-only: it needs the
+/// registry for basicList elements and the domain's templates for the
+/// sub-template lists.
+struct Decoder<'p> {
+    registry: &'p IERegistry,
+    templates: &'p TemplateCache,
+    options_templates: &'p TemplateCache,
+    observation_domain_id: u32,
+}
+
+impl<'p> Decoder<'p> {
+    fn template(&self, template_id: u16) -> Option<&'p Arc<[ResolvedField]>> {
+        let key = (self.observation_domain_id, template_id);
+        self.templates
+            .get(&key)
+            .or_else(|| self.options_templates.get(&key))
+    }
+
+    fn data_records<'a>(
         &self,
-        observation_domain_id: u32,
         fields: &Arc<[ResolvedField]>,
         input: &'a [u8],
-    ) -> IResult<&'a [u8], DataRecord> {
+    ) -> IResult<&'a [u8], Vec<DataRecord>> {
+        // A record parser that consumes nothing makes `many0` fail, which
+        // would discard every remaining set in the message.
+        if fields.is_empty() {
+            return Ok((input, vec![]));
+        }
+
+        many0(map(
+            |input| self.data_record(fields, input),
+            |values| DataRecord::from_template(Arc::clone(fields), values),
+        ))
+        .parse(input)
+    }
+
+    fn data_record<'a>(
+        &self,
+        fields: &[ResolvedField],
+        input: &'a [u8],
+    ) -> IResult<&'a [u8], Vec<FieldValue>> {
         let mut values = Vec::with_capacity(fields.len());
         let mut remaining = input;
 
-        for field in fields.iter() {
-            let (input, field_length) = parse_field_length(field.spec.field_length, remaining)?;
-            let (input, value) = self.parse_field_value(
-                observation_domain_id,
-                field.data_type,
-                field_length,
-                input,
-            )?;
+        for field in fields {
+            let (input, length) = parse_field_length(field.spec.field_length, remaining)?;
+            let (input, value) = self.field_value(field.data_type, length, input)?;
             values.push(value);
             remaining = input;
         }
 
-        Ok((
-            remaining,
-            DataRecord::from_template(Arc::clone(fields), values),
-        ))
+        Ok((remaining, values))
     }
 
-    fn parse_field_value<'a>(
+    fn field_value<'a>(
         &self,
-        observation_domain_id: u32,
         data_type: DataType,
         length: usize,
         input: &'a [u8],
@@ -296,34 +304,21 @@ impl IpfixParser {
             (DataType::DateTimeNanoseconds, 8) => {
                 map(timestamp_nanos, FieldValue::DateTimeNanoseconds).parse(input)
             }
-            (DataType::BasicList, len) => self.parse_basic_list(observation_domain_id, len, input),
-            (DataType::SubTemplateList, len) => {
-                self.parse_sub_template_list(observation_domain_id, len, input)
-            }
-            (DataType::SubTemplateMultiList, len) => {
-                self.parse_sub_template_multi_list(observation_domain_id, len, input)
-            }
+            (DataType::BasicList, len) => self.basic_list(len, input),
+            (DataType::SubTemplateList, len) => self.sub_template_list(len, input),
+            (DataType::SubTemplateMultiList, len) => self.sub_template_multi_list(len, input),
             _ => map(vector(length), FieldValue::OctetArray).parse(input),
         }
     }
 
-    fn parse_basic_list<'a>(
-        &self,
-        observation_domain_id: u32,
-        length: usize,
-        input: &'a [u8],
-    ) -> IResult<&'a [u8], FieldValue> {
+    /// RFC 6313 section 4.5.1: a semantic, one field specifier, and that
+    /// field repeated.
+    fn basic_list<'a>(&self, length: usize, input: &'a [u8]) -> IResult<&'a [u8], FieldValue> {
         let (remaining, data) = take(length)(input)?;
         let (data, semantic) = map(be_u8, Semantic::from).parse(data)?;
         let (data, field) = parse_field_specifier(data)?;
 
-        let element_data_type = self
-            .ie_registry
-            .lookup(
-                field.information_element_identifier,
-                field.enterprise_number,
-            )
-            .map_or(DataType::OctetArray, |ie| ie.data_type);
+        let data_type = resolve_field(self.registry, &field).data_type;
         let mut content = Vec::new();
         let mut list_data = data;
 
@@ -333,12 +328,7 @@ impl IpfixParser {
                 break;
             }
 
-            let (next_data, value) = self.parse_field_value(
-                observation_domain_id,
-                element_data_type,
-                actual_length,
-                next_data,
-            )?;
+            let (next_data, value) = self.field_value(data_type, actual_length, next_data)?;
             content.push(value);
             list_data = next_data;
         }
@@ -353,48 +343,31 @@ impl IpfixParser {
         ))
     }
 
-    fn parse_sub_template_list<'a>(
+    /// RFC 6313 section 4.5.2: a semantic, a template ID, and records of it.
+    fn sub_template_list<'a>(
         &self,
-        observation_domain_id: u32,
         length: usize,
         input: &'a [u8],
     ) -> IResult<&'a [u8], FieldValue> {
         let (remaining, data) = take(length)(input)?;
         let (data, semantic) = map(be_u8, Semantic::from).parse(data)?;
         let (data, template_id) = be_u16(data)?;
-
-        let (_, records) =
-            self.parse_templated_records(observation_domain_id, template_id, data)?;
-
-        if records.is_empty() && !data.is_empty() {
-            log::warn!(
-                "SubTemplateList references unknown template_id: {} for observation_domain_id: {}",
-                template_id,
-                observation_domain_id
-            );
-        }
-
-        let data_records: Vec<DataRecord> = records
-            .into_iter()
-            .filter_map(|r| match r {
-                Record::Data(dr) | Record::OptionsData(dr) => Some(dr),
-                _ => None,
-            })
-            .collect();
+        let (_, data) = self.listed_records(template_id, data)?;
 
         Ok((
             remaining,
             FieldValue::SubTemplateList(SubTemplateList {
                 semantic,
                 template_id,
-                data: data_records,
+                data,
             }),
         ))
     }
 
-    fn parse_sub_template_multi_list<'a>(
+    /// RFC 6313 section 4.5.3: a semantic, then entries that each carry
+    /// their own template ID and length.
+    fn sub_template_multi_list<'a>(
         &self,
-        observation_domain_id: u32,
         length: usize,
         input: &'a [u8],
     ) -> IResult<&'a [u8], FieldValue> {
@@ -415,29 +388,11 @@ impl IpfixParser {
             }
 
             let (next_data, item_data) = take(content_length)(next_data)?;
-            let (_, records) =
-                self.parse_templated_records(observation_domain_id, template_id, item_data)?;
-
-            if records.is_empty() && !item_data.is_empty() {
-                log::warn!(
-                    "SubTemplateMultiList item references unknown template_id: {} for observation_domain_id: {}",
-                    template_id,
-                    observation_domain_id
-                );
-            }
-
-            let data_records: Vec<DataRecord> = records
-                .into_iter()
-                .filter_map(|r| match r {
-                    Record::Data(dr) | Record::OptionsData(dr) => Some(dr),
-                    _ => None,
-                })
-                .collect();
-
+            let (_, data) = self.listed_records(template_id, item_data)?;
             items.push(SubTemplateMultiItem {
                 template_id,
                 length: item_length,
-                data: data_records,
+                data,
             });
             list_data = next_data;
         }
@@ -450,18 +405,24 @@ impl IpfixParser {
             }),
         ))
     }
-}
 
-impl Default for IpfixParser {
-    fn default() -> Self {
-        let ie_registry = IERegistry::default();
-        let timeout = std::time::Duration::from_mins(10);
-
-        Self {
-            ie_registry,
-            templates: TimeoutHashMap::new(timeout),
-            options_templates: TimeoutHashMap::new(timeout),
-        }
+    /// The records a list entry carries, decoded with a data or options
+    /// template of this domain; none when the template is unknown.
+    fn listed_records<'a>(
+        &self,
+        template_id: u16,
+        data: &'a [u8],
+    ) -> IResult<&'a [u8], Vec<DataRecord>> {
+        let Some(fields) = self.template(template_id) else {
+            if !data.is_empty() {
+                log::warn!(
+                    "Sub-template list references unknown template_id: {template_id} for observation_domain_id: {}",
+                    self.observation_domain_id
+                );
+            }
+            return Ok((data, vec![]));
+        };
+        self.data_records(fields, data)
     }
 }
 
@@ -587,25 +548,29 @@ pub type ResolvedField = data_record::ResolvedField<FieldSpecifier>;
 fn resolve_fields(registry: &IERegistry, fields: &[FieldSpecifier]) -> Arc<[ResolvedField]> {
     fields
         .iter()
-        .map(|spec| {
-            let (data_type, name) = registry
-                .lookup(spec.information_element_identifier, spec.enterprise_number)
-                .map_or_else(
-                    || {
-                        (
-                            DataType::OctetArray,
-                            Arc::from(spec.information_element_identifier.to_string()),
-                        )
-                    },
-                    |ie| (ie.data_type, ie.name.clone()),
-                );
-            ResolvedField {
-                spec: *spec,
-                data_type,
-                name,
-            }
-        })
+        .map(|spec| resolve_field(registry, spec))
         .collect()
+}
+
+/// A field's registry entry; an unknown element is an octet array named
+/// after its ID.
+fn resolve_field(registry: &IERegistry, spec: &FieldSpecifier) -> ResolvedField {
+    let (data_type, name) = registry
+        .lookup(spec.information_element_identifier, spec.enterprise_number)
+        .map_or_else(
+            || {
+                (
+                    DataType::OctetArray,
+                    Arc::from(spec.information_element_identifier.to_string()),
+                )
+            },
+            |ie| (ie.data_type, ie.name.clone()),
+        );
+    ResolvedField {
+        spec: *spec,
+        data_type,
+        name,
+    }
 }
 
 /// Template ID and field count of a (Options) Template Record. A field count
