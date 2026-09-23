@@ -52,10 +52,12 @@ pub fn macaddr6(input: &[u8]) -> IResult<&[u8], MacAddr6> {
     .parse(input)
 }
 
+/// A UTF-8 string. Exporters pad a fixed-length string element with
+/// trailing NULs, which are not part of the value.
 pub fn string(length: usize) -> impl Fn(&[u8]) -> IResult<&[u8], String> {
     move |input: &[u8]| {
         map_opt(take(length), |v: &[u8]| {
-            from_utf8(v).ok().map(|v| v.to_string())
+            from_utf8(v).ok().map(|v| v.trim_end_matches('\0').to_string())
         })
         .parse(input)
     }
