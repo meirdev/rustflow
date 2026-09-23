@@ -1,4 +1,12 @@
+use chrono::TimeDelta;
 use macaddr::MacAddr6;
+
+pub fn serialize_duration_millis<S>(duration: &TimeDelta, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_i64(duration.num_milliseconds())
+}
 
 pub fn serialize_as_hex<S>(bytes: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
 where

@@ -1,5 +1,7 @@
 use std::net::IpAddr;
 
+use chrono::TimeDelta;
+
 use crate::common::InformationElement;
 use crate::common::common_flow::{CommonFlow, FlowType};
 use crate::netflow_v9::parser::{
@@ -17,9 +19,16 @@ impl NetFlowV9Context<'_> {
     /// uptime values in milliseconds. We convert them to absolute time using:
     /// `absolute_time = unix_seconds - (system_uptime - uptime_value)`
     fn uptime_to_absolute_ns(&self, uptime_ms: u32) -> Option<i64> {
-        let unix_time_ns = self.header.unix_seconds.timestamp_nanos_opt()?;
-        let offset_ms = self.header.system_uptime as i64 - uptime_ms as i64;
-        Some(unix_time_ns - (offset_ms * 1_000_000))
+        // The uptime is a u32 of milliseconds and wraps after about 49.7
+        // days. Take the difference modulo 2^32 and read it as signed, so a
+        // flow that started before the wrap still lies in the past, and one
+        // stamped a little after the header still lies just after it.
+        let system_uptime_ms = u32::try_from(self.header.system_uptime.num_milliseconds()).ok()?;
+        let offset_ms = system_uptime_ms.wrapping_sub(uptime_ms) as i32;
+        self.header
+            .unix_seconds
+            .checked_sub_signed(TimeDelta::milliseconds(i64::from(offset_ms)))?
+            .timestamp_nanos_opt()
     }
 
     pub fn convert(&self, record: &V9DataRecord, template_id: u16) -> CommonFlow {
@@ -212,5 +221,56 @@ fn extract_datetime_ns(value: &V9FieldValue) -> Option<i64> {
         | V9FieldValue::DateTimeMicroseconds(dt)
         | V9FieldValue::DateTimeNanoseconds(dt) => dt.timestamp_nanos_opt(),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::DateTime;
+
+    use super::*;
+
+    fn header(system_uptime: TimeDelta) -> V9Header {
+        V9Header {
+            version: 9,
+            count: 0,
+            system_uptime,
+            unix_seconds: DateTime::from_timestamp_secs(1_700_000_000).unwrap(),
+            sequence_number: 0,
+            source_id: 7,
+        }
+    }
+
+    #[test]
+    fn uptime_conversion_preserves_signed_millisecond_offsets() {
+        let header = header(TimeDelta::milliseconds(1_234));
+        let context = NetFlowV9Context {
+            header: &header,
+            sampler_address: None,
+            sampling_rate: None,
+        };
+
+        for (uptime_ms, expected_ns) in [
+            (0, 1_699_999_998_766_000_000),
+            (1_000, 1_699_999_999_766_000_000),
+            (1_234, 1_700_000_000_000_000_000),
+            (1_500, 1_700_000_000_266_000_000),
+        ] {
+            assert_eq!(context.uptime_to_absolute_ns(uptime_ms), Some(expected_ns));
+        }
+    }
+
+    #[test]
+    fn uptime_conversion_rejects_out_of_range_timestamps() {
+        for uptime in [TimeDelta::MIN, TimeDelta::MAX] {
+            let header = header(uptime);
+            let context = NetFlowV9Context {
+                header: &header,
+                sampler_address: None,
+                sampling_rate: None,
+            };
+
+            assert_eq!(context.uptime_to_absolute_ns(0), None);
+        }
     }
 }
