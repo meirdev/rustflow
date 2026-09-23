@@ -44,8 +44,8 @@ impl NetFlowV9Context<'_> {
             flow.sampling_rate = Some(rate);
         }
 
-        for (field_type, _, value) in record.iter() {
-            if let Some(ie) = InformationElement::from_id(field_type) {
+        for (field, _, value) in record.iter() {
+            if let Some(ie) = InformationElement::from_id(field.r#type) {
                 match ie {
                     OctetDeltaCount => flow.bytes = extract_u64(value),
                     PacketDeltaCount => flow.packets = extract_u64(value),
@@ -163,10 +163,10 @@ pub fn extract_v9_sampling_rate(record: &V9DataRecord) -> Option<u32> {
     let sampling_interval_id: u16 = InformationElement::SamplingInterval.into();
     let sampling_packet_interval_id: u16 = InformationElement::SamplingPacketInterval.into();
     let sampler_random_interval_id: u16 = InformationElement::SamplerRandomInterval.into();
-    for (field_type, _, value) in record.iter() {
-        if field_type == sampling_interval_id
-            || field_type == sampling_packet_interval_id
-            || field_type == sampler_random_interval_id
+    for (field, _, value) in record.iter() {
+        if field.r#type == sampling_interval_id
+            || field.r#type == sampling_packet_interval_id
+            || field.r#type == sampler_random_interval_id
         {
             return extract_u32(value);
         }

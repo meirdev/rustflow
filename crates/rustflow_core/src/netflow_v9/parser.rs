@@ -14,6 +14,7 @@ use nom::{IResult, Parser, ToUsize};
 use num_enum::{FromPrimitive, IntoPrimitive};
 use serde::Serialize;
 
+use crate::common::data_record;
 use crate::common::ie_registry::{DataType, IERegistry};
 use crate::common::parser::{
     ipv4_addr, ipv6_addr, macaddr6, string, timestamp_micros, timestamp_millis, timestamp_nanos,
@@ -165,7 +166,7 @@ fn parse_data_record<'a>(
 
     for field in fields {
         let (input, value) =
-            parse_field_value(field.data_type, field.length.to_usize(), remaining)?;
+            parse_field_value(field.data_type, field.spec.length.to_usize(), remaining)?;
         values.push(value);
         remaining = input;
     }
@@ -280,15 +281,7 @@ fn resolve_template(registry: &IERegistry, template: &TemplateRecord) -> Arc<[Re
         .collect()
 }
 
-/// A template field with what the registry says about it, looked up once
-/// per template instead of once per record.
-#[derive(Debug, Clone)]
-pub struct ResolvedField {
-    pub r#type: u16,
-    pub length: u16,
-    pub data_type: DataType,
-    pub name: Arc<str>,
-}
+pub type ResolvedField = data_record::ResolvedField<TemplateField>;
 
 impl ResolvedField {
     fn from_registry(registry: &IERegistry, r#type: u16, length: u16) -> Self {
@@ -297,8 +290,7 @@ impl ResolvedField {
             |ie| (ie.data_type, ie.name.clone()),
         );
         Self {
-            r#type,
-            length,
+            spec: TemplateField { r#type, length },
             data_type,
             name,
         }
@@ -356,8 +348,10 @@ fn resolve_options_template(
     template: &OptionsTemplateRecord,
 ) -> Arc<[ResolvedField]> {
     let scope = template.scope_fields.iter().map(|field| ResolvedField {
-        r#type: field.r#type.clone().into(),
-        length: field.length,
+        spec: TemplateField {
+            r#type: field.r#type.clone().into(),
+            length: field.length,
+        },
         data_type: DataType::Unsigned,
         name: Arc::from(field.r#type.to_string()),
     });
@@ -406,60 +400,7 @@ fn parse_option_field(input: &[u8]) -> IResult<&[u8], OptionField> {
     Ok((input, OptionField { r#type, length }))
 }
 
-/// One data record: the values, plus the template's field descriptions
-/// shared with every other record of that template.
-#[derive(Debug, Clone)]
-pub struct DataRecord {
-    fields: Arc<[ResolvedField]>,
-    values: Vec<FieldValue>,
-}
-
-impl DataRecord {
-    pub fn from_template(fields: Arc<[ResolvedField]>, values: Vec<FieldValue>) -> Self {
-        debug_assert_eq!(fields.len(), values.len());
-        Self { fields, values }
-    }
-
-    pub fn len(&self) -> usize {
-        self.values.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.values.is_empty()
-    }
-
-    pub fn fields(&self) -> &[ResolvedField] {
-        &self.fields
-    }
-
-    pub fn values(&self) -> &[FieldValue] {
-        &self.values
-    }
-
-    /// Each field's type, registry name and value, in template order.
-    pub fn iter(&self) -> impl Iterator<Item = (u16, &str, &FieldValue)> {
-        self.fields
-            .iter()
-            .zip(&self.values)
-            .map(|(field, value)| (field.r#type, &*field.name, value))
-    }
-}
-
-impl Serialize for DataRecord {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use serde::ser::SerializeMap;
-
-        let mut map = serializer.serialize_map(Some(self.values.len()))?;
-        for (_, key, value) in self.iter() {
-            map.serialize_entry(key, value)?;
-        }
-
-        map.end()
-    }
-}
+pub type DataRecord = data_record::DataRecord<TemplateField, FieldValue>;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
@@ -582,7 +523,7 @@ mod tests {
             };
             assert!(matches!(data.values(), [FieldValue::Unsigned32(42)]));
             assert_eq!(data.fields()[0].name.as_ref(), "octetDeltaCount");
-            assert!(Arc::ptr_eq(fields, &data.fields));
+            assert!(std::ptr::eq(fields.as_ref(), data.fields()));
         }
     }
 
@@ -640,7 +581,7 @@ mod tests {
             ));
             assert_eq!(data.fields()[0].name.as_ref(), "System");
             assert_eq!(data.fields()[1].name.as_ref(), "samplingInterval");
-            assert!(Arc::ptr_eq(fields, &data.fields));
+            assert!(std::ptr::eq(fields.as_ref(), data.fields()));
         }
     }
 
