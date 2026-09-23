@@ -4,7 +4,7 @@ use etherparse::{EtherType, LaxNetSlice, LaxSlicedPacket, LinkSlice, TransportSl
 use macaddr::MacAddr6;
 
 use crate::common::common_flow::CommonFlow;
-use crate::common::packet::{Peeled, peel_ethernet, peel_ip};
+use crate::common::packet::{Peeled, first_fragment_transport, peel_ethernet, peel_ip};
 
 pub fn apply_ethernet_frame(flow: &mut CommonFlow, frame: &[u8]) {
     if let Some(peeled) = peel_ethernet(frame) {
@@ -52,7 +52,7 @@ fn apply_net_transport(flow: &mut CommonFlow, sliced: &LaxSlicedPacket) {
             flow.src_addr = Some(IpAddr::V4(ipv4_header.source_addr()));
             flow.dst_addr = Some(IpAddr::V4(ipv4_header.destination_addr()));
             flow.proto = Some(ipv4_header.protocol().0);
-            flow.ip_tos = Some(ipv4_header.dcp().value());
+            flow.ip_tos = Some((ipv4_header.dcp().value() << 2) | ipv4_header.ecn().value());
             flow.ip_ttl = Some(ipv4_header.ttl());
             flow.fragment_id = Some(ipv4_header.identification() as u32);
             flow.fragment_offset = Some(ipv4_header.fragments_offset().value());
@@ -65,6 +65,7 @@ fn apply_net_transport(flow: &mut CommonFlow, sliced: &LaxSlicedPacket) {
             flow.src_addr = Some(IpAddr::V6(ipv6_header.source_addr()));
             flow.dst_addr = Some(IpAddr::V6(ipv6_header.destination_addr()));
             flow.proto = Some(ipv6_slice.payload().ip_number.0);
+            flow.ip_tos = Some(ipv6_header.traffic_class());
             flow.ip_ttl = Some(ipv6_header.hop_limit());
             flow.ipv6_flow_label = Some(ipv6_header.flow_label().value());
             if flow.etype.is_none() {
@@ -74,7 +75,8 @@ fn apply_net_transport(flow: &mut CommonFlow, sliced: &LaxSlicedPacket) {
         Some(LaxNetSlice::Arp(_)) | None => {}
     }
 
-    match &sliced.transport {
+    let transport = sliced.transport.clone().or_else(|| first_fragment_transport(sliced));
+    match &transport {
         Some(TransportSlice::Tcp(tcp_slice)) => {
             flow.src_port = Some(tcp_slice.source_port());
             flow.dst_port = Some(tcp_slice.destination_port());

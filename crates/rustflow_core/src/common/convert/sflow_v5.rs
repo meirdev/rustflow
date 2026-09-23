@@ -116,8 +116,9 @@ impl SFlowV5Context<'_> {
     }
 
     fn apply_extended_switch(&self, flow: &mut CommonFlow, switch: &ExtendedSwitch) {
-        flow.src_vlan = Some(switch.src_vlan as u16);
-        flow.dst_vlan = Some(switch.dst_vlan as u16);
+        // 0xFFFFFFFF when the VLAN is unknown
+        flow.src_vlan = u16::try_from(switch.src_vlan).ok();
+        flow.dst_vlan = u16::try_from(switch.dst_vlan).ok();
     }
 
     fn apply_extended_gateway(&self, flow: &mut CommonFlow, gateway: &ExtendedGateway) {

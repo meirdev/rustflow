@@ -9,7 +9,7 @@
 
 use std::net::IpAddr;
 
-use etherparse::{EtherType, IpNumber, LaxNetSlice, LaxSlicedPacket, TransportSlice};
+use etherparse::{EtherType, Icmpv4Slice, Icmpv6Slice, IpNumber, Ipv6ExtensionSlice, LaxNetSlice, LaxSlicedPacket, TcpSlice, TransportSlice, UdpSlice};
 
 /// The deepest packet successfully parsed within the tunnel depth limit.
 pub struct Peeled<'a> {
@@ -80,6 +80,38 @@ fn peel_with(sliced: LaxSlicedPacket<'_>, require_complete: bool) -> Peeled<'_> 
         }
     }
     Peeled { link, packet }
+}
+
+/// The transport header of a first fragment. etherparse leaves the
+/// transport unsliced for any fragment, but the first one still carries
+/// the header, and the ports are what a flow is keyed on.
+pub fn first_fragment_transport<'a>(sliced: &LaxSlicedPacket<'a>) -> Option<TransportSlice<'a>> {
+    let payload = match &sliced.net {
+        Some(LaxNetSlice::Ipv4(ipv4)) if ipv4.header().fragments_offset().value() == 0 => ipv4.payload(),
+        Some(LaxNetSlice::Ipv6(ipv6)) if ipv6_fragment_offset(ipv6.extensions().clone()) == 0 => ipv6.payload(),
+        _ => return None,
+    };
+    if !payload.fragmented {
+        return None;
+    }
+    let bytes = payload.payload;
+    match payload.ip_number {
+        IpNumber::TCP => TcpSlice::from_slice(bytes).ok().map(TransportSlice::Tcp),
+        IpNumber::UDP => UdpSlice::from_slice_lax(bytes).ok().map(TransportSlice::Udp),
+        IpNumber::ICMP => Icmpv4Slice::from_slice(bytes).ok().map(TransportSlice::Icmpv4),
+        IpNumber::IPV6_ICMP => Icmpv6Slice::from_slice(bytes).ok().map(TransportSlice::Icmpv6),
+        _ => None,
+    }
+}
+
+fn ipv6_fragment_offset(extensions: etherparse::Ipv6ExtensionsSlice<'_>) -> u16 {
+    extensions
+        .into_iter()
+        .find_map(|ext| match ext {
+            Ipv6ExtensionSlice::Fragment(fragment) => Some(fragment.fragment_offset().value()),
+            _ => None,
+        })
+        .unwrap_or(0)
 }
 
 /// Whether the IP packet is all there: not truncated, not a fragment, and
