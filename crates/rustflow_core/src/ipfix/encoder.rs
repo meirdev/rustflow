@@ -218,7 +218,7 @@ impl Encode for FieldValue {
             FieldValue::Ipv4Address(v) => buf.put_slice(&v.octets()),
             FieldValue::Ipv6Address(v) => buf.put_slice(&v.octets()),
             FieldValue::BasicList(v) => {
-                buf.put_u8(v.semantic.clone() as u8);
+                buf.put_u8(v.semantic.clone().into());
                 v.field.encode(buf);
                 // RFC 6313 section 4.5.1: every element uses the width (or
                 // variable-length prefix) of the list's field specifier.
@@ -227,14 +227,14 @@ impl Encode for FieldValue {
                 }
             }
             FieldValue::SubTemplateList(v) => {
-                buf.put_u8(v.semantic.clone() as u8);
+                buf.put_u8(v.semantic.clone().into());
                 buf.put_u16(v.template_id);
                 for record in &v.data {
                     record.encode(buf);
                 }
             }
             FieldValue::SubTemplateMultiList(v) => {
-                buf.put_u8(v.semantic.clone() as u8);
+                buf.put_u8(v.semantic.clone().into());
                 for item in &v.data {
                     buf.put_u16(item.template_id);
                     buf.put_u16(item.length);

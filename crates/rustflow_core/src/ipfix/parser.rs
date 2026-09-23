@@ -12,6 +12,7 @@ use nom::number::complete::{
     be_f32, be_f64, be_i8, be_i16, be_i24, be_i32, be_i64, be_u8, be_u16, be_u24, be_u32, be_u64,
 };
 use nom::{IResult, Parser, ToUsize};
+use num_enum::{FromPrimitive, IntoPrimitive};
 use primitive_types::U256;
 use serde::Serialize;
 use strum::EnumString;
@@ -829,7 +830,7 @@ impl Display for FieldValue {
     }
 }
 
-#[derive(Debug, Clone, Serialize, EnumString)]
+#[derive(Debug, Clone, Serialize, EnumString, FromPrimitive, IntoPrimitive)]
 #[strum(serialize_all = "camelCase")]
 #[repr(u8)]
 pub enum Semantic {
@@ -838,20 +839,8 @@ pub enum Semantic {
     OneOrMoreOf = 0x02,
     AllOf = 0x03,
     Ordered = 0x04,
+    #[num_enum(default)]
     Undefined = 0xff,
-}
-
-impl From<u8> for Semantic {
-    fn from(value: u8) -> Self {
-        match value {
-            0x00 => Semantic::NoneOf,
-            0x01 => Semantic::ExactlyOneOf,
-            0x02 => Semantic::OneOrMoreOf,
-            0x03 => Semantic::AllOf,
-            0x04 => Semantic::Ordered,
-            _ => Semantic::Undefined,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize)]
