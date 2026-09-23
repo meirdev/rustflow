@@ -16,7 +16,6 @@ use primitive_types::U256;
 use serde::Serialize;
 use strum::EnumString;
 
-use crate::common::InformationElement;
 use crate::common::ie_registry::{DataType, IERegistry};
 use crate::common::parser::{
     ipv4_addr, ipv6_addr, macaddr6, string, timestamp_micros, timestamp_millis, timestamp_nanos,
@@ -24,6 +23,7 @@ use crate::common::parser::{
 };
 use crate::common::serializer::{serialize_as_hex, serialize_mac};
 use crate::common::timeout_map::TimeoutHashMap;
+use crate::common::{InformationElement, data_record};
 
 pub const IPFIX_VERSION: u16 = 10;
 pub const IPFIX_TEMPLATE_SET_ID: u16 = 2;
@@ -40,11 +40,12 @@ pub const IPFIX_HEADER_SIZE: usize = 16;
 
 // (observation_domain_id, template_id)
 type TemplateKey = (u32, u16);
+type TemplateCache = TimeoutHashMap<TemplateKey, Arc<[ResolvedField]>>;
 
 pub struct IpfixParser {
     pub ie_registry: IERegistry,
-    pub templates: TimeoutHashMap<TemplateKey, TemplateRecord>,
-    pub options_templates: TimeoutHashMap<TemplateKey, OptionsTemplateRecord>,
+    pub templates: TemplateCache,
+    pub options_templates: TemplateCache,
 }
 
 impl IpfixParser {
@@ -78,9 +79,9 @@ impl IpfixParser {
         type Wrap = fn(DataRecord) -> Record;
         let (fields, wrap): (&Arc<[ResolvedField]>, Wrap) =
             if let Some(t) = self.templates.get(&key) {
-                (&t.resolved, Record::Data)
+                (t, Record::Data)
             } else if let Some(t) = self.options_templates.get(&key) {
-                (&t.resolved, Record::OptionsData)
+                (t, Record::OptionsData)
             } else {
                 return Ok((input, vec![]));
             };
@@ -166,10 +167,10 @@ impl IpfixParser {
                             IPFIX_TEMPLATE_SET_ID,
                         );
                     } else {
-                        let mut template = template.clone();
-                        template.resolve(&self.ie_registry);
-                        self.templates
-                            .insert((observation_domain_id, template.template_id), template);
+                        self.templates.insert(
+                            (observation_domain_id, template.template_id),
+                            resolve_fields(&self.ie_registry, &template.fields),
+                        );
                     }
                 }
 
@@ -188,10 +189,10 @@ impl IpfixParser {
                             IPFIX_OPTIONS_TEMPLATE_SET_ID,
                         );
                     } else {
-                        let mut template = template.clone();
-                        template.resolve(&self.ie_registry);
-                        self.options_templates
-                            .insert((observation_domain_id, template.template_id), template);
+                        self.options_templates.insert(
+                            (observation_domain_id, template.template_id),
+                            resolve_fields(&self.ie_registry, &template.fields),
+                        );
                     }
                 }
 
@@ -565,11 +566,6 @@ pub struct TemplateRecord {
     pub template_id: u16,
     pub field_count: u16,
     pub fields: Vec<FieldSpecifier>,
-    /// `fields` with their registry entries, filled by
-    /// [`resolve`](Self::resolve) when the parser installs the template;
-    /// empty until then.
-    #[serde(skip)]
-    pub resolved: Arc<[ResolvedField]>,
 }
 
 impl TemplateRecord {
@@ -579,23 +575,11 @@ impl TemplateRecord {
             template_id,
             field_count,
             fields,
-            resolved: Arc::from([]),
         }
     }
-
-    pub fn resolve(&mut self, registry: &IERegistry) {
-        self.resolved = resolve_fields(registry, &self.fields);
-    }
 }
 
-/// A template field with what the registry says about it, looked up once
-/// per template instead of once per record.
-#[derive(Debug, Clone)]
-pub struct ResolvedField {
-    pub spec: FieldSpecifier,
-    pub data_type: DataType,
-    pub name: Arc<str>,
-}
+pub type ResolvedField = data_record::ResolvedField<FieldSpecifier>;
 
 /// RFC 7011 section 3.4.2.1: scope fields are ordinary Information
 /// Elements, so every field resolves through the registry the same way.
@@ -650,7 +634,6 @@ fn parse_template_record(input: &[u8]) -> IResult<&[u8], TemplateRecord> {
             template_id,
             field_count,
             fields,
-            resolved: Arc::from([]),
         },
     ))
 }
@@ -661,9 +644,6 @@ pub struct OptionsTemplateRecord {
     pub field_count: u16,
     pub scope_field_count: u16,
     pub fields: Vec<FieldSpecifier>,
-    /// See [`TemplateRecord::resolved`].
-    #[serde(skip)]
-    pub resolved: Arc<[ResolvedField]>,
 }
 
 impl OptionsTemplateRecord {
@@ -674,12 +654,7 @@ impl OptionsTemplateRecord {
             field_count,
             scope_field_count,
             fields,
-            resolved: Arc::from([]),
         }
-    }
-
-    pub fn resolve(&mut self, registry: &IERegistry) {
-        self.resolved = resolve_fields(registry, &self.fields);
     }
 }
 
@@ -702,7 +677,6 @@ fn parse_options_template_record(input: &[u8]) -> IResult<&[u8], OptionsTemplate
             field_count,
             scope_field_count,
             fields,
-            resolved: Arc::from([]),
         },
     ))
 }
@@ -766,13 +740,7 @@ fn parse_field_specifier(input: &[u8]) -> IResult<&[u8], FieldSpecifier> {
     ))
 }
 
-/// One data record: the values, plus the template's field descriptions
-/// shared with every other record of that template.
-#[derive(Debug, Clone)]
-pub struct DataRecord {
-    fields: Arc<[ResolvedField]>,
-    values: Vec<FieldValue>,
-}
+pub type DataRecord = data_record::DataRecord<FieldSpecifier, FieldValue>;
 
 static EMPTY_NAME: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from(""));
 
@@ -788,53 +756,7 @@ impl DataRecord {
                 name: EMPTY_NAME.clone(),
             })
             .collect();
-        Self { fields, values }
-    }
-
-    pub fn from_template(fields: Arc<[ResolvedField]>, values: Vec<FieldValue>) -> Self {
-        debug_assert_eq!(fields.len(), values.len());
-        Self { fields, values }
-    }
-
-    pub fn len(&self) -> usize {
-        self.values.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.values.is_empty()
-    }
-
-    pub fn fields(&self) -> &[ResolvedField] {
-        &self.fields
-    }
-
-    pub fn values(&self) -> &[FieldValue] {
-        &self.values
-    }
-
-    /// Each field with its specifier, registry name and value, in template
-    /// order.
-    pub fn iter(&self) -> impl Iterator<Item = (&FieldSpecifier, &str, &FieldValue)> {
-        self.fields
-            .iter()
-            .zip(&self.values)
-            .map(|(field, value)| (&field.spec, &*field.name, value))
-    }
-}
-
-impl Serialize for DataRecord {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use serde::ser::SerializeMap;
-
-        let mut map = serializer.serialize_map(Some(self.values.len()))?;
-        for (_, key, value) in self.iter() {
-            map.serialize_entry(key, value)?;
-        }
-
-        map.end()
+        Self::from_template(fields, values)
     }
 }
 
@@ -1199,12 +1121,59 @@ mod tests {
         let (_, packet) = parser.parse(&msg).unwrap();
         assert_eq!(packet.sets[0].records.len(), 2);
         assert!(!parser.options_templates.contains_key(&(1, 257)));
-        let t = parser
+        let fields = parser
             .options_templates
             .get(&(1, 258))
             .expect("258 installed");
+        assert_eq!(fields.len(), 1);
+        let Record::OptionsTemplate(t) = &packet.sets[0].records[1] else {
+            panic!("expected replacement options template");
+        };
         assert_eq!(t.scope_field_count, 1);
         assert_eq!(t.fields.len(), 1);
+    }
+
+    #[test]
+    fn cached_enterprise_fields_survive_template_replacement() {
+        use crate::ipfix::encoder::Encode;
+
+        let mut registry = IERegistry::new();
+        registry.add_element(100, Some(4242), "vendorCounter", DataType::Unsigned);
+        let mut parser = IpfixParser::new(registry, std::time::Duration::from_mins(10));
+        let spec = FieldSpecifier::enterprise(100, 3, 4242);
+        let mut template = Vec::new();
+        TemplateRecord::new(256, vec![spec]).encode(&mut template);
+        let msg = message(&[set(IPFIX_TEMPLATE_SET_ID, &template)]);
+        parser.parse(&msg).unwrap();
+
+        let data = [1, 2, 3];
+        let msg = message(&[set(256, &data)]);
+        let (_, packet) = parser.parse(&msg).unwrap();
+        let Record::Data(record) = &packet.sets[0].records[0] else {
+            panic!("expected data decoded using cached enterprise field");
+        };
+        let fields = parser.templates.get(&(1, 256)).unwrap();
+        assert!(std::ptr::eq(fields.as_ref(), record.fields()));
+        let (field, name, value) = record.iter().next().unwrap();
+        assert_eq!(field.enterprise_number, Some(4242));
+        assert!(field.enterprise_bit);
+        assert_eq!(field.information_element_identifier, 100);
+        assert_eq!(field.field_length, 3);
+        assert_eq!(name, "vendorCounter");
+        assert!(matches!(value, FieldValue::Unsigned32(0x010203)));
+
+        let mut replacement = Vec::new();
+        TemplateRecord::new(256, vec![FieldSpecifier::iana(100, 4)]).encode(&mut replacement);
+        let msg = message(&[set(IPFIX_TEMPLATE_SET_ID, &replacement)]);
+        parser.parse(&msg).unwrap();
+        let fields = parser.templates.get(&(1, 256)).unwrap();
+        assert!(!std::ptr::eq(fields.as_ref(), record.fields()));
+        assert_eq!(fields[0].spec.enterprise_number, None);
+        assert_eq!(record.fields()[0].name.as_ref(), "vendorCounter");
+
+        let mut encoded = Vec::new();
+        record.encode(&mut encoded);
+        assert_eq!(encoded, data);
     }
 
     #[test]
