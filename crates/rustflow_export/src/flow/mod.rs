@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::net::Ipv4Addr;
+use std::net::IpAddr;
 
 use chrono::{DateTime, TimeDelta, Utc};
 
@@ -7,8 +7,8 @@ use crate::ipfix::data::FlowData;
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct FlowKey {
-    pub source_ip: Ipv4Addr,
-    pub destination_ip: Ipv4Addr,
+    pub source_ip: IpAddr,
+    pub destination_ip: IpAddr,
     pub protocol: u8,
     pub source_port: u16,
     pub destination_port: u16,
@@ -46,8 +46,8 @@ impl Flow {
 
     pub fn to_flow_data(&self) -> FlowData {
         FlowData {
-            source_ipv4: self.key.source_ip,
-            destination_ipv4: self.key.destination_ip,
+            source_ip: self.key.source_ip,
+            destination_ip: self.key.destination_ip,
             protocol: self.key.protocol,
             source_port: self.key.source_port,
             destination_port: self.key.destination_port,

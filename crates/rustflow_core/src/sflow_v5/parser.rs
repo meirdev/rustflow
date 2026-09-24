@@ -272,9 +272,6 @@ fn parse_expanded_flow_sample(input: &[u8]) -> IResult<&[u8], ExpandedFlowSample
     ))
 }
 
-/// Dropped packet notification, format 5 (sflow_drops.txt): the expanded
-/// source id in the header, then the interfaces as plain indexes, never the
-/// expanded form.
 #[derive(Debug, Clone, Serialize)]
 pub struct DropSample {
     pub header: SampleHeader,

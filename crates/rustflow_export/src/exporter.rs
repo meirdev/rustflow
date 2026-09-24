@@ -14,9 +14,7 @@ use rustflow_core::ipfix::parser::{
 use crate::ExportArgs;
 use crate::flow::Flow;
 use crate::ipfix::data::OptionsData;
-use crate::ipfix::template::{
-    FLOW_TEMPLATE_ID, OPTIONS_TEMPLATE_ID, create_flow_template, create_options_template,
-};
+use crate::ipfix::template::{OPTIONS_TEMPLATE_ID, create_flow_templates, create_options_template};
 
 // Maximum data records per set
 const MAX_RECORDS_PER_SET: usize = 30;
@@ -71,7 +69,10 @@ impl Exporter {
                 Set {
                     id: IPFIX_TEMPLATE_SET_ID,
                     length: 0,
-                    records: vec![Record::Template(create_flow_template())],
+                    records: create_flow_templates()
+                        .into_iter()
+                        .map(Record::Template)
+                        .collect(),
                 },
                 Set {
                     id: IPFIX_OPTIONS_TEMPLATE_SET_ID,
@@ -133,10 +134,21 @@ impl Exporter {
         let mut total_exported = 0;
         let mut num_packets = 0;
 
-        for chunk in flows.chunks(MAX_RECORDS_PER_SET) {
+        // A set holds records of one template, so IPv4 and IPv6 flows go
+        // in separate sets.
+        let (ipv4, ipv6): (Vec<_>, Vec<_>) = flows
+            .iter()
+            .map(Flow::to_flow_data)
+            .partition(|data| data.source_ip.is_ipv4());
+
+        for chunk in ipv4
+            .chunks(MAX_RECORDS_PER_SET)
+            .chain(ipv6.chunks(MAX_RECORDS_PER_SET))
+        {
+            let template_id = chunk[0].template_id();
             let records: Vec<Record> = chunk
                 .iter()
-                .map(|flow| Record::Data(flow.to_flow_data().to_data_record()))
+                .map(|data| Record::Data(data.to_data_record()))
                 .collect();
 
             let chunk_len = records.len() as u32;
@@ -150,7 +162,7 @@ impl Exporter {
                     observation_domain_id: self.args.observation_domain_id,
                 },
                 sets: vec![Set {
-                    id: FLOW_TEMPLATE_ID,
+                    id: template_id,
                     length: 0,
                     records,
                 }],

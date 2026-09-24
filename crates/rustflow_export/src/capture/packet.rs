@@ -1,4 +1,4 @@
-use std::net::Ipv4Addr;
+use std::net::IpAddr;
 
 use etherparse::{LaxNetSlice, LaxSlicedPacket, TransportSlice};
 use log::debug;
@@ -60,15 +60,21 @@ fn packet_info(sliced: &LaxSlicedPacket) -> Option<PacketInfo> {
         Some(LaxNetSlice::Ipv4(ipv4)) => {
             let header = ipv4.header();
             (
-                Ipv4Addr::from(header.source()),
-                Ipv4Addr::from(header.destination()),
+                IpAddr::V4(header.source_addr()),
+                IpAddr::V4(header.destination_addr()),
                 header.protocol().0,
                 header.total_len() as u64,
             )
         }
-        Some(LaxNetSlice::Ipv6(_)) => {
-            debug!("Skipping IPv6 packet");
-            return None;
+        Some(LaxNetSlice::Ipv6(ipv6)) => {
+            let header = ipv6.header();
+            (
+                IpAddr::V6(header.source_addr()),
+                IpAddr::V6(header.destination_addr()),
+                // the upper-layer protocol, past any extension headers
+                ipv6.payload().ip_number.0,
+                u64::from(header.payload_length()) + 40,
+            )
         }
         None => {
             debug!("No IP layer found");

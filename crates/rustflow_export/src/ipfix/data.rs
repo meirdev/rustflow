@@ -1,12 +1,14 @@
-use std::net::Ipv4Addr;
+use std::net::IpAddr;
 
 use chrono::{DateTime, Utc};
 use rustflow_core::ipfix::parser::{DataRecord, FieldValue};
 
+use crate::ipfix::template::{FLOW_IPV4_TEMPLATE_ID, FLOW_IPV6_TEMPLATE_ID};
+
 #[derive(Debug, Clone)]
 pub struct FlowData {
-    pub source_ipv4: Ipv4Addr,
-    pub destination_ipv4: Ipv4Addr,
+    pub source_ip: IpAddr,
+    pub destination_ip: IpAddr,
     pub protocol: u8,
     pub source_port: u16,
     pub destination_port: u16,
@@ -18,10 +20,17 @@ pub struct FlowData {
 }
 
 impl FlowData {
+    pub fn template_id(&self) -> u16 {
+        match self.source_ip {
+            IpAddr::V4(_) => FLOW_IPV4_TEMPLATE_ID,
+            IpAddr::V6(_) => FLOW_IPV6_TEMPLATE_ID,
+        }
+    }
+
     pub fn to_data_record(&self) -> DataRecord {
         DataRecord::new(vec![
-            FieldValue::Ipv4Address(self.source_ipv4),
-            FieldValue::Ipv4Address(self.destination_ipv4),
+            address(self.source_ip),
+            address(self.destination_ip),
             FieldValue::Unsigned8(self.protocol),
             FieldValue::Unsigned16(self.source_port),
             FieldValue::Unsigned16(self.destination_port),
@@ -31,6 +40,13 @@ impl FlowData {
             FieldValue::DateTimeMilliseconds(self.flow_start),
             FieldValue::DateTimeMilliseconds(self.flow_end),
         ])
+    }
+}
+
+fn address(ip: IpAddr) -> FieldValue {
+    match ip {
+        IpAddr::V4(v4) => FieldValue::Ipv4Address(v4),
+        IpAddr::V6(v6) => FieldValue::Ipv6Address(v6),
     }
 }
 
