@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use macaddr::MacAddr6;
 use nom::bytes::complete::take;
 use nom::combinator::{map, map_opt, verify};
-use nom::number::complete::{be_u16, be_u32, be_u64};
+use nom::number::complete::{be_u8, be_u16, be_u32, be_u64};
 use nom::{IResult, Parser};
 
 /// Difference between NTP epoch (1900-01-01) and UNIX epoch (1970-01-01) in
@@ -52,14 +52,49 @@ pub fn macaddr6(input: &[u8]) -> IResult<&[u8], MacAddr6> {
     .parse(input)
 }
 
-/// A UTF-8 string. Exporters pad a fixed-length string element with
-/// trailing NULs, which are not part of the value.
-pub fn string(length: usize) -> impl Fn(&[u8]) -> IResult<&[u8], String> {
+/// A UTF-8 string, or `None` for ill-formed UTF-8, which a collector
+/// ignores (RFC 7011 section 6.1.6). Exporters pad a fixed-length string
+/// element with trailing NULs, which are not part of the value.
+pub fn string(length: usize) -> impl Fn(&[u8]) -> IResult<&[u8], Option<String>> {
     move |input: &[u8]| {
-        map_opt(take(length), |v: &[u8]| {
+        map(take(length), |v: &[u8]| {
             from_utf8(v)
                 .ok()
                 .map(|v| v.trim_end_matches('\0').to_string())
+        })
+        .parse(input)
+    }
+}
+
+/// RFC 7011 section 6.1.3: 1 is true and 2 is false; anything else is
+/// ignored.
+pub fn boolean(input: &[u8]) -> IResult<&[u8], Option<bool>> {
+    map(be_u8, |v| match v {
+        1 => Some(true),
+        2 => Some(false),
+        _ => None,
+    })
+    .parse(input)
+}
+
+/// Big-endian unsigned integer of a reduced size (RFC 7011 section 6.2), for
+/// the 5-7 byte widths nom has no built-in parser for.
+pub fn be_uint(length: usize) -> impl Fn(&[u8]) -> IResult<&[u8], u64> {
+    move |input| {
+        map(take(length), |bytes: &[u8]| {
+            bytes.iter().fold(0u64, |acc, b| (acc << 8) | u64::from(*b))
+        })
+        .parse(input)
+    }
+}
+
+/// Big-endian two's-complement signed integer of a reduced size (RFC 7011
+/// section 6.2): the most significant bit of the encoded value is the sign bit.
+pub fn be_int(length: usize) -> impl Fn(&[u8]) -> IResult<&[u8], i64> {
+    move |input| {
+        map(be_uint(length), |v| {
+            let shift = 64 - length * 8;
+            ((v << shift) as i64) >> shift
         })
         .parse(input)
     }

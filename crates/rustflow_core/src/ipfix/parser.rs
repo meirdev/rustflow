@@ -6,7 +6,7 @@ use std::sync::{Arc, LazyLock};
 use chrono::{DateTime, Utc};
 use macaddr::MacAddr6;
 use nom::bytes::complete::take;
-use nom::combinator::{cond, fail, map, map_parser, verify};
+use nom::combinator::{cond, fail, map, map_parser};
 use nom::multi::{count, many0};
 use nom::number::complete::{
     be_f32, be_f64, be_i8, be_i16, be_i24, be_i32, be_i64, be_u8, be_u16, be_u24, be_u32, be_u64,
@@ -19,8 +19,8 @@ use strum::EnumString;
 
 use crate::common::ie_registry::{DataType, IERegistry};
 use crate::common::parser::{
-    ipv4_addr, ipv6_addr, macaddr6, string, timestamp_micros, timestamp_millis, timestamp_nanos,
-    timestamp_secs, vector, verify_version,
+    be_int, be_uint, boolean, ipv4_addr, ipv6_addr, macaddr6, string, timestamp_micros,
+    timestamp_millis, timestamp_nanos, timestamp_secs, vector, verify_version,
 };
 use crate::common::serializer::{serialize_as_hex, serialize_mac};
 use crate::common::timeout_map::TimeoutHashMap;
@@ -84,6 +84,11 @@ impl IpfixParser {
             } else if let Some(t) = self.options_templates.get(&key) {
                 (t, Record::OptionsData)
             } else {
+                log::warn!(
+                    "Unknown template for observation_domain_id: {}, template_id: {}",
+                    observation_domain_id,
+                    template_id
+                );
                 return Ok((input, vec![]));
             };
 
@@ -96,6 +101,13 @@ impl IpfixParser {
         let (input, records) =
             many0(|i| self.parse_record_from_fields(observation_domain_id, fields, i))
                 .parse(input)?;
+        if records.is_empty() && !input.is_empty() {
+            log::warn!(
+                "Malformed data record for observation_domain_id: {}, template_id: {}",
+                observation_domain_id,
+                template_id
+            );
+        }
         Ok((input, records.into_iter().map(wrap).collect()))
     }
 
@@ -133,7 +145,13 @@ impl IpfixParser {
         let (input, id) = be_u16(input)?;
         let (input, length) = be_u16(input)?;
 
-        let value_length = (length as usize).saturating_sub(SET_HEADER_SIZE);
+        // Without a sane length there is no telling where the next set starts.
+        let Some(value_length) = (length as usize).checked_sub(SET_HEADER_SIZE) else {
+            log::warn!(
+                "Set length {length} is shorter than its header. Discarding the rest of the message."
+            );
+            return fail().parse(input);
+        };
         let (input, records) = map_parser(take(value_length), |data| {
             self.parse_records(observation_domain_id, id, data)
         })
@@ -167,10 +185,15 @@ impl IpfixParser {
                             template.template_id,
                             IPFIX_TEMPLATE_SET_ID,
                         );
-                    } else {
+                    } else if IPFIX_VALID_TEMPLATE_ID.contains(&template.template_id) {
                         self.templates.insert(
                             (observation_domain_id, template.template_id),
                             resolve_fields(&self.ie_registry, &template.fields),
+                        );
+                    } else {
+                        log::warn!(
+                            "Template ID {} is reserved. Skipping.",
+                            template.template_id
                         );
                     }
                 }
@@ -189,10 +212,15 @@ impl IpfixParser {
                             template.template_id,
                             IPFIX_OPTIONS_TEMPLATE_SET_ID,
                         );
-                    } else {
+                    } else if IPFIX_VALID_TEMPLATE_ID.contains(&template.template_id) {
                         self.options_templates.insert(
                             (observation_domain_id, template.template_id),
                             resolve_fields(&self.ie_registry, &template.fields),
+                        );
+                    } else {
+                        log::warn!(
+                            "Template ID {} is reserved. Skipping.",
+                            template.template_id
                         );
                     }
                 }
@@ -206,18 +234,7 @@ impl IpfixParser {
                 ))
             }
             template_id if IPFIX_VALID_TEMPLATE_ID.contains(&template_id) => {
-                let (remaining, records) =
-                    self.parse_templated_records(observation_domain_id, template_id, input)?;
-
-                if records.is_empty() && !input.is_empty() {
-                    log::warn!(
-                        "Unknown template for observation_domain_id: {}, template_id: {}",
-                        observation_domain_id,
-                        template_id
-                    );
-                }
-
-                Ok((remaining, records))
+                self.parse_templated_records(observation_domain_id, template_id, input)
             }
             _ => {
                 log::warn!("Invalid set ID: {}. Skipping.", set_id);
@@ -262,7 +279,9 @@ impl IpfixParser {
         input: &'a [u8],
     ) -> IResult<&'a [u8], FieldValue> {
         match (data_type, length) {
-            (DataType::Boolean, 1) => map(boolean, FieldValue::Boolean).parse(input),
+            (DataType::Boolean, 1) => {
+                map(boolean, |v| v.map_or(FieldValue::Null, FieldValue::Boolean)).parse(input)
+            }
             (DataType::Unsigned, 1) => map(be_u8, FieldValue::Unsigned8).parse(input),
             (DataType::Unsigned, 2) => map(be_u16, FieldValue::Unsigned16).parse(input),
             (DataType::Unsigned, 4) => map(be_u32, FieldValue::Unsigned32).parse(input),
@@ -283,7 +302,10 @@ impl IpfixParser {
             (DataType::MacAddress, 6) => map(macaddr6, FieldValue::MacAddress).parse(input),
             (DataType::Ipv4Address, 4) => map(ipv4_addr, FieldValue::Ipv4Address).parse(input),
             (DataType::Ipv6Address, 16) => map(ipv6_addr, FieldValue::Ipv6Address).parse(input),
-            (DataType::String, len) => map(string(len), FieldValue::String).parse(input),
+            (DataType::String, len) => map(string(len), |v| {
+                v.map_or(FieldValue::Null, FieldValue::String)
+            })
+            .parse(input),
             (DataType::DateTimeSeconds, 4) => {
                 map(timestamp_secs, FieldValue::DateTimeSeconds).parse(input)
             }
@@ -611,22 +633,9 @@ fn resolve_fields(registry: &IERegistry, fields: &[FieldSpecifier]) -> Arc<[Reso
 /// Template ID and field count of a (Options) Template Record. A field count
 /// of zero is a Template Withdrawal (RFC 7011 section 8.1), which may also
 /// carry the set ID itself (`all_id`) to withdraw every template of that kind.
-fn parse_template_id_and_count(all_id: u16, input: &[u8]) -> IResult<&[u8], (u16, u16)> {
+fn parse_template_record(input: &[u8]) -> IResult<&[u8], TemplateRecord> {
     let (input, template_id) = be_u16(input)?;
     let (input, field_count) = be_u16(input)?;
-
-    let valid = IPFIX_VALID_TEMPLATE_ID.contains(&template_id)
-        || (field_count == 0 && template_id == all_id);
-    if !valid {
-        return fail().parse(input);
-    }
-
-    Ok((input, (template_id, field_count)))
-}
-
-fn parse_template_record(input: &[u8]) -> IResult<&[u8], TemplateRecord> {
-    let (input, (template_id, field_count)) =
-        parse_template_id_and_count(IPFIX_TEMPLATE_SET_ID, input)?;
     let (input, fields) = count(parse_field_specifier, field_count.to_usize()).parse(input)?;
 
     Ok((
@@ -660,8 +669,8 @@ impl OptionsTemplateRecord {
 }
 
 fn parse_options_template_record(input: &[u8]) -> IResult<&[u8], OptionsTemplateRecord> {
-    let (input, (template_id, field_count)) =
-        parse_template_id_and_count(IPFIX_OPTIONS_TEMPLATE_SET_ID, input)?;
+    let (input, template_id) = be_u16(input)?;
+    let (input, field_count) = be_u16(input)?;
     // RFC 7011 section 8.1: a withdrawal record is only template ID + field
     // count; the scope field count is not present.
     let (input, scope_field_count) = if field_count == 0 {
@@ -789,6 +798,9 @@ pub enum FieldValue {
     BasicList(BasicList),
     SubTemplateList(SubTemplateList),
     SubTemplateMultiList(SubTemplateMultiList),
+    /// A value the collector ignores: ill-formed UTF-8, a boolean that is
+    /// neither 1 nor 2 (RFC 7011 section 6.1).
+    Null,
 }
 
 impl Display for FieldValue {
@@ -826,6 +838,7 @@ impl Display for FieldValue {
             FieldValue::BasicList(v) => write!(f, "{:?}", v),
             FieldValue::SubTemplateList(v) => write!(f, "{:?}", v),
             FieldValue::SubTemplateMultiList(v) => write!(f, "{:?}", v),
+            FieldValue::Null => Ok(()),
         }
     }
 }
@@ -871,33 +884,6 @@ pub struct SubTemplateMultiItem {
 }
 
 // 1 for true, 2 for false according to https://datatracker.ietf.org/doc/html/rfc7011#section-6.1.5
-fn boolean(input: &[u8]) -> IResult<&[u8], bool> {
-    map(verify(be_u8, |v| *v == 1 || *v == 2), |v| v == 1).parse(input)
-}
-
-/// Big-endian unsigned integer of a reduced size (RFC 7011 section 6.2), for
-/// the 5-7 byte widths nom has no built-in parser for.
-fn be_uint(length: usize) -> impl Fn(&[u8]) -> IResult<&[u8], u64> {
-    move |input| {
-        map(take(length), |bytes: &[u8]| {
-            bytes.iter().fold(0u64, |acc, b| (acc << 8) | u64::from(*b))
-        })
-        .parse(input)
-    }
-}
-
-/// Big-endian two's-complement signed integer of a reduced size (RFC 7011
-/// section 6.2): the most significant bit of the encoded value is the sign bit.
-fn be_int(length: usize) -> impl Fn(&[u8]) -> IResult<&[u8], i64> {
-    move |input| {
-        map(be_uint(length), |v| {
-            let shift = 64 - length * 8;
-            ((v << shift) as i64) >> shift
-        })
-        .parse(input)
-    }
-}
-
 fn parse_field_length(field_length: u16, input: &[u8]) -> IResult<&[u8], usize> {
     if field_length != IPFIX_VARIABLE_LENGTH {
         return Ok((input, field_length as usize));

@@ -158,6 +158,7 @@ fn encode_field_value<B: BufMut>(value: &FieldValue, field_length: u16, buf: &mu
         FieldValue::Signed16(v) => put_int(i64::from(*v), length, buf),
         FieldValue::Signed32(v) => put_int(i64::from(*v), length, buf),
         FieldValue::Signed64(v) => put_int(*v, length, buf),
+        FieldValue::Null => buf.put_bytes(0, length),
         _ => value.encode(buf),
     }
 }
@@ -240,6 +241,7 @@ impl Encode for FieldValue {
                     }
                 }
             }
+            FieldValue::Null => {}
         }
     }
 }

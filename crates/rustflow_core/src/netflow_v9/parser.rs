@@ -5,10 +5,10 @@ use std::time::Duration;
 use chrono::{DateTime, TimeDelta, Utc};
 use macaddr::MacAddr6;
 use nom::bytes::complete::take;
-use nom::combinator::{map, map_parser};
+use nom::combinator::{fail, map, map_parser};
 use nom::multi::{count, many0};
 use nom::number::complete::{
-    be_f32, be_f64, be_i8, be_i16, be_i32, be_i64, be_u8, be_u16, be_u32, be_u64,
+    be_f32, be_f64, be_i8, be_i16, be_i24, be_i32, be_i64, be_u8, be_u16, be_u24, be_u32, be_u64,
 };
 use nom::{IResult, Parser, ToUsize};
 use num_enum::{FromPrimitive, IntoPrimitive};
@@ -17,8 +17,8 @@ use serde::Serialize;
 use crate::common::data_record;
 use crate::common::ie_registry::{DataType, IERegistry};
 use crate::common::parser::{
-    ipv4_addr, ipv6_addr, macaddr6, string, timestamp_micros, timestamp_millis, timestamp_nanos,
-    timestamp_secs, vector, verify_version,
+    be_int, be_uint, ipv4_addr, ipv6_addr, macaddr6, string, timestamp_micros, timestamp_millis,
+    timestamp_nanos, timestamp_secs, vector, verify_version,
 };
 use crate::common::serializer::{serialize_as_hex, serialize_duration_millis, serialize_mac};
 use crate::common::timeout_map::TimeoutHashMap;
@@ -236,7 +236,12 @@ fn parse_flow_set<'a>(
 ) -> IResult<&'a [u8], FlowSet> {
     let (input, id) = be_u16(input)?;
     let (input, length) = be_u16(input)?;
-    let value_length = length.to_usize().saturating_sub(FLOW_SET_HEADER_SIZE);
+    let Some(value_length) = length.to_usize().checked_sub(FLOW_SET_HEADER_SIZE) else {
+        log::warn!(
+            "FlowSet length {length} is shorter than its header. Discarding the rest of the packet."
+        );
+        return fail().parse(input);
+    };
     let (input, body) = take(value_length)(input)?;
     let (_, records) = parse_records(body, source_id, id, registry, templates, options_templates)?;
 
@@ -439,16 +444,23 @@ fn parse_field_value(
         (DataType::Unsigned, 2) => map(be_u16, FieldValue::Unsigned16).parse(input),
         (DataType::Unsigned, 4) => map(be_u32, FieldValue::Unsigned32).parse(input),
         (DataType::Unsigned, 8) => map(be_u64, FieldValue::Unsigned64).parse(input),
+        (DataType::Unsigned, 3) => map(be_u24, FieldValue::Unsigned32).parse(input),
+        (DataType::Unsigned, len @ 5..=7) => map(be_uint(len), FieldValue::Unsigned64).parse(input),
         (DataType::Signed, 1) => map(be_i8, FieldValue::Signed8).parse(input),
         (DataType::Signed, 2) => map(be_i16, FieldValue::Signed16).parse(input),
         (DataType::Signed, 4) => map(be_i32, FieldValue::Signed32).parse(input),
         (DataType::Signed, 8) => map(be_i64, FieldValue::Signed64).parse(input),
+        (DataType::Signed, 3) => map(be_i24, FieldValue::Signed32).parse(input),
+        (DataType::Signed, len @ 5..=7) => map(be_int(len), FieldValue::Signed64).parse(input),
         (DataType::Float, 4) => map(be_f32, FieldValue::Float32).parse(input),
         (DataType::Float, 8) => map(be_f64, FieldValue::Float64).parse(input),
         (DataType::MacAddress, 6) => map(macaddr6, FieldValue::MacAddress).parse(input),
         (DataType::Ipv4Address, 4) => map(ipv4_addr, FieldValue::Ipv4Address).parse(input),
         (DataType::Ipv6Address, 16) => map(ipv6_addr, FieldValue::Ipv6Address).parse(input),
-        (DataType::String, len) => map(string(len), FieldValue::String).parse(input),
+        (DataType::String, len) => map(string(len), |v| {
+            v.map_or(FieldValue::Null, FieldValue::String)
+        })
+        .parse(input),
         (DataType::DateTimeSeconds, 4) => {
             map(timestamp_secs, FieldValue::DateTimeSeconds).parse(input)
         }
