@@ -75,7 +75,10 @@ fn apply_net_transport(flow: &mut CommonFlow, sliced: &LaxSlicedPacket) {
         Some(LaxNetSlice::Arp(_)) | None => {}
     }
 
-    let transport = sliced.transport.clone().or_else(|| first_fragment_transport(sliced));
+    let transport = sliced
+        .transport
+        .clone()
+        .or_else(|| first_fragment_transport(sliced));
     match &transport {
         Some(TransportSlice::Tcp(tcp_slice)) => {
             flow.src_port = Some(tcp_slice.source_port());

@@ -1124,7 +1124,7 @@ mod tests {
 
     #[test]
     fn cached_enterprise_fields_survive_template_replacement() {
-        use crate::ipfix::encoder::Encode;
+        use crate::common::encoder::Encode;
 
         let mut registry = IERegistry::new();
         registry.add_element(100, Some(4242), "vendorCounter", DataType::Unsigned);
@@ -1167,7 +1167,7 @@ mod tests {
 
     #[test]
     fn reduced_size_fields_round_trip_through_the_encoder() {
-        use crate::ipfix::encoder::Encode;
+        use crate::common::encoder::Encode;
 
         let mut registry = IERegistry::new();
         registry.add_element(100, None, "testUnsigned", DataType::Unsigned);
@@ -1197,7 +1197,7 @@ mod tests {
 
     #[test]
     fn basic_list_elements_round_trip_at_the_declared_width() {
-        use crate::ipfix::encoder::Encode;
+        use crate::common::encoder::Encode;
 
         // basicList(291) as a variable-length field whose elements are
         // 3-byte octetDeltaCount(1) values.
@@ -1234,7 +1234,7 @@ mod tests {
 
     #[test]
     fn records_built_without_a_template_encode_at_natural_width() {
-        use crate::ipfix::encoder::Encode;
+        use crate::common::encoder::Encode;
 
         let record = DataRecord::new(vec![
             FieldValue::Unsigned8(1),

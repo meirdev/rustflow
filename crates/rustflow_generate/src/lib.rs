@@ -12,7 +12,7 @@ use rand::Rng;
 use rand::distr::uniform::SampleUniform;
 use rand::seq::IndexedRandom;
 use rustflow_core::common::InformationElement;
-use rustflow_core::ipfix::encoder::Encode;
+use rustflow_core::common::encoder::Encode;
 use rustflow_core::ipfix::parser::{
     DataRecord, FieldSpecifier, FieldValue, Header, IPFIX_OPTIONS_TEMPLATE_SET_ID,
     IPFIX_TEMPLATE_SET_ID, IPFIX_VERSION, IpfixPacket, Record, Set, TemplateRecord,
