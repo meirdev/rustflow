@@ -31,6 +31,7 @@ fn flow_template(template_id: u16, addresses: [FieldSpecifier; 2]) -> TemplateRe
 
     let mut fields = addresses.to_vec();
     fields.extend([
+        FieldSpecifier::from_ie(IpVersion, 1),
         FieldSpecifier::from_ie(ProtocolIdentifier, 1),
         FieldSpecifier::from_ie(SourceTransportPort, 2),
         FieldSpecifier::from_ie(DestinationTransportPort, 2),
@@ -39,6 +40,7 @@ fn flow_template(template_id: u16, addresses: [FieldSpecifier; 2]) -> TemplateRe
         FieldSpecifier::from_ie(TcpControlBits, 2),
         FieldSpecifier::from_ie(FlowStartMilliseconds, 8),
         FieldSpecifier::from_ie(FlowEndMilliseconds, 8),
+        FieldSpecifier::from_ie(FlowEndReason, 1),
     ]);
 
     TemplateRecord::new(template_id, fields)

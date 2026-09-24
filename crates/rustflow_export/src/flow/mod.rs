@@ -5,6 +5,14 @@ use chrono::{DateTime, TimeDelta, Utc};
 
 use crate::ipfix::data::FlowData;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum FlowEndReason {
+    IdleTimeout = 1,
+    ActiveTimeout = 2,
+    ForcedEnd = 4,
+}
+
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct FlowKey {
     pub source_ip: IpAddr,
@@ -22,6 +30,7 @@ pub struct Flow {
     pub tcp_flags: u16,
     pub flow_start: DateTime<Utc>,
     pub flow_end: DateTime<Utc>,
+    pub flow_end_reason: Option<FlowEndReason>,
 }
 
 impl Flow {
@@ -34,6 +43,14 @@ impl Flow {
             tcp_flags: 0,
             flow_start: now,
             flow_end: now,
+            flow_end_reason: None,
+        }
+    }
+
+    fn ended(&self, reason: FlowEndReason) -> Self {
+        Self {
+            flow_end_reason: Some(reason),
+            ..self.clone()
         }
     }
 
@@ -56,6 +73,7 @@ impl Flow {
             tcp_flags: self.tcp_flags,
             flow_start: self.flow_start,
             flow_end: self.flow_end,
+            flow_end_reason: self.flow_end_reason.map_or(0, |reason| reason as u8),
         }
     }
 }
@@ -93,21 +111,26 @@ impl FlowCache {
             let age = now - flow.flow_start;
             let idle_time = now - flow.flow_end;
 
-            if age >= active_timeout || idle_time >= inactive_timeout {
-                expired.push(flow.clone());
-                false
+            let reason = if age >= active_timeout {
+                FlowEndReason::ActiveTimeout
+            } else if idle_time >= inactive_timeout {
+                FlowEndReason::IdleTimeout
             } else {
-                true
-            }
+                return true;
+            };
+            expired.push(flow.ended(reason));
+            false
         });
 
         expired
     }
 
+    /// Every flow, ended by force (shutdown).
     pub fn export_all(&mut self) -> Vec<Flow> {
-        let flows: Vec<Flow> = self.flows.values().cloned().collect();
-        self.flows.clear();
-        flows
+        self.flows
+            .drain()
+            .map(|(_, flow)| flow.ended(FlowEndReason::ForcedEnd))
+            .collect()
     }
 
     pub fn len(&self) -> usize {
