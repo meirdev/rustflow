@@ -4,7 +4,8 @@ use crate::common::common_flow::{CommonFlow, FlowType};
 use crate::common::convert::packet::{apply_ethernet_frame, apply_ip_packet};
 use crate::sflow_v5::parser::{
     AsPathType, ExpandedFlowSample, ExtendedGateway, ExtendedRouter, ExtendedSwitch,
-    FlowRecordType, FlowSample, HeaderProtocol, SFlowV5, SampledHeader, SampledIpv4, SampledIpv6,
+    FlowRecordType, FlowSample, HeaderProtocol, SFlowV5, SampledEthernet, SampledHeader,
+    SampledIpv4, SampledIpv6,
 };
 
 pub struct SFlowV5Context<'a> {
@@ -47,6 +48,9 @@ impl SFlowV5Context<'_> {
             FlowRecordType::SampledHeader(header) => {
                 self.apply_sampled_header(flow, header);
             }
+            FlowRecordType::SampledEthernet(ethernet) => {
+                self.apply_sampled_ethernet(flow, ethernet);
+            }
             FlowRecordType::SampledIpv4(ipv4) => {
                 self.apply_sampled_ipv4(flow, ipv4);
             }
@@ -82,6 +86,14 @@ impl SFlowV5Context<'_> {
             }
             _ => {}
         }
+    }
+
+    fn apply_sampled_ethernet(&self, flow: &mut CommonFlow, ethernet: &SampledEthernet) {
+        flow.src_mac = Some(ethernet.src_mac);
+        flow.dst_mac = Some(ethernet.dst_mac);
+        flow.etype = Some(ethernet.r#type as u16);
+        flow.bytes = ethernet.length as u64;
+        flow.packets = 1;
     }
 
     fn apply_sampled_ipv4(&self, flow: &mut CommonFlow, ipv4: &SampledIpv4) {
@@ -122,6 +134,7 @@ impl SFlowV5Context<'_> {
     }
 
     fn apply_extended_gateway(&self, flow: &mut CommonFlow, gateway: &ExtendedGateway) {
+        flow.bgp_next_hop = Some(gateway.nexthop);
         flow.src_as = Some(gateway.src_as);
         flow.dst_as = match gateway.dst_as_path.last() {
             Some(AsPathType::AsSequence(as_seq)) => as_seq.last().copied(),
