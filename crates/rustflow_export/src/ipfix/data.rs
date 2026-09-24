@@ -17,6 +17,7 @@ pub struct FlowData {
     pub tcp_flags: u16,
     pub flow_start: DateTime<Utc>,
     pub flow_end: DateTime<Utc>,
+    pub flow_end_reason: u8,
 }
 
 impl FlowData {
@@ -27,10 +28,18 @@ impl FlowData {
         }
     }
 
+    fn ip_version(&self) -> u8 {
+        match self.source_ip {
+            IpAddr::V4(_) => 4,
+            IpAddr::V6(_) => 6,
+        }
+    }
+
     pub fn to_data_record(&self) -> DataRecord {
         DataRecord::new(vec![
             address(self.source_ip),
             address(self.destination_ip),
+            FieldValue::Unsigned8(self.ip_version()),
             FieldValue::Unsigned8(self.protocol),
             FieldValue::Unsigned16(self.source_port),
             FieldValue::Unsigned16(self.destination_port),
@@ -39,6 +48,7 @@ impl FlowData {
             FieldValue::Unsigned16(self.tcp_flags),
             FieldValue::DateTimeMilliseconds(self.flow_start),
             FieldValue::DateTimeMilliseconds(self.flow_end),
+            FieldValue::Unsigned8(self.flow_end_reason),
         ])
     }
 }
