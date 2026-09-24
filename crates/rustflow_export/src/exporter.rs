@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use chrono::Utc;
 use log::{debug, info};
-use rustflow_core::ipfix::encoder::Encode;
+use rustflow_core::common::encoder::Encode;
 use rustflow_core::ipfix::parser::{
     Header, IPFIX_OPTIONS_TEMPLATE_SET_ID, IPFIX_TEMPLATE_SET_ID, IPFIX_VERSION, IpfixPacket,
     Record, Set,

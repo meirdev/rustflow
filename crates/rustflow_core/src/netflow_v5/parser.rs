@@ -26,7 +26,7 @@ impl Default for NetFlowV5Parser {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct NetFlowV5Packet {
     #[serde(flatten)]
     pub header: Header,
@@ -46,7 +46,7 @@ fn parse_netflow_v5_packet(input: &[u8]) -> IResult<&[u8], NetFlowV5Packet> {
     ))
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Header {
     pub version: u16,
     pub count: u16,
@@ -91,7 +91,7 @@ fn parse_header(input: &[u8]) -> IResult<&[u8], Header> {
     ))
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FlowRecord {
     pub srcaddr: Ipv4Addr,
     pub dstaddr: Ipv4Addr,

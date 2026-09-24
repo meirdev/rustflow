@@ -5,6 +5,7 @@ use super::parser::{
     DataRecord, FieldSpecifier, FieldValue, Header, IPFIX_HEADER_SIZE, IPFIX_VARIABLE_LENGTH,
     IpfixPacket, OptionsTemplateRecord, Record, SET_HEADER_SIZE, Set, SetHeader, TemplateRecord,
 };
+use crate::common::encoder::Encode;
 use crate::common::parser::NTP_UNIX_EPOCH_DIFF;
 
 /// Convert DateTime to NTP format (two u32: seconds since 1900, fractional
@@ -16,10 +17,6 @@ fn datetime_to_ntp(dt: &DateTime<Utc>) -> (u32, u32) {
     // Convert nanoseconds to NTP fractional format: nanos * 2^32 / 1_000_000_000
     let fraction = (nanos << 32) / 1_000_000_000;
     (ntp_secs as u32, fraction as u32)
-}
-
-pub trait Encode {
-    fn encode<B: BufMut>(&self, buf: &mut B);
 }
 
 impl Encode for FieldSpecifier {

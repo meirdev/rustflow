@@ -57,7 +57,9 @@ pub fn macaddr6(input: &[u8]) -> IResult<&[u8], MacAddr6> {
 pub fn string(length: usize) -> impl Fn(&[u8]) -> IResult<&[u8], String> {
     move |input: &[u8]| {
         map_opt(take(length), |v: &[u8]| {
-            from_utf8(v).ok().map(|v| v.trim_end_matches('\0').to_string())
+            from_utf8(v)
+                .ok()
+                .map(|v| v.trim_end_matches('\0').to_string())
         })
         .parse(input)
     }

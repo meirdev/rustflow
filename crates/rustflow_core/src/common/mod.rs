@@ -2,6 +2,7 @@ pub mod common_flow;
 pub mod convert;
 pub mod cryptopan;
 pub mod data_record;
+pub mod encoder;
 pub mod ie_registry;
 pub mod information_element;
 pub mod packet;
