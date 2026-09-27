@@ -1,3 +1,5 @@
+mod arrow;
+mod columns;
 mod csv;
 mod discard;
 mod ndjson;
@@ -6,6 +8,7 @@ mod protobuf;
 
 use std::io::{self, Write};
 
+pub use arrow::ArrowIpc;
 pub use discard::Discard;
 pub use ndjson::Ndjson;
 pub use protobuf::Protobuf;
