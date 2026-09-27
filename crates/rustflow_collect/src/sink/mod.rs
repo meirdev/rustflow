@@ -11,7 +11,7 @@ use std::{fmt, io};
 
 use clap::ValueEnum;
 pub use destination::{Destination, MAX_PARTITION_LEVEL};
-pub use encoder::{Csv, Discard, Encoder, Ndjson, Parquet, Protobuf, Writer};
+pub use encoder::{ArrowIpc, Csv, Discard, Encoder, Ndjson, Parquet, Protobuf, Writer};
 pub use hook::FileHook;
 pub use metrics::OutputMetrics;
 pub use rotating::RotatingSink;
@@ -29,8 +29,10 @@ pub enum Serialization {
     /// Newline-delimited JSON, one object per line
     Ndjson,
     Csv,
-    /// Snappy-compressed Apache Parquet
+    /// Snappy-compressed Apache Parquet; on stdout, an Arrow IPC stream
     Parquet,
+    /// Apache Arrow IPC stream, a batch per flush
+    ArrowIpc,
     /// Length-delimited protobuf, see `proto/rustflow.proto`
     Protobuf,
     /// Decode and count flows but write no output (for load testing)
@@ -44,6 +46,7 @@ impl Serialization {
             Self::Ndjson => "ndjson",
             Self::Csv => "csv",
             Self::Parquet => "parquet",
+            Self::ArrowIpc => "arrows",
             Self::Protobuf => "pb",
             Self::Discard => "discard",
         }
@@ -60,6 +63,7 @@ impl Serialization {
             Self::Ndjson => Box::new(Ndjson::open(out, enriched_fields)?),
             Self::Csv => Box::new(Csv::open(out, enriched_fields)?),
             Self::Parquet => Box::new(Parquet::open(out, enriched_fields)?),
+            Self::ArrowIpc => Box::new(ArrowIpc::open(out, enriched_fields)?),
             Self::Protobuf => Box::new(Protobuf::open(out, enriched_fields)?),
             Self::Discard => Box::new(Discard::open(out, enriched_fields)?),
         })
@@ -88,7 +92,6 @@ pub struct SinkConfig {
     pub interval: Option<Duration>,
     pub level: u8,
     pub prefix: String,
-    /// `-x`: run after each completed file.
     pub exec: Option<String>,
 }
 
@@ -125,11 +128,13 @@ pub fn build(
         Serialization::Discard => Destination::Null,
         _ => config.destination(),
     };
-    if serialization == Serialization::Parquet && matches!(destination, Destination::Stdout) {
-        return Err(io::Error::other(
-            "--serialization parquet requires --output <FILE>",
-        ));
-    }
+    let serialization = match (serialization, &destination) {
+        (Serialization::Parquet, Destination::Stdout) => {
+            eprintln!("Parquet cannot stream to stdout; writing an Arrow IPC stream instead");
+            Serialization::ArrowIpc
+        }
+        (serialization, _) => serialization,
+    };
     let mut sink =
         RotatingSink::open(serialization, destination, enriched_fields, metrics.clone())?;
     if let Some(command) = &config.exec {

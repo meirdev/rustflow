@@ -5,7 +5,7 @@ RustFlow supports two flow representations:
 - **Raw** - preserves the original protocol-specific flow structure.
 - **Common** - normalizes NetFlow, IPFIX, and sFlow into a common schema.
 
-The common format can be serialized as **NDJSON, CSV, Protobuf, or Parquet**, or discarded entirely for load testing.
+The common format can be serialized as **NDJSON, CSV, Protobuf, Parquet, or Arrow IPC**, or discarded entirely for load testing.
 
 ## Common Flow
 
@@ -110,7 +110,7 @@ rustflow collect \
 
 Without `--interval`, `--output` refers to a single file.
 
-For Parquet output, `--format common` and `--output` are required:
+> Parquet output requires `--format common`. A Parquet file is only readable once its footer is written, so it cannot stream; with `-s parquet` and no `--output`, RustFlow writes an Arrow IPC stream to stdout instead.
 
 ```bash
 rustflow collect \
