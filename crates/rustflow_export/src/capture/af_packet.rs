@@ -1,9 +1,15 @@
-// Manual AF_PACKET implementation with PACKET_MMAP (TPACKET_V2).
+// Manual AF_PACKET implementation with PACKET_MMAP (TPACKET_V3).
 // We don't use the `af_packet` crate because it has a musl compilation bug:
 // ioctl request type mismatch (u64 vs i32) that prevents cross-compilation.
+//
+// TPACKET_V3 is block-oriented: the kernel packs frames into a block and
+// hands over the whole block, so reading costs a wakeup per block instead
+// of one per frame.
 
 use std::ffi::CString;
-use std::{io, mem, ptr};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::{io, mem, ptr, slice};
 
 use anyhow::{Result, anyhow};
 use log::info;
@@ -11,171 +17,155 @@ use log::info;
 use super::packet::{Sampler, parse_ethernet};
 use super::{Capture, PacketInfo};
 
-// AF_PACKET constants
-const ETH_P_ALL: u16 = 0x0003;
-const PACKET_ADD_MEMBERSHIP: libc::c_int = 1;
-const PACKET_RX_RING: libc::c_int = 5;
-const PACKET_VERSION: libc::c_int = 10;
-const TPACKET_V2: libc::c_int = 1;
-const PACKET_MR_PROMISC: libc::c_ushort = 1;
+const TPACKET_V3: libc::c_int = 2;
 
-// Ring buffer configuration
+const BLOCK_SIZE: u32 = 1 << 16;
+const BLOCK_NR: u32 = 64;
 const FRAME_SIZE: u32 = 2048;
-const BLOCK_SIZE: u32 = 4096;
-const BLOCK_NR: u32 = 256;
 const FRAME_NR: u32 = (BLOCK_SIZE / FRAME_SIZE) * BLOCK_NR;
 
-// Frame status flags
-const TP_STATUS_KERNEL: u32 = 0;
-const TP_STATUS_USER: u32 = 1;
+/// A block that is not full is handed over after this long, so packets on
+/// a quiet link are not held back.
+const BLOCK_TIMEOUT_MS: u32 = 100;
 
-#[repr(C)]
-struct PacketMreq {
-    mr_ifindex: libc::c_int,
-    mr_type: libc::c_ushort,
-    mr_alen: libc::c_ushort,
-    mr_address: [libc::c_uchar; 8],
-}
+/// Bytes of each frame copied into the ring: the headers are all that is
+/// parsed, and a V3 frame is otherwise as large as the packet.
+const SNAPLEN: u32 = 2048;
 
-#[repr(C)]
-struct TpacketReq {
-    tp_block_size: libc::c_uint,
-    tp_block_nr: libc::c_uint,
-    tp_frame_size: libc::c_uint,
-    tp_frame_nr: libc::c_uint,
-}
-
-#[repr(C)]
-struct Tpacket2Hdr {
-    tp_status: u32,
-    tp_len: u32,
-    tp_snaplen: u32,
-    tp_mac: u16,
-    tp_net: u16,
-    tp_sec: u32,
-    tp_nsec: u32,
-    tp_vlan_tci: u16,
-    tp_vlan_tpid: u16,
-    tp_padding: [u8; 4],
-}
+/// Classic BPF `ret k`: accept the packet, truncated to `k` bytes.
+const BPF_RET: u16 = 0x06;
 
 pub struct AfPacket {
-    fd: libc::c_int,
-    ring: *mut u8,
-    ring_size: usize,
-    frame_idx: u32,
+    socket: OwnedFd,
+    ring: Ring,
+    block_idx: u32,
+    /// Frames still to read in the block held; 0 when none is held.
+    frames_left: u32,
+    /// Ring offset of the next frame in that block.
+    frame_offset: usize,
     sampler: Sampler,
+}
+
+struct Ring {
+    ptr: *mut u8,
+    len: usize,
+}
+
+impl Ring {
+    fn map(socket: &OwnedFd, len: usize) -> io::Result<Self> {
+        let ptr = unsafe {
+            libc::mmap(
+                ptr::null_mut(),
+                len,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                socket.as_raw_fd(),
+                0,
+            )
+        };
+        if ptr == libc::MAP_FAILED {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Self {
+            ptr: ptr as *mut u8,
+            len,
+        })
+    }
+}
+
+impl Drop for Ring {
+    fn drop(&mut self) {
+        unsafe {
+            libc::munmap(self.ptr as *mut libc::c_void, self.len);
+        }
+    }
+}
+
+fn set_option<T>(
+    socket: &OwnedFd,
+    level: libc::c_int,
+    name: libc::c_int,
+    value: &T,
+) -> io::Result<()> {
+    let ret = unsafe {
+        libc::setsockopt(
+            socket.as_raw_fd(),
+            level,
+            name,
+            ptr::from_ref(value).cast(),
+            mem::size_of::<T>() as libc::socklen_t,
+        )
+    };
+    if ret < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 impl AfPacket {
     pub fn new(interface: &str, promiscuous: bool, sampling_interval: u32) -> Result<Self> {
         info!("Opening AF_PACKET capture on interface: {}", interface);
 
-        // Create AF_PACKET socket
-        let fd = unsafe {
-            libc::socket(
-                libc::AF_PACKET,
-                libc::SOCK_RAW,
-                ETH_P_ALL.to_be() as libc::c_int,
-            )
-        };
+        let protocol = (libc::ETH_P_ALL as u16).to_be();
+        let fd = unsafe { libc::socket(libc::AF_PACKET, libc::SOCK_RAW, protocol as libc::c_int) };
         if fd < 0 {
             return Err(anyhow!(
                 "Failed to create socket: {}",
                 io::Error::last_os_error()
             ));
         }
+        let socket = unsafe { OwnedFd::from_raw_fd(fd) };
 
-        // Set TPACKET_V2
-        let version: libc::c_int = TPACKET_V2;
-        let ret = unsafe {
-            libc::setsockopt(
-                fd,
-                libc::SOL_PACKET,
-                PACKET_VERSION,
-                &version as *const _ as *const libc::c_void,
-                mem::size_of::<libc::c_int>() as libc::socklen_t,
-            )
+        set_option(&socket, libc::SOL_PACKET, libc::PACKET_VERSION, &TPACKET_V3)
+            .map_err(|e| anyhow!("Failed to set TPACKET_V3: {}", e))?;
+
+        let mut snap = libc::sock_filter {
+            code: BPF_RET,
+            jt: 0,
+            jf: 0,
+            k: SNAPLEN,
         };
-        if ret < 0 {
-            unsafe { libc::close(fd) };
-            return Err(anyhow!(
-                "Failed to set TPACKET_V2: {}",
-                io::Error::last_os_error()
-            ));
-        }
+        let filter = libc::sock_fprog {
+            len: 1,
+            filter: &mut snap,
+        };
+        set_option(&socket, libc::SOL_SOCKET, libc::SO_ATTACH_FILTER, &filter)
+            .map_err(|e| anyhow!("Failed to set the snap length: {}", e))?;
 
-        // Setup ring buffer
-        let req = TpacketReq {
+        let req = libc::tpacket_req3 {
             tp_block_size: BLOCK_SIZE,
             tp_block_nr: BLOCK_NR,
             tp_frame_size: FRAME_SIZE,
             tp_frame_nr: FRAME_NR,
+            tp_retire_blk_tov: BLOCK_TIMEOUT_MS,
+            tp_sizeof_priv: 0,
+            tp_feature_req_word: 0,
         };
+        set_option(&socket, libc::SOL_PACKET, libc::PACKET_RX_RING, &req)
+            .map_err(|e| anyhow!("Failed to setup ring buffer: {}", e))?;
 
-        let ret = unsafe {
-            libc::setsockopt(
-                fd,
-                libc::SOL_PACKET,
-                PACKET_RX_RING,
-                &req as *const _ as *const libc::c_void,
-                mem::size_of::<TpacketReq>() as libc::socklen_t,
-            )
-        };
-        if ret < 0 {
-            unsafe { libc::close(fd) };
-            return Err(anyhow!(
-                "Failed to setup ring buffer: {}",
-                io::Error::last_os_error()
-            ));
-        }
+        let ring = Ring::map(&socket, (BLOCK_SIZE * BLOCK_NR) as usize)
+            .map_err(|e| anyhow!("Failed to mmap ring buffer: {}", e))?;
 
-        // mmap the ring buffer
-        let ring_size = (BLOCK_SIZE * BLOCK_NR) as usize;
-        let ring = unsafe {
-            libc::mmap(
-                ptr::null_mut(),
-                ring_size,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_SHARED,
-                fd,
-                0,
-            )
-        };
-        if ring == libc::MAP_FAILED {
-            unsafe { libc::close(fd) };
-            return Err(anyhow!(
-                "Failed to mmap ring buffer: {}",
-                io::Error::last_os_error()
-            ));
-        }
+        let ifindex = get_interface_index(&socket, interface)?;
 
-        // Get interface index
-        let ifindex = get_interface_index(fd, interface)?;
-
-        // Bind to interface
         let addr = libc::sockaddr_ll {
             sll_family: libc::AF_PACKET as u16,
-            sll_protocol: ETH_P_ALL.to_be(),
+            sll_protocol: protocol,
             sll_ifindex: ifindex,
             sll_hatype: 0,
             sll_pkttype: 0,
             sll_halen: 0,
             sll_addr: [0; 8],
         };
-
         let ret = unsafe {
             libc::bind(
-                fd,
-                &addr as *const _ as *const libc::sockaddr,
+                socket.as_raw_fd(),
+                ptr::from_ref(&addr).cast(),
                 mem::size_of::<libc::sockaddr_ll>() as libc::socklen_t,
             )
         };
         if ret < 0 {
-            unsafe {
-                libc::munmap(ring, ring_size);
-                libc::close(fd);
-            }
             return Err(anyhow!(
                 "Failed to bind to interface: {}",
                 io::Error::last_os_error()
@@ -183,75 +173,115 @@ impl AfPacket {
         }
 
         if promiscuous {
-            let mreq = PacketMreq {
+            let mreq = libc::packet_mreq {
                 mr_ifindex: ifindex,
-                mr_type: PACKET_MR_PROMISC,
+                mr_type: libc::PACKET_MR_PROMISC as libc::c_ushort,
                 mr_alen: 0,
                 mr_address: [0; 8],
             };
-
-            let ret = unsafe {
-                libc::setsockopt(
-                    fd,
-                    libc::SOL_PACKET,
-                    PACKET_ADD_MEMBERSHIP,
-                    &mreq as *const _ as *const libc::c_void,
-                    mem::size_of::<PacketMreq>() as libc::socklen_t,
-                )
-            };
-            if ret < 0 {
-                unsafe {
-                    libc::munmap(ring, ring_size);
-                    libc::close(fd);
-                }
-                return Err(anyhow!(
+            set_option(
+                &socket,
+                libc::SOL_PACKET,
+                libc::PACKET_ADD_MEMBERSHIP,
+                &mreq,
+            )
+            .map_err(|e| {
+                anyhow!(
                     "Failed to enable promiscuous mode on '{}': {}",
                     interface,
-                    io::Error::last_os_error()
-                ));
-            }
+                    e
+                )
+            })?;
 
             info!("Promiscuous mode enabled on {}", interface);
         }
 
-        info!("AF_PACKET ring buffer ready: {} frames", FRAME_NR);
+        info!(
+            "AF_PACKET ring buffer ready: {} blocks of {} KiB",
+            BLOCK_NR,
+            BLOCK_SIZE / 1024
+        );
 
         Ok(Self {
-            fd,
-            ring: ring as *mut u8,
-            ring_size,
-            frame_idx: 0,
+            socket,
+            ring,
+            block_idx: 0,
+            frames_left: 0,
+            frame_offset: 0,
             sampler: Sampler::new(sampling_interval),
         })
+    }
+
+    fn block_offset(&self) -> usize {
+        (self.block_idx * BLOCK_SIZE) as usize
+    }
+
+    fn block(&self) -> *mut libc::tpacket_hdr_v1 {
+        unsafe {
+            let desc = self.ring.ptr.add(self.block_offset()) as *mut libc::tpacket_block_desc;
+            ptr::addr_of_mut!((*desc).hdr.bh1)
+        }
+    }
+
+    /// The kernel and this thread pass the block back and forth through
+    /// its status word.
+    fn block_status(&self) -> &AtomicU32 {
+        unsafe { AtomicU32::from_ptr(ptr::addr_of_mut!((*self.block()).block_status)) }
+    }
+
+    fn block_ready(&self) -> bool {
+        self.block_status().load(Ordering::Acquire) & libc::TP_STATUS_USER != 0
+    }
+
+    /// Takes the next block once the kernel has handed it over, waiting up
+    /// to a second for it.
+    fn acquire_block(&mut self) -> bool {
+        if !self.block_ready() {
+            let mut pfd = libc::pollfd {
+                fd: self.socket.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            let ret = unsafe { libc::poll(&mut pfd, 1, 1000) };
+            if ret <= 0 || !self.block_ready() {
+                return false;
+            }
+        }
+
+        let (frames, first_frame) = unsafe {
+            let block = self.block();
+            ((*block).num_pkts, (*block).offset_to_first_pkt)
+        };
+        if frames == 0 {
+            // Handed over empty by the block timeout.
+            self.release_block();
+            return false;
+        }
+
+        self.frames_left = frames;
+        self.frame_offset = self.block_offset() + first_frame as usize;
+        true
+    }
+
+    fn release_block(&mut self) {
+        self.block_status()
+            .store(libc::TP_STATUS_KERNEL, Ordering::Release);
+        self.block_idx = (self.block_idx + 1) % BLOCK_NR;
     }
 }
 
 impl Capture for AfPacket {
     fn next_packet(&mut self) -> Option<PacketInfo> {
-        // Poll for packet availability with timeout
-        let mut pfd = libc::pollfd {
-            fd: self.fd,
-            events: libc::POLLIN,
-            revents: 0,
-        };
-
-        let ret = unsafe { libc::poll(&mut pfd, 1, 1000) }; // 1 second timeout
-        if ret <= 0 {
+        if self.frames_left == 0 && !self.acquire_block() {
             return None;
         }
 
-        // Check current frame
-        let frame_offset = (self.frame_idx * FRAME_SIZE) as usize;
-        let hdr = unsafe { &mut *(self.ring.add(frame_offset) as *mut Tpacket2Hdr) };
-
-        if (hdr.tp_status & TP_STATUS_USER) == 0 {
-            return None;
-        }
+        let frame = unsafe { self.ring.ptr.add(self.frame_offset) };
+        let hdr = unsafe { &*(frame as *const libc::tpacket3_hdr) };
 
         let result = if self.sampler.select() {
             let packet_data = unsafe {
-                let data_ptr = self.ring.add(frame_offset + hdr.tp_mac as usize);
-                std::slice::from_raw_parts(data_ptr, hdr.tp_snaplen as usize)
+                slice::from_raw_parts(frame.add(hdr.tp_mac as usize), hdr.tp_snaplen as usize)
             };
 
             parse_ethernet(packet_data)
@@ -259,26 +289,18 @@ impl Capture for AfPacket {
             None
         };
 
-        // Return frame to kernel
-        hdr.tp_status = TP_STATUS_KERNEL;
-
-        // Move to next frame
-        self.frame_idx = (self.frame_idx + 1) % FRAME_NR;
+        self.frames_left -= 1;
+        if self.frames_left == 0 {
+            self.release_block();
+        } else {
+            self.frame_offset += hdr.tp_next_offset as usize;
+        }
 
         result
     }
 }
 
-impl Drop for AfPacket {
-    fn drop(&mut self) {
-        unsafe {
-            libc::munmap(self.ring as *mut libc::c_void, self.ring_size);
-            libc::close(self.fd);
-        }
-    }
-}
-
-fn get_interface_index(fd: libc::c_int, interface: &str) -> Result<libc::c_int> {
+fn get_interface_index(socket: &OwnedFd, interface: &str) -> Result<libc::c_int> {
     let ifname = CString::new(interface)?;
     let mut ifr: libc::ifreq = unsafe { mem::zeroed() };
 
@@ -299,7 +321,7 @@ fn get_interface_index(fd: libc::c_int, interface: &str) -> Result<libc::c_int> 
     #[cfg(not(target_env = "musl"))]
     let request = libc::SIOCGIFINDEX as libc::c_ulong;
 
-    let ret = unsafe { libc::ioctl(fd, request, &mut ifr) };
+    let ret = unsafe { libc::ioctl(socket.as_raw_fd(), request, &mut ifr) };
     if ret < 0 {
         return Err(anyhow!(
             "Interface '{}' not found: {}",
