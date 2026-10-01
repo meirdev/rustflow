@@ -77,8 +77,6 @@ pub fn boolean(input: &[u8]) -> IResult<&[u8], Option<bool>> {
     .parse(input)
 }
 
-/// Big-endian unsigned integer of a reduced size (RFC 7011 section 6.2), for
-/// the 5-7 byte widths nom has no built-in parser for.
 pub fn be_uint(length: usize) -> impl Fn(&[u8]) -> IResult<&[u8], u64> {
     move |input| {
         map(take(length), |bytes: &[u8]| {
@@ -88,13 +86,11 @@ pub fn be_uint(length: usize) -> impl Fn(&[u8]) -> IResult<&[u8], u64> {
     }
 }
 
-/// Big-endian two's-complement signed integer of a reduced size (RFC 7011
-/// section 6.2): the most significant bit of the encoded value is the sign bit.
 pub fn be_int(length: usize) -> impl Fn(&[u8]) -> IResult<&[u8], i64> {
     move |input| {
         map(be_uint(length), |v| {
-            let shift = 64 - length * 8;
-            ((v << shift) as i64) >> shift
+            let shift = 64u32.saturating_sub(8 * length as u32);
+            (v as i64).wrapping_shl(shift).wrapping_shr(shift)
         })
         .parse(input)
     }
