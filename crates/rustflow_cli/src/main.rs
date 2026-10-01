@@ -1,8 +1,3 @@
-//! The `rustflow` command line interface.
-//!
-//! Each subcommand is a thin wrapper over one of the tool crates, which own
-//! both their argument definitions and their `run` entry points.
-
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use rustflow_collect::CollectArgs;
