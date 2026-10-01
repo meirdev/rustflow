@@ -82,7 +82,7 @@ impl IERegistry {
         self.elements.get(&(id, enterprise_number))
     }
 
-    // Not common; it's okay to do it in O(n) time.
+    // Name lookups are infrequent, so a linear scan avoids a separate index.
     pub fn lookup_by_name(&self, name: &str) -> Option<&IEDefinition> {
         self.elements.values().find(|def| &*def.name == name)
     }

@@ -66,7 +66,6 @@ fn parse_netflow_v9<'a>(
     options_templates: &mut TemplateCache,
 ) -> IResult<&'a [u8], NetFlowV9Packet> {
     let (input, header) = parse_header(input)?;
-    // Templates must be installed before decoding later FlowSets in this packet.
     let (input, flow_sets) = many0(|input| {
         parse_flow_set(
             input,

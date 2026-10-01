@@ -57,7 +57,6 @@ impl Encode for FlowRecord {
     }
 }
 
-/// The 32-bit millisecond counter the parser turns into a timestamp.
 fn put_millis<B: BufMut>(dt: &DateTime<Utc>, buf: &mut B) {
     buf.put_u32(dt.timestamp_millis() as u32);
 }

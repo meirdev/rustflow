@@ -160,8 +160,8 @@ fn parse_flow_record(input: &[u8]) -> IResult<&[u8], FlowRecord> {
     ))
 }
 
-// NetFlow v5 stores milliseconds in an unsigned 32-bit integer.
-// Apparently, the protocol suffers from the same bugs noted on Wikipedia (https://en.wikipedia.org/wiki/Time_formatting_and_storage_bugs) that affect other software.
+// NetFlow v5 encodes uptime in unsigned 32-bit milliseconds, which wraps around
+// after approximately 49.7 days.
 fn timestamp_millis(input: &[u8]) -> IResult<&[u8], DateTime<Utc>> {
     map_opt(be_u32, |v| DateTime::<Utc>::from_timestamp_millis(v as i64)).parse(input)
 }
