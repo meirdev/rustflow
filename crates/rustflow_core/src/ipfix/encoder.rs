@@ -55,6 +55,7 @@ impl Encode for TemplateRecord {
     fn encode<B: BufMut>(&self, buf: &mut B) {
         buf.put_u16(self.template_id);
         buf.put_u16(self.field_count);
+
         for field in &self.fields {
             field.encode(buf);
         }
@@ -66,6 +67,7 @@ impl Encode for OptionsTemplateRecord {
         buf.put_u16(self.template_id);
         buf.put_u16(self.field_count);
         buf.put_u16(self.scope_field_count);
+
         for field in &self.fields {
             field.encode(buf);
         }
@@ -74,7 +76,6 @@ impl Encode for OptionsTemplateRecord {
 
 impl Encode for IpfixPacket {
     fn encode<B: BufMut>(&self, buf: &mut B) {
-        // Encode sets first to calculate total length
         let mut sets_data = Vec::new();
         for set in &self.sets {
             set.encode(&mut sets_data);
@@ -92,7 +93,6 @@ impl Encode for IpfixPacket {
 
 impl Encode for Set {
     fn encode<B: BufMut>(&self, buf: &mut B) {
-        // Encode records first to calculate length
         let mut records_data = Vec::new();
         for record in &self.records {
             record.encode(&mut records_data);
@@ -163,8 +163,6 @@ fn encode_field_value<B: BufMut>(value: &FieldValue, field_length: u16, buf: &mu
     }
 }
 
-/// Big-endian unsigned integer in exactly `length` bytes: the low-order
-/// bytes for a reduced size, zero-extended beyond eight.
 fn put_uint<B: BufMut>(value: u64, length: usize, buf: &mut B) {
     let bytes = value.to_be_bytes();
     if length <= bytes.len() {
@@ -175,8 +173,6 @@ fn put_uint<B: BufMut>(value: u64, length: usize, buf: &mut B) {
     }
 }
 
-/// Big-endian two's-complement integer in exactly `length` bytes: the
-/// low-order bytes for a reduced size, sign-extended beyond eight.
 fn put_int<B: BufMut>(value: i64, length: usize, buf: &mut B) {
     let bytes = value.to_be_bytes();
     if length <= bytes.len() {
@@ -208,7 +204,6 @@ impl Encode for FieldValue {
             FieldValue::DateTimeSeconds(v) => buf.put_u32(v.timestamp() as u32),
             FieldValue::DateTimeMilliseconds(v) => buf.put_u64(v.timestamp_millis() as u64),
             FieldValue::DateTimeMicroseconds(v) | FieldValue::DateTimeNanoseconds(v) => {
-                // NTP format: two u32 (seconds since 1900, fractional seconds)
                 let (ntp_secs, fraction) = datetime_to_ntp(v);
                 buf.put_u32(ntp_secs);
                 buf.put_u32(fraction);
