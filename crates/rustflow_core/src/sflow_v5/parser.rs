@@ -871,9 +871,9 @@ pub struct ExtendedUser {
 
 fn parse_extended_user(input: &[u8]) -> IResult<&[u8], ExtendedUser> {
     let (input, src_charset) = be_u32(input)?;
-    let (input, src_user) = parse_string(input)?;
+    let (input, src_user) = parse_xdr_string(input)?;
     let (input, dst_charset) = be_u32(input)?;
-    let (input, dst_user) = parse_string(input)?;
+    let (input, dst_user) = parse_xdr_string(input)?;
 
     Ok((
         input,
@@ -901,7 +901,7 @@ pub struct ExtendedUrl {
 
 fn parse_extended_url(input: &[u8]) -> IResult<&[u8], ExtendedUrl> {
     let (input, direction) = map_res(be_u32, |v| v.try_into()).parse(input)?;
-    let (input, url) = parse_string(input)?;
+    let (input, url) = parse_xdr_string(input)?;
 
     Ok((input, ExtendedUrl { direction, url }))
 }
@@ -934,7 +934,7 @@ pub struct ExtendedAcl {
 
 fn parse_extended_acl(input: &[u8]) -> IResult<&[u8], ExtendedAcl> {
     let (input, number) = be_u32(input)?;
-    let (input, name) = parse_string(input)?;
+    let (input, name) = parse_xdr_string(input)?;
     let (input, direction) = map_res(be_u32, |v| v.try_into()).parse(input)?;
 
     Ok((
@@ -953,7 +953,7 @@ pub struct ExtendedFunction {
 }
 
 fn parse_extended_function(input: &[u8]) -> IResult<&[u8], ExtendedFunction> {
-    let (input, symbol) = parse_string(input)?;
+    let (input, symbol) = parse_xdr_string(input)?;
 
     Ok((input, ExtendedFunction { symbol }))
 }
@@ -1273,16 +1273,15 @@ fn parse_processor(input: &[u8]) -> IResult<&[u8], Processor> {
     ))
 }
 
-fn parse_string(input: &[u8]) -> IResult<&[u8], String> {
+fn parse_xdr_string(input: &[u8]) -> IResult<&[u8], String> {
     let (input, length) = be_u32(input)?;
     let (input, string) = map(take(length as usize), |v| {
         String::from_utf8_lossy(v).to_string()
     })
     .parse(input)?;
 
-    // RFC 4506 sections 4.10 and 4.11: pad to a multiple of four bytes.
     let padding = (4 - (length as usize) % 4) % 4;
-    let (input, _) = take(padding.min(input.len()))(input)?;
+    let (input, _) = take(padding)(input)?;
 
     Ok((input, string))
 }
