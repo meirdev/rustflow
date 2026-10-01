@@ -259,18 +259,93 @@ fn ipfix_extract_datetime_ns(value: &IpfixFieldValue) -> Option<i64> {
     }
 }
 
+/// The 1-in-N rate an options record describes: `samplingInterval` and
+/// `samplerRandomInterval` state it directly; the PSAMP count-based pair
+/// selects `samplingPacketInterval` packets out of every
+/// `samplingPacketInterval + samplingPacketSpace`, which is only reported
+/// when that is a whole 1-in-N. A `samplingPacketInterval` on its own is
+/// read as the rate, which is how many exporters use it.
 pub fn extract_ipfix_sampling_rate(record: &IpfixDataRecord) -> Option<u32> {
-    let sampling_interval_id: u16 = InformationElement::SamplingInterval.into();
-    let sampling_packet_interval_id: u16 = InformationElement::SamplingPacketInterval.into();
-    let sampler_random_interval_id: u16 = InformationElement::SamplerRandomInterval.into();
+    use InformationElement::*;
+
+    let mut interval = None;
+    let mut space = None;
     for (field, _, value) in record.iter() {
-        let field_type = &field.information_element_identifier;
-        if *field_type == sampling_interval_id
-            || *field_type == sampling_packet_interval_id
-            || *field_type == sampler_random_interval_id
-        {
-            return ipfix_extract_u32(value);
+        match InformationElement::from_id(field.information_element_identifier) {
+            Some(SamplingInterval | SamplerRandomInterval) => return ipfix_extract_u32(value),
+            Some(SamplingPacketInterval) => interval = ipfix_extract_u32(value),
+            Some(SamplingPacketSpace) => space = ipfix_extract_u32(value),
+            _ => {}
         }
     }
-    None
+    match (interval, space) {
+        (Some(interval), Some(space)) if interval > 0 => {
+            let (interval, population) =
+                (u64::from(interval), u64::from(interval) + u64::from(space));
+            (population % interval == 0)
+                .then(|| u32::try_from(population / interval).ok())
+                .flatten()
+        }
+        (interval, _) => interval,
+    }
+}
+
+#[cfg(test)]
+mod sampling_tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::ipfix::parser::FieldSpecifier;
+
+    fn record(fields: &[(InformationElement, u32)]) -> IpfixDataRecord {
+        let specs = fields
+            .iter()
+            .map(|(ie, _)| crate::ipfix::parser::ResolvedField {
+                spec: FieldSpecifier::from_ie(*ie, 4),
+                data_type: crate::common::ie_registry::DataType::Unsigned,
+                name: Arc::from(""),
+            })
+            .collect();
+        let values = fields
+            .iter()
+            .map(|(_, v)| IpfixFieldValue::Unsigned32(*v))
+            .collect();
+        IpfixDataRecord::from_template(specs, values)
+    }
+
+    #[test]
+    fn psamp_count_based_pair_gives_one_in_n() {
+        use InformationElement::*;
+        let one_in_100 = record(&[(SamplingPacketInterval, 1), (SamplingPacketSpace, 99)]);
+        assert_eq!(extract_ipfix_sampling_rate(&one_in_100), Some(100));
+        let two_in_ten = record(&[(SamplingPacketInterval, 2), (SamplingPacketSpace, 8)]);
+        assert_eq!(extract_ipfix_sampling_rate(&two_in_ten), Some(5));
+    }
+
+    #[test]
+    fn ratios_that_are_not_a_whole_one_in_n_are_not_reported() {
+        use InformationElement::*;
+        let two_in_three = record(&[(SamplingPacketInterval, 2), (SamplingPacketSpace, 1)]);
+        assert_eq!(extract_ipfix_sampling_rate(&two_in_three), None);
+        let overflow = record(&[(SamplingPacketInterval, 1), (SamplingPacketSpace, u32::MAX)]);
+        assert_eq!(extract_ipfix_sampling_rate(&overflow), None);
+        let huge = record(&[(SamplingPacketInterval, u32::MAX), (SamplingPacketSpace, 1)]);
+        assert_eq!(extract_ipfix_sampling_rate(&huge), None);
+    }
+
+    #[test]
+    fn interval_alone_is_the_rate() {
+        use InformationElement::*;
+        assert_eq!(
+            extract_ipfix_sampling_rate(&record(&[(SamplingPacketInterval, 50)])),
+            Some(50)
+        );
+        assert_eq!(
+            extract_ipfix_sampling_rate(&record(&[
+                (SamplingInterval, 20),
+                (SamplingPacketSpace, 7)
+            ])),
+            Some(20)
+        );
+    }
 }

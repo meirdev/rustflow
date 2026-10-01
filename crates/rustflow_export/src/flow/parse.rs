@@ -3,53 +3,26 @@ use std::net::IpAddr;
 use etherparse::{LaxNetSlice, LaxSlicedPacket, TransportSlice};
 use log::debug;
 
-use super::PacketInfo;
-use crate::flow::FlowKey;
+use super::FlowKey;
+use crate::capture::Link;
 
-/// Systematic count-based sampling: 1 out of every `interval` packets.
-pub struct Sampler {
-    interval: u32,
-    countdown: u32,
+#[derive(Debug, Clone)]
+pub struct PacketInfo {
+    pub flow_key: FlowKey,
+    pub packet_size: u64,
+    pub tcp_flags: u16,
 }
 
-impl Sampler {
-    pub fn new(interval: u32) -> Self {
-        Self {
-            interval: interval.max(1),
-            countdown: 1,
-        }
-    }
-
-    pub fn select(&mut self) -> bool {
-        if self.countdown > 1 {
-            self.countdown -= 1;
-            false
-        } else {
-            self.countdown = self.interval;
-            true
-        }
-    }
-}
-
-/// Parse a frame starting at the Ethernet header. Lax slicing tolerates
-/// frames truncated by the snap length.
-pub fn parse_ethernet(data: &[u8]) -> Option<PacketInfo> {
-    match LaxSlicedPacket::from_ethernet(data) {
+/// Lax slicing tolerates frames truncated by the snap length.
+pub fn parse(link: Link, data: &[u8]) -> Option<PacketInfo> {
+    let sliced = match link {
+        Link::Ethernet => LaxSlicedPacket::from_ethernet(data).map_err(|e| e.to_string()),
+        Link::Ip => LaxSlicedPacket::from_ip(data).map_err(|e| e.to_string()),
+    };
+    match sliced {
         Ok(sliced) => packet_info(&sliced),
         Err(e) => {
-            debug!("Failed to parse packet: {:?}", e);
-            None
-        }
-    }
-}
-
-/// Parse a packet starting at the IP header (loopback and raw-IP links).
-#[cfg(any(feature = "pcap", target_os = "macos"))]
-pub fn parse_ip(data: &[u8]) -> Option<PacketInfo> {
-    match LaxSlicedPacket::from_ip(data) {
-        Ok(sliced) => packet_info(&sliced),
-        Err(e) => {
-            debug!("Failed to parse packet: {:?}", e);
+            debug!("Failed to parse packet: {}", e);
             None
         }
     }

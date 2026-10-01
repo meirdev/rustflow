@@ -1,92 +1,21 @@
+mod args;
 mod capture;
 mod exporter;
 mod flow;
 mod ipfix;
+mod meter;
+mod sampler;
 
-use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use capture::Backend;
-use clap::Args as ClapArgs;
+pub use args::ExportArgs;
 use exporter::Exporter;
-use flow::FlowCache;
 use log::{error, info, warn};
+use meter::Meter;
 
-#[cfg(target_os = "macos")]
-const DEFAULT_INTERFACE: &str = "lo0";
-#[cfg(not(target_os = "macos"))]
-const DEFAULT_INTERFACE: &str = "lo";
-
-/// Arguments for the `export` subcommand.
-#[derive(ClapArgs, Debug, Clone)]
-pub struct ExportArgs {
-    /// Network interface to capture from
-    #[arg(short, long, default_value = DEFAULT_INTERFACE)]
-    pub interface: String,
-
-    /// Capture backend
-    #[arg(long, value_enum, default_value = "auto")]
-    pub capture: Backend,
-
-    /// Collector host: an IP address or a hostname
-    #[arg(short = 'H', long, default_value = "127.0.0.1")]
-    pub collector_host: String,
-
-    /// Collector port
-    #[arg(short = 'p', long, default_value = "4739")]
-    pub collector_port: u16,
-
-    /// Observation domain ID
-    #[arg(long, default_value = "1")]
-    pub observation_domain_id: u32,
-
-    /// Active flow timeout in seconds
-    #[arg(long, default_value = "60")]
-    pub active_timeout: u64,
-
-    /// Inactive flow timeout in seconds
-    #[arg(long, default_value = "15")]
-    pub inactive_timeout: u64,
-
-    /// Template refresh rate in seconds
-    #[arg(long, default_value = "300")]
-    pub template_refresh_rate: u64,
-
-    /// Sampling packet interval
-    #[arg(long, default_value = "1", value_parser = clap::value_parser!(u32).range(1..))]
-    pub sampling_packet_interval: u32,
-
-    /// Enable promiscuous mode
-    #[arg(long)]
-    pub promiscuous: bool,
-}
-
-impl ExportArgs {
-    pub fn collector_addr(&self) -> Result<SocketAddr> {
-        (self.collector_host.as_str(), self.collector_port)
-            .to_socket_addrs()
-            .map_err(|e| {
-                anyhow::anyhow!(
-                    "Cannot resolve collector address {}:{}: {e}",
-                    self.collector_host,
-                    self.collector_port
-                )
-            })?
-            .next()
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Collector address {}:{} resolved to nothing",
-                    self.collector_host,
-                    self.collector_port
-                )
-            })
-    }
-}
-
-/// Run the IPFIX exporter. Logging is initialized by the caller.
 pub fn run(args: ExportArgs) -> Result<()> {
     info!("Configuration:");
     info!(
@@ -102,32 +31,28 @@ pub fn run(args: ExportArgs) -> Result<()> {
         args.active_timeout, args.inactive_timeout
     );
     info!("  Template refresh: {}s", args.template_refresh_rate);
-    info!(
-        "  Sampling interval: 1 out of {} packets",
-        args.sampling_packet_interval
-    );
+    info!("  Sampling: {}", args.sampling());
+    info!("  Mode: {:?}", args.mode);
 
     let mut exporter = Exporter::new(args.clone())?;
-    let mut capture = capture::open(
-        args.capture,
-        &args.interface,
-        args.promiscuous,
-        args.sampling_packet_interval,
-    )?;
-    let mut flow_cache = FlowCache::new(args.active_timeout, args.inactive_timeout);
+    let mut capture = capture::open(args.capture, &args.interface, args.promiscuous)?;
+    let mut meter = Meter::new(
+        &args,
+        capture.link(),
+        exporter.local_addr()?,
+        exporter.collector_addr(),
+    );
 
-    // Send initial templates and options
     exporter.send_templates()?;
     exporter.send_options_data()?;
 
-    info!("Starting packet capture and flow export");
+    info!("Starting packet capture and export");
 
-    // Set up signal handler for graceful shutdown
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
 
     ctrlc::set_handler(move || {
-        warn!("Received shutdown signal, flushing flows...");
+        warn!("Received shutdown signal, flushing...");
         r.store(false, Ordering::SeqCst);
     })
     .expect("Error setting Ctrl-C handler");
@@ -138,25 +63,18 @@ pub fn run(args: ExportArgs) -> Result<()> {
     while running.load(Ordering::SeqCst) {
         // Capture packets (has 1-second timeout, so loop continues even without
         // packets)
-        if let Some(packet_info) = capture.next_packet() {
-            flow_cache.update_flow(
-                packet_info.flow_key,
-                packet_info.packet_size,
-                packet_info.tcp_flags,
-            );
+        if let Some(frame) = capture.next_frame() {
+            meter.observe(&frame);
         }
 
-        // Periodically check for expired flows and template refresh
-        if last_check.elapsed() >= check_interval {
-            // Check for expired flows
-            let expired_flows = flow_cache.check_expired_flows();
-            if !expired_flows.is_empty()
-                && let Err(e) = exporter.send_flows(expired_flows)
-            {
-                error!("Failed to export flows: {}", e);
-            }
+        let tick = last_check.elapsed() >= check_interval;
+        if (tick || meter.is_full())
+            && let Err(e) = exporter.send(meter.take_due())
+        {
+            error!("Failed to export: {}", e);
+        }
 
-            // Check if we need to refresh templates
+        if tick {
             if exporter.should_send_template() {
                 if let Err(e) = exporter.send_templates() {
                     error!("Failed to send templates: {}", e);
@@ -165,23 +83,17 @@ pub fn run(args: ExportArgs) -> Result<()> {
                 }
             }
 
-            // Log current cache size
-            if flow_cache.len() > 0 {
-                info!("Active flows in cache: {}", flow_cache.len());
+            if meter.active_flows() > 0 {
+                info!("Active flows in cache: {}", meter.active_flows());
             }
 
             last_check = Instant::now();
         }
     }
 
-    // Graceful shutdown: flush all remaining flows
-    info!("Shutting down, exporting remaining flows...");
-    let remaining_flows = flow_cache.export_all();
-    if !remaining_flows.is_empty() {
-        info!("Exporting {} remaining flows", remaining_flows.len());
-        if let Err(e) = exporter.send_flows(remaining_flows) {
-            error!("Failed to export remaining flows: {}", e);
-        }
+    info!("Shutting down, exporting what is left...");
+    if let Err(e) = exporter.send(meter.take_all()) {
+        error!("Failed to export: {}", e);
     }
 
     info!("Shutdown complete");
