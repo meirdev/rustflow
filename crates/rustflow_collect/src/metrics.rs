@@ -13,7 +13,6 @@ use tiny_http::{Response, Server};
 use crate::enrich::TableMetrics;
 use crate::sink::OutputMetrics;
 
-// Metric label constants
 pub const LABEL_NETFLOW: &str = "netflow";
 pub const LABEL_NETFLOW_V5: &str = "netflow_v5";
 pub const LABEL_NETFLOW_V9: &str = "netflow_v9";
@@ -21,7 +20,6 @@ pub const LABEL_IPFIX: &str = "ipfix";
 pub const LABEL_SFLOW: &str = "sflow";
 pub const LABEL_SFLOW_V5: &str = "sflow_v5";
 
-/// Content type of the OpenMetrics text format the registry is encoded in.
 const CONTENT_TYPE: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
