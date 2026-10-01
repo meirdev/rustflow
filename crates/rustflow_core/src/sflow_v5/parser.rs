@@ -219,8 +219,6 @@ pub struct CounterSample {
     pub records: Vec<CounterRecord>,
 }
 
-/// Format 4 differs from format 2 only in its two-word source id, which
-/// [`parse_sample_header`] already reads either way.
 pub type ExpandedCounterSample = CounterSample;
 
 fn parse_counter_sample(input: &[u8]) -> IResult<&[u8], CounterSample> {
