@@ -14,8 +14,7 @@ use std::{io, mem, ptr, slice};
 use anyhow::{Result, anyhow};
 use log::info;
 
-use super::packet::{Sampler, parse_ethernet};
-use super::{Capture, PacketInfo};
+use super::{Capture, Frame, Link};
 
 const TPACKET_V3: libc::c_int = 2;
 
@@ -39,11 +38,13 @@ pub struct AfPacket {
     socket: OwnedFd,
     ring: Ring,
     block_idx: u32,
-    /// Frames still to read in the block held; 0 when none is held.
+    /// Whether a block is held. It is handed back on the read after its
+    /// last frame, because that frame is still borrowed by the caller.
+    block_held: bool,
+    /// Frames still to read in the block held.
     frames_left: u32,
     /// Ring offset of the next frame in that block.
     frame_offset: usize,
-    sampler: Sampler,
 }
 
 struct Ring {
@@ -103,7 +104,7 @@ fn set_option<T>(
 }
 
 impl AfPacket {
-    pub fn new(interface: &str, promiscuous: bool, sampling_interval: u32) -> Result<Self> {
+    pub fn new(interface: &str, promiscuous: bool) -> Result<Self> {
         info!("Opening AF_PACKET capture on interface: {}", interface);
 
         let protocol = (libc::ETH_P_ALL as u16).to_be();
@@ -206,9 +207,9 @@ impl AfPacket {
             socket,
             ring,
             block_idx: 0,
+            block_held: false,
             frames_left: 0,
             frame_offset: 0,
-            sampler: Sampler::new(sampling_interval),
         })
     }
 
@@ -252,6 +253,7 @@ impl AfPacket {
             let block = self.block();
             ((*block).num_pkts, (*block).offset_to_first_pkt)
         };
+        self.block_held = true;
         if frames == 0 {
             // Handed over empty by the block timeout.
             self.release_block();
@@ -267,36 +269,38 @@ impl AfPacket {
         self.block_status()
             .store(libc::TP_STATUS_KERNEL, Ordering::Release);
         self.block_idx = (self.block_idx + 1) % BLOCK_NR;
+        self.block_held = false;
     }
 }
 
 impl Capture for AfPacket {
-    fn next_packet(&mut self) -> Option<PacketInfo> {
-        if self.frames_left == 0 && !self.acquire_block() {
-            return None;
+    fn link(&self) -> Link {
+        Link::Ethernet
+    }
+
+    fn next_frame(&mut self) -> Option<Frame<'_>> {
+        if self.frames_left == 0 {
+            if self.block_held {
+                self.release_block();
+            }
+            if !self.acquire_block() {
+                return None;
+            }
         }
 
         let frame = unsafe { self.ring.ptr.add(self.frame_offset) };
         let hdr = unsafe { &*(frame as *const libc::tpacket3_hdr) };
-
-        let result = if self.sampler.select() {
-            let packet_data = unsafe {
-                slice::from_raw_parts(frame.add(hdr.tp_mac as usize), hdr.tp_snaplen as usize)
-            };
-
-            parse_ethernet(packet_data)
-        } else {
-            None
+        let data = unsafe {
+            slice::from_raw_parts(frame.add(hdr.tp_mac as usize), hdr.tp_snaplen as usize)
         };
 
         self.frames_left -= 1;
-        if self.frames_left == 0 {
-            self.release_block();
-        } else {
-            self.frame_offset += hdr.tp_next_offset as usize;
-        }
+        self.frame_offset += hdr.tp_next_offset as usize;
 
-        result
+        Some(Frame {
+            data,
+            length: hdr.tp_len,
+        })
     }
 }
 

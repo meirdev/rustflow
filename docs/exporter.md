@@ -91,6 +91,18 @@ rustflow export \
   --sampling-packet-interval 100
 ```
 
+## Packet Export
+
+By default the exporter aggregates the sampled packets into flows. With `--mode packet` it exports every sampled packet instead:
+
+```bash
+rustflow export \
+  -i eth0 \
+  --mode packet \
+  --sampling-packet-interval 1000 \
+  --clip-length 128
+```
+
 ## Promiscuous Mode
 
 Use `--promiscuous` to enable promiscuous mode on the capture interface:
