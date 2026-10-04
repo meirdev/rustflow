@@ -9,16 +9,20 @@ use rustflow_core::for_each_flow_field;
 
 use crate::enrich::{Error, Key, KeyType, ReloadPolicy, Result};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The most lookup keys one group may combine.
+pub const MAX_KEYS: usize = 4;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CsvLookup {
     Prefix,
-    Exact(KeyType),
+    /// One key type per key column.
+    Exact(Vec<KeyType>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourceFormat {
     Csv {
-        key_column: String,
+        key_columns: Vec<String>,
         lookup: CsvLookup,
     },
     Mmdb,
@@ -58,8 +62,8 @@ impl SourceConfig {
             }
         }
 
-        if let SourceFormat::Csv { key_column, .. } = &format
-            && key_column.trim().is_empty()
+        if let SourceFormat::Csv { key_columns, .. } = &format
+            && (key_columns.is_empty() || key_columns.iter().any(|c| c.trim().is_empty()))
         {
             return Err(Error::Config("Empty CSV key column".into()));
         }
@@ -209,7 +213,8 @@ impl FromStr for LookupKey {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldMapping {
-    pub key: LookupKey,
+    /// The flow fields that together form the lookup key.
+    pub keys: Vec<LookupKey>,
     pub source_column: String,
     pub output_field: String,
 }
@@ -270,7 +275,15 @@ fn parse_field_mappings(value: &str) -> Result<Vec<FieldMapping>> {
             ))
         })?;
 
-        let key: LookupKey = key.trim().parse()?;
+        let keys = key
+            .split('+')
+            .map(|key| key.trim().parse())
+            .collect::<Result<Vec<LookupKey>>>()?;
+        if keys.len() > MAX_KEYS {
+            return Err(Error::Config(format!(
+                "At most {MAX_KEYS} lookup keys can be combined: '{key}'"
+            )));
+        }
         let mut any = false;
         for spec in specs.split('|').map(str::trim).filter(|s| !s.is_empty()) {
             let (source_column, output_field) = spec
@@ -284,7 +297,7 @@ fn parse_field_mappings(value: &str) -> Result<Vec<FieldMapping>> {
                 })?;
 
             mappings.push(FieldMapping {
-                key,
+                keys: keys.clone(),
                 source_column: source_column.to_owned(),
                 output_field: output_field.to_owned(),
             });
@@ -349,27 +362,45 @@ pub fn parse_enrich_arg(arg: &str) -> Result<EnrichmentConfig> {
 
     let mappings = parse_field_mappings(required("fields")?)?;
 
-    let key_type = mappings[0].key.key_type();
-    if mappings.iter().any(|m| m.key.key_type() != key_type) {
+    let key_types: Vec<KeyType> = mappings[0].keys.iter().map(|key| key.key_type()).collect();
+    if mappings.iter().any(|m| {
+        !m.keys
+            .iter()
+            .map(|key| key.key_type())
+            .eq(key_types.iter().copied())
+    }) {
         return Err(Error::Config(
-            "All lookup keys of one source must be addresses or all numbers".into(),
+            "All lookup groups of one source must use the same key types in the same order".into(),
         ));
     }
 
-    if matches!(kind, Kind::Prefix) && key_type != KeyType::Ip {
+    if matches!(kind, Kind::Prefix) && key_types != [KeyType::Ip] {
         return Err(Error::Config(
-            "prefix_lookup keys must be address fields".into(),
+            "prefix_lookup takes a single address field as key".into(),
         ));
     }
 
     let format = match (format, kind) {
-        (Format::Csv, kind) => SourceFormat::Csv {
-            key_column: required("key_column")?.into(),
-            lookup: match kind {
-                Kind::Prefix => CsvLookup::Prefix,
-                Kind::Exact => CsvLookup::Exact(key_type),
-            },
-        },
+        (Format::Csv, kind) => {
+            let key_columns: Vec<String> = required("key_column")?
+                .split('+')
+                .map(|column| column.trim().to_owned())
+                .collect();
+            if key_columns.len() != key_types.len() {
+                return Err(Error::Config(format!(
+                    "'key_column' lists {} columns for {} lookup keys",
+                    key_columns.len(),
+                    key_types.len()
+                )));
+            }
+            SourceFormat::Csv {
+                key_columns,
+                lookup: match kind {
+                    Kind::Prefix => CsvLookup::Prefix,
+                    Kind::Exact => CsvLookup::Exact(key_types),
+                },
+            }
+        }
         (Format::Mmdb, Kind::Prefix) => {
             forbid(&["key_column"], "MMDB")?;
             SourceFormat::Mmdb
@@ -396,4 +427,62 @@ pub fn parse_enrich_arg(arg: &str) -> Result<EnrichmentConfig> {
         source: SourceConfig::new(source, format, columns, reload)?,
         mappings,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn names(mapping: &FieldMapping) -> Vec<&str> {
+        mapping.keys.iter().map(|key| key.name()).collect()
+    }
+
+    #[test]
+    fn composite_keys_pair_columns_with_flow_fields() {
+        let config = parse_enrich_arg(
+            "type=exact,source=ifnames.csv,key_column=exporter+ifindex,\
+             fields=sampler_address+in_if@name:in_if_name;sampler_address+out_if@name:out_if_name",
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.source.format(),
+            &SourceFormat::Csv {
+                key_columns: vec!["exporter".into(), "ifindex".into()],
+                lookup: CsvLookup::Exact(vec![KeyType::Ip, KeyType::Number]),
+            }
+        );
+        assert_eq!(names(&config.mappings[0]), ["sampler_address", "in_if"]);
+        assert_eq!(names(&config.mappings[1]), ["sampler_address", "out_if"]);
+    }
+
+    #[test]
+    fn composite_keys_are_validated() {
+        let error = |arg: &str| parse_enrich_arg(arg).unwrap_err().to_string();
+
+        assert!(
+            error(
+                "type=exact,source=a.csv,key_column=exporter,fields=sampler_address+in_if@name:n"
+            )
+            .contains("lists 1 columns for 2 lookup keys")
+        );
+        assert!(
+            error(
+                "type=exact,source=a.csv,key_column=a+b,\
+                 fields=sampler_address+in_if@name:n;in_if+sampler_address@name:m"
+            )
+            .contains("same key types in the same order")
+        );
+        assert!(
+            error("type=prefix_lookup,source=a.csv,key_column=a+b,fields=src_addr+in_if@name:n")
+                .contains("single address field")
+        );
+        assert!(
+            error(
+                "type=exact,source=a.csv,key_column=a+b+c+d+e,\
+                 fields=in_if+out_if+src_port+dst_port+proto@name:n"
+            )
+            .contains("At most 4 lookup keys")
+        );
+    }
 }

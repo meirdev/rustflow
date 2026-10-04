@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
+use arrayvec::ArrayVec;
 use rustflow_core::common::common_flow::CommonFlow;
 
-use crate::enrich::config::{EnrichmentConfig, LookupKey};
+use crate::enrich::config::{EnrichmentConfig, LookupKey, MAX_KEYS};
 use crate::enrich::table::Table;
 use crate::enrich::table::metrics::TableMetrics;
-use crate::enrich::{Result, Row, Source};
+use crate::enrich::{Key, Result, Source};
 
 pub type Enriched = Vec<Option<Arc<str>>>;
 
@@ -15,7 +16,7 @@ struct Lookup {
 }
 
 struct Group {
-    key: LookupKey,
+    keys: Vec<LookupKey>,
     /// Source column to output field index.
     fields: Vec<(usize, usize)>,
 }
@@ -55,10 +56,10 @@ impl EnrichmentEngine {
                 .position(|c| *c == mapping.source_column)
                 .expect("mapping columns are the source columns");
             let field = (column, output);
-            match groups.iter_mut().find(|g| g.key == mapping.key) {
+            match groups.iter_mut().find(|g| g.keys == mapping.keys) {
                 Some(group) => group.fields.push(field),
                 None => groups.push(Group {
-                    key: mapping.key,
+                    keys: mapping.keys.clone(),
                     fields: vec![field],
                 }),
             }
@@ -95,8 +96,10 @@ impl Snapshot<'_> {
         out.fill(None);
         for (lookup, source) in self.engine.lookups.iter().zip(&self.sources) {
             for group in &lookup.groups {
-                let row: Option<Row> = group.key.extract(flow).and_then(|key| source.lookup(key));
-                let Some(row) = row else {
+                // Every key field must be present for the group to match.
+                let keys: Option<ArrayVec<Key, MAX_KEYS>> =
+                    group.keys.iter().map(|key| key.extract(flow)).collect();
+                let Some(row) = keys.and_then(|keys| source.lookup(&keys)) else {
                     continue;
                 };
                 for &(column, output) in &group.fields {
