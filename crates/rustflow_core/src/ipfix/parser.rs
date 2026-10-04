@@ -62,7 +62,7 @@ impl IpfixParser {
         let (input, header) = parse_header(input)?;
         let data_length = (header.length as usize).saturating_sub(IPFIX_HEADER_SIZE);
         let (input, sets) = map_parser(take(data_length), |data| {
-            many0(|i| self.parse_set(header.observation_domain_id, i)).parse(data)
+            many0(|i| self.parse_set(i, header.observation_domain_id)).parse(data)
         })
         .parse(input)?;
 
@@ -71,9 +71,9 @@ impl IpfixParser {
 
     fn parse_templated_records<'a>(
         &self,
+        input: &'a [u8],
         observation_domain_id: u32,
         template_id: u16,
-        input: &'a [u8],
     ) -> IResult<&'a [u8], Vec<Record>> {
         let key = (observation_domain_id, template_id);
 
@@ -99,7 +99,7 @@ impl IpfixParser {
         }
 
         let (input, records) =
-            many0(|i| self.parse_record_from_fields(observation_domain_id, fields, i))
+            many0(|i| self.parse_record_from_fields(i, observation_domain_id, fields))
                 .parse(input)?;
         if records.is_empty() && !input.is_empty() {
             log::warn!(
@@ -139,8 +139,8 @@ impl IpfixParser {
 
     fn parse_set<'a>(
         &mut self,
-        observation_domain_id: u32,
         input: &'a [u8],
+        observation_domain_id: u32,
     ) -> IResult<&'a [u8], Set> {
         let (input, id) = be_u16(input)?;
         let (input, length) = be_u16(input)?;
@@ -153,7 +153,7 @@ impl IpfixParser {
             return fail().parse(input);
         };
         let (input, records) = map_parser(take(value_length), |data| {
-            self.parse_records(observation_domain_id, id, data)
+            self.parse_records(data, observation_domain_id, id)
         })
         .parse(input)?;
 
@@ -169,9 +169,9 @@ impl IpfixParser {
 
     fn parse_records<'a>(
         &mut self,
+        input: &'a [u8],
         observation_domain_id: u32,
         set_id: u16,
-        input: &'a [u8],
     ) -> IResult<&'a [u8], Vec<Record>> {
         match set_id {
             IPFIX_TEMPLATE_SET_ID => {
@@ -234,7 +234,7 @@ impl IpfixParser {
                 ))
             }
             template_id if IPFIX_VALID_TEMPLATE_ID.contains(&template_id) => {
-                self.parse_templated_records(observation_domain_id, template_id, input)
+                self.parse_templated_records(input, observation_domain_id, template_id)
             }
             _ => {
                 log::warn!("Invalid set ID: {}. Skipping.", set_id);
@@ -246,20 +246,20 @@ impl IpfixParser {
 
     fn parse_record_from_fields<'a>(
         &self,
+        input: &'a [u8],
         observation_domain_id: u32,
         fields: &Arc<[ResolvedField]>,
-        input: &'a [u8],
     ) -> IResult<&'a [u8], DataRecord> {
         let mut values = Vec::with_capacity(fields.len());
         let mut remaining = input;
 
         for field in fields.iter() {
-            let (input, field_length) = parse_field_length(field.spec.field_length, remaining)?;
+            let (input, field_length) = parse_field_length(remaining, field.spec.field_length)?;
             let (input, value) = self.parse_field_value(
+                input,
                 observation_domain_id,
                 field.data_type,
                 field_length,
-                input,
             )?;
             values.push(value);
             remaining = input;
@@ -273,10 +273,10 @@ impl IpfixParser {
 
     fn parse_field_value<'a>(
         &self,
+        input: &'a [u8],
         observation_domain_id: u32,
         data_type: DataType,
         length: usize,
-        input: &'a [u8],
     ) -> IResult<&'a [u8], FieldValue> {
         match (data_type, length) {
             (DataType::Boolean, 1) => {
@@ -318,12 +318,12 @@ impl IpfixParser {
             (DataType::DateTimeNanoseconds, 8) => {
                 map(timestamp_nanos, FieldValue::DateTimeNanoseconds).parse(input)
             }
-            (DataType::BasicList, len) => self.parse_basic_list(observation_domain_id, len, input),
+            (DataType::BasicList, len) => self.parse_basic_list(input, observation_domain_id, len),
             (DataType::SubTemplateList, len) => {
-                self.parse_sub_template_list(observation_domain_id, len, input)
+                self.parse_sub_template_list(input, observation_domain_id, len)
             }
             (DataType::SubTemplateMultiList, len) => {
-                self.parse_sub_template_multi_list(observation_domain_id, len, input)
+                self.parse_sub_template_multi_list(input, observation_domain_id, len)
             }
             _ => map(vector(length), FieldValue::OctetArray).parse(input),
         }
@@ -331,9 +331,9 @@ impl IpfixParser {
 
     fn parse_basic_list<'a>(
         &self,
+        input: &'a [u8],
         observation_domain_id: u32,
         length: usize,
-        input: &'a [u8],
     ) -> IResult<&'a [u8], FieldValue> {
         let (remaining, data) = take(length)(input)?;
         let (data, semantic) = map(be_u8, Semantic::from).parse(data)?;
@@ -350,16 +350,16 @@ impl IpfixParser {
         let mut list_data = data;
 
         while !list_data.is_empty() {
-            let (next_data, actual_length) = parse_field_length(field.field_length, list_data)?;
+            let (next_data, actual_length) = parse_field_length(list_data, field.field_length)?;
             if actual_length == 0 || next_data.len() < actual_length {
                 break;
             }
 
             let (next_data, value) = self.parse_field_value(
+                next_data,
                 observation_domain_id,
                 element_data_type,
                 actual_length,
-                next_data,
             )?;
             content.push(value);
             list_data = next_data;
@@ -377,16 +377,16 @@ impl IpfixParser {
 
     fn parse_sub_template_list<'a>(
         &self,
+        input: &'a [u8],
         observation_domain_id: u32,
         length: usize,
-        input: &'a [u8],
     ) -> IResult<&'a [u8], FieldValue> {
         let (remaining, data) = take(length)(input)?;
         let (data, semantic) = map(be_u8, Semantic::from).parse(data)?;
         let (data, template_id) = be_u16(data)?;
 
         let (_, records) =
-            self.parse_templated_records(observation_domain_id, template_id, data)?;
+            self.parse_templated_records(data, observation_domain_id, template_id)?;
 
         if records.is_empty() && !data.is_empty() {
             log::warn!(
@@ -416,9 +416,9 @@ impl IpfixParser {
 
     fn parse_sub_template_multi_list<'a>(
         &self,
+        input: &'a [u8],
         observation_domain_id: u32,
         length: usize,
-        input: &'a [u8],
     ) -> IResult<&'a [u8], FieldValue> {
         let (remaining, data) = take(length)(input)?;
         let (data, semantic) = map(be_u8, Semantic::from).parse(data)?;
@@ -438,7 +438,7 @@ impl IpfixParser {
 
             let (next_data, item_data) = take(content_length)(next_data)?;
             let (_, records) =
-                self.parse_templated_records(observation_domain_id, template_id, item_data)?;
+                self.parse_templated_records(item_data, observation_domain_id, template_id)?;
 
             if records.is_empty() && !item_data.is_empty() {
                 log::warn!(
@@ -883,8 +883,7 @@ pub struct SubTemplateMultiItem {
     pub data: Vec<DataRecord>,
 }
 
-// 1 for true, 2 for false according to https://datatracker.ietf.org/doc/html/rfc7011#section-6.1.5
-fn parse_field_length(field_length: u16, input: &[u8]) -> IResult<&[u8], usize> {
+fn parse_field_length(input: &[u8], field_length: u16) -> IResult<&[u8], usize> {
     if field_length != IPFIX_VARIABLE_LENGTH {
         return Ok((input, field_length as usize));
     }

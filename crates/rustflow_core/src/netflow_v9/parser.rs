@@ -121,13 +121,13 @@ fn parse_records<'a>(
             let key = (source_id, template_id);
             if let Some(fields) = templates.get(&key) {
                 map(
-                    |input| parse_data_records(fields, input),
+                    |input| parse_data_records(input, fields),
                     |records| records.into_iter().map(Record::Data).collect(),
                 )
                 .parse(input)
             } else if let Some(fields) = options_templates.get(&key) {
                 map(
-                    |input| parse_data_records(fields, input),
+                    |input| parse_data_records(input, fields),
                     |records| records.into_iter().map(Record::OptionsData).collect(),
                 )
                 .parse(input)
@@ -142,30 +142,30 @@ fn parse_records<'a>(
 }
 
 fn parse_data_records<'a>(
-    fields: &Arc<[ResolvedField]>,
     input: &'a [u8],
+    fields: &Arc<[ResolvedField]>,
 ) -> IResult<&'a [u8], Vec<DataRecord>> {
     if fields.is_empty() {
         return Ok((input, vec![]));
     }
 
     many0(map(
-        |input| parse_data_record(fields, input),
+        |input| parse_data_record(input, fields),
         |values| DataRecord::from_template(Arc::clone(fields), values),
     ))
     .parse(input)
 }
 
 fn parse_data_record<'a>(
-    fields: &[ResolvedField],
     input: &'a [u8],
+    fields: &[ResolvedField],
 ) -> IResult<&'a [u8], Vec<FieldValue>> {
     let mut values = Vec::with_capacity(fields.len());
     let mut remaining = input;
 
     for field in fields {
         let (input, value) =
-            parse_field_value(field.data_type, field.spec.length.to_usize(), remaining)?;
+            parse_field_value(remaining, field.data_type, field.spec.length.to_usize())?;
         values.push(value);
         remaining = input;
     }
@@ -433,9 +433,9 @@ pub enum FieldValue {
 }
 
 fn parse_field_value(
+    input: &[u8],
     data_type: DataType,
     length: usize,
-    input: &[u8],
 ) -> IResult<&[u8], FieldValue> {
     match (data_type, length) {
         (_, 0) => Ok((input, FieldValue::Null)),
