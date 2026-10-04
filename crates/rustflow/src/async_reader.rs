@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use rustflow_core::common::common_flow::CommonFlow;
 use rustflow_core::common::ie_registry::IERegistry;
+use socket2::SockRef;
 use tokio::net::UdpSocket;
 
 use crate::processor::{NetflowProcessor, SflowProcessor};
@@ -40,6 +41,17 @@ impl NetflowReader {
     pub fn with_template_timeout(mut self, timeout: Duration) -> Self {
         self.processor = self.processor.with_template_timeout(timeout);
         self
+    }
+
+    /// Set the socket receive buffer size.
+    pub fn with_recv_buffer_size(self, size: usize) -> io::Result<Self> {
+        SockRef::from(&self.socket).set_recv_buffer_size(size)?;
+        Ok(self)
+    }
+
+    /// Get the receive buffer size the kernel granted.
+    pub fn recv_buffer_size(&self) -> io::Result<usize> {
+        SockRef::from(&self.socket).recv_buffer_size()
     }
 
     /// Get the local address this reader is bound to.
@@ -116,6 +128,17 @@ impl SflowReader {
             processor: SflowProcessor::new(),
             pending_flows: VecDeque::new(),
         })
+    }
+
+    /// Set the socket receive buffer size.
+    pub fn with_recv_buffer_size(self, size: usize) -> io::Result<Self> {
+        SockRef::from(&self.socket).set_recv_buffer_size(size)?;
+        Ok(self)
+    }
+
+    /// Get the receive buffer size the kernel granted.
+    pub fn recv_buffer_size(&self) -> io::Result<usize> {
+        SockRef::from(&self.socket).recv_buffer_size()
     }
 
     /// Get the local address this reader is bound to.

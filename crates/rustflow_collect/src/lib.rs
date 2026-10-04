@@ -78,14 +78,23 @@ fn open_source<P: Protocol>(cli: &CollectArgs, metrics: &Arc<metrics::Metrics>) 
         })),
         (None, Some(port)) => {
             let addr = SocketAddr::new(cli.host, port);
-            let socket = source::Socket::bind(addr, CHUNK_FLUSH_TIMEOUT).unwrap_or_else(|e| {
-                eprintln!("Failed to bind to {}: {}", addr, e);
-                std::process::exit(1);
-            });
+            let socket = source::Socket::bind(addr, CHUNK_FLUSH_TIMEOUT, cli.recv_buffer)
+                .unwrap_or_else(|e| {
+                    eprintln!("Failed to bind to {}: {}", addr, e);
+                    std::process::exit(1);
+                });
+            let recv_buffer = socket.recv_buffer_size().unwrap_or(0);
+            if recv_buffer < cli.recv_buffer {
+                eprintln!(
+                    "Warning: receive buffer limited to {} bytes by the system; raise its limit (net.core.rmem_max on Linux) to get {}",
+                    recv_buffer, cli.recv_buffer
+                );
+            }
             eprintln!(
-                "Listening for {} data on {}",
+                "Listening for {} data on {} (receive buffer {} bytes)",
                 P::NAME,
-                socket.local_addr().unwrap()
+                socket.local_addr().unwrap(),
+                recv_buffer
             );
             // Detached; it serves until the process exits.
             metrics::start_metrics_server(Arc::clone(metrics), cli.metrics_host, cli.metrics_port);
