@@ -111,7 +111,9 @@ pub struct CollectArgs {
     /// Format: type=prefix_lookup|exact,source=file.csv,key_column=col,
     /// fields=<key>@col:output|col2:output2;<key2>@col:output3[,
     /// reload=30s|watch]. key_column names the CSV column holding the
-    /// prefixes or keys; omit it for MMDB sources
+    /// prefixes or keys; omit it for MMDB sources. An exact lookup can
+    /// combine several keys with `+`, e.g. key_column=exporter+ifindex and
+    /// fields=sampler_address+in_if@name:in_if_name
     #[arg(long = "enrich", value_parser = parse_enrich_arg)]
     pub(crate) enrich: Vec<EnrichmentConfig>,
 }

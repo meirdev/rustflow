@@ -8,14 +8,14 @@ Use `-f common` and one `--enrich` argument per source.
 
 Each `--enrich` argument is a comma-separated list of `key=value` parameters.
 
-| Parameter    | Description                                                                            |
-| ------------ | -------------------------------------------------------------------------------------- |
-| `type`       | Required. `prefix_lookup` (longest-prefix match) or `exact` (CSV only).                |
-| `source`     | Required. Source file path.                                                            |
-| `format`     | `csv` or `mmdb`; inferred from the extension unless specified.                         |
-| `fields`     | Required. `<key>@<source>:<output>[\|<source>:<output>...]`; separate groups with `;`. |
-| `key_column` | CSV key column. Required for CSV; not allowed for MMDB.                                |
-| `reload`     | `never` (default), an interval of at least `10s`, or `watch`.                          |
+| Parameter    | Description                                                                                                 |
+| ------------ | ----------------------------------------------------------------------------------------------------------- |
+| `type`       | Required. `prefix_lookup` (longest-prefix match) or `exact` (CSV only).                                     |
+| `source`     | Required. Source file path.                                                                                 |
+| `format`     | `csv` or `mmdb`; inferred from the extension unless specified.                                              |
+| `fields`     | Required. `<key>@<source>:<output>[\|<source>:<output>...]`; separate groups with `;`.                      |
+| `key_column` | CSV key column, or `+`-separated columns for a composite exact key. Required for CSV; not allowed for MMDB. |
+| `reload`     | `never` (default), an interval of at least `10s`, or `watch`.                                               |
 
 ### Fields
 
@@ -62,6 +62,25 @@ number,name
 ```bash
 rustflow collect -t netflow -p 9995 -f common \
   --enrich "type=exact,source=protocols.csv,key_column=number,fields=proto@name:proto_name"
+```
+
+#### Composite keys
+
+Several flow fields can form one key by joining them with `+`, with a CSV column
+for each in the same order. A row matches only when every column matches, and a
+flow missing any of the fields is not enriched. Up to four fields can be combined.
+
+Save this as `ifnames.csv`:
+
+```csv
+exporter,ifindex,name
+10.0.0.1,1,uplink
+10.0.0.1,2,lan
+```
+
+```bash
+rustflow collect -t netflow -p 9995 -f common \
+  --enrich "type=exact,source=ifnames.csv,key_column=exporter+ifindex,fields=sampler_address+in_if@name:in_if_name;sampler_address+out_if@name:out_if_name"
 ```
 
 ## MaxMind DB

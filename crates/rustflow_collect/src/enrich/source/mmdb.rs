@@ -40,12 +40,12 @@ impl MmdbSource {
 }
 
 impl Source for MmdbSource {
-    fn lookup(&self, key: Key) -> Option<Row> {
-        let Key::Ip(ip) = key else {
+    fn lookup(&self, key: &[Key]) -> Option<Row> {
+        let [Key::Ip(ip)] = key else {
             return None;
         };
 
-        let result = self.reader.lookup(ip).ok()?;
+        let result = self.reader.lookup(*ip).ok()?;
         if !result.has_data() {
             return None;
         }

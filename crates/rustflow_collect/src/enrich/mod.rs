@@ -8,7 +8,6 @@ pub mod table;
 pub use config::{EnrichmentConfig, SourceConfig, parse_enrich_arg};
 pub use engine::{Enriched, EnrichmentEngine};
 pub use key::{Key, KeyType};
-pub use row::Row;
 pub use source::Source;
 pub use table::ReloadPolicy;
 pub use table::metrics::TableMetrics;
