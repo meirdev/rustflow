@@ -26,6 +26,10 @@ pub struct CollectArgs {
     #[arg(short, long, conflicts_with = "pcap")]
     pub(crate) port: Option<u16>,
 
+    /// Socket receive buffer size in bytes
+    #[arg(long, default_value = "4194304", value_name = "BYTES")]
+    pub(crate) recv_buffer: usize,
+
     /// Output format: raw (original packet structure) or common (normalized
     /// flow)
     #[arg(short, long, value_enum, default_value = "raw")]

@@ -94,6 +94,30 @@ rustflow collect \
 
 The default timeout is `600` seconds.
 
+## Receive Buffer
+
+Datagrams queue in the socket receive buffer while the collector is busy, for
+example during an output flush. Once the buffer is full the kernel drops new
+datagrams silently, and NetFlow has no retransmission. The size can be
+configured with `--recv-buffer` (bytes, default 4 MiB):
+
+```bash
+rustflow collect \
+  -t netflow \
+  -p 4739 \
+  --recv-buffer 16777216
+```
+
+The kernel caps the buffer at its own limit and the collector warns at startup
+when the granted size is smaller than requested. On Linux the limit is
+`net.core.rmem_max`:
+
+```bash
+sysctl -w net.core.rmem_max=16777216
+```
+
+Drops show up in the `drops` column of `/proc/net/udp` or in `ss -ulm`.
+
 ## Enrichment
 
 Flows can be enriched with external data using `--enrich`.

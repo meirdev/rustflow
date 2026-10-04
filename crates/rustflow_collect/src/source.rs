@@ -8,6 +8,7 @@ use std::time::Duration;
 use chrono::Utc;
 use pcap_file::pcap::PcapReader;
 use rustflow_core::common::packet::parse_udp_packet;
+use socket2::SockRef;
 
 use crate::SHUTDOWN;
 
@@ -46,9 +47,14 @@ pub struct Socket {
 impl Socket {
     /// Bind with a read timeout so idle reads allow flushing and shutdown
     /// checks.
-    pub fn bind(addr: SocketAddr, read_timeout: Duration) -> io::Result<Self> {
+    pub fn bind(
+        addr: SocketAddr,
+        read_timeout: Duration,
+        recv_buffer_size: usize,
+    ) -> io::Result<Self> {
         let socket = UdpSocket::bind(addr)?;
         socket.set_read_timeout(Some(read_timeout))?;
+        SockRef::from(&socket).set_recv_buffer_size(recv_buffer_size)?;
         Ok(Self {
             socket,
             buf: vec![0; 65535],
@@ -57,6 +63,10 @@ impl Socket {
 
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
         self.socket.local_addr()
+    }
+
+    pub fn recv_buffer_size(&self) -> io::Result<usize> {
+        SockRef::from(&self.socket).recv_buffer_size()
     }
 }
 
