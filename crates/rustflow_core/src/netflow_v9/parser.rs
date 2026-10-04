@@ -50,110 +50,115 @@ impl NetflowV9Parser {
     }
 
     pub fn parse<'a>(&mut self, input: &'a [u8]) -> IResult<&'a [u8], NetFlowV9Packet> {
-        parse_netflow_v9(
-            input,
-            &self.ie_registry,
-            &mut self.templates,
-            &mut self.options_templates,
-        )
+        let (input, header) = parse_header(input)?;
+        let (input, flow_sets) =
+            many0(|i| self.parse_flow_set(i, header.source_id)).parse(input)?;
+
+        Ok((input, NetFlowV9Packet { header, flow_sets }))
     }
-}
 
-fn parse_netflow_v9<'a>(
-    input: &'a [u8],
-    registry: &IERegistry,
-    templates: &mut TemplateCache,
-    options_templates: &mut TemplateCache,
-) -> IResult<&'a [u8], NetFlowV9Packet> {
-    let (input, header) = parse_header(input)?;
-    let (input, flow_sets) = many0(|input| {
-        parse_flow_set(
+    fn parse_flow_set<'a>(
+        &mut self,
+        input: &'a [u8],
+        source_id: u32,
+    ) -> IResult<&'a [u8], FlowSet> {
+        let (input, id) = be_u16(input)?;
+        let (input, length) = be_u16(input)?;
+        let Some(value_length) = length.to_usize().checked_sub(FLOW_SET_HEADER_SIZE) else {
+            log::warn!(
+                "FlowSet length {length} is shorter than its header. Discarding the rest of the packet."
+            );
+            return fail().parse(input);
+        };
+        let (input, records) = map_parser(take(value_length), |data| {
+            self.parse_records(data, source_id, id)
+        })
+        .parse(input)?;
+
+        Ok((
             input,
-            header.source_id,
-            registry,
-            templates,
-            options_templates,
-        )
-    })
-    .parse(input)?;
+            FlowSet {
+                id,
+                length,
+                records,
+            },
+        ))
+    }
 
-    Ok((input, NetFlowV9Packet { header, flow_sets }))
-}
+    fn parse_records<'a>(
+        &mut self,
+        input: &'a [u8],
+        source_id: u32,
+        flow_set_id: u16,
+    ) -> IResult<&'a [u8], Vec<Record>> {
+        match flow_set_id {
+            NETFLOW_V9_TEMPLATE_FLOW_SET_ID => {
+                let (input, templates) = many0(parse_template_record).parse(input)?;
+                for template in &templates {
+                    self.templates.insert(
+                        (source_id, template.id),
+                        template.resolve(&self.ie_registry),
+                    );
+                }
 
-fn parse_records<'a>(
-    input: &'a [u8],
-    source_id: u32,
-    flow_set_id: u16,
-    registry: &IERegistry,
-    templates: &mut TemplateCache,
-    options_templates: &mut TemplateCache,
-) -> IResult<&'a [u8], Vec<Record>> {
-    match flow_set_id {
-        NETFLOW_V9_TEMPLATE_FLOW_SET_ID => {
-            let (input, records) = many0(parse_template_record).parse(input)?;
-            let records = records
-                .into_iter()
-                .map(|template| {
-                    templates.insert(
-                        (source_id, template.id),
-                        resolve_template(registry, &template),
-                    );
-                    Record::Template(template)
-                })
-                .collect();
-            Ok((input, records))
-        }
-        NETFLOW_V9_OPTIONS_TEMPLATE_FLOW_SET_ID => {
-            let (input, records) = many0(parse_options_template_record).parse(input)?;
-            let records = records
-                .into_iter()
-                .map(|template| {
-                    options_templates.insert(
-                        (source_id, template.id),
-                        resolve_options_template(registry, &template),
-                    );
-                    Record::OptionsTemplate(template)
-                })
-                .collect();
-            Ok((input, records))
-        }
-        template_id => {
-            let key = (source_id, template_id);
-            if let Some(fields) = templates.get(&key) {
-                map(
-                    |input| parse_data_records(input, fields),
-                    |records| records.into_iter().map(Record::Data).collect(),
-                )
-                .parse(input)
-            } else if let Some(fields) = options_templates.get(&key) {
-                map(
-                    |input| parse_data_records(input, fields),
-                    |records| records.into_iter().map(Record::OptionsData).collect(),
-                )
-                .parse(input)
-            } else {
-                log::debug!(
-                    "Unknown template for source_id: {source_id}, template_id: {template_id}"
-                );
-                Ok((&input[input.len()..], vec![]))
+                Ok((input, templates.into_iter().map(Record::Template).collect()))
             }
+            NETFLOW_V9_OPTIONS_TEMPLATE_FLOW_SET_ID => {
+                let (input, templates) = many0(parse_options_template_record).parse(input)?;
+                for template in &templates {
+                    self.options_templates.insert(
+                        (source_id, template.id),
+                        template.resolve(&self.ie_registry),
+                    );
+                }
+
+                Ok((
+                    input,
+                    templates.into_iter().map(Record::OptionsTemplate).collect(),
+                ))
+            }
+            template_id => self.parse_templated_records(input, source_id, template_id),
         }
+    }
+
+    fn parse_templated_records<'a>(
+        &self,
+        input: &'a [u8],
+        source_id: u32,
+        template_id: u16,
+    ) -> IResult<&'a [u8], Vec<Record>> {
+        let key = (source_id, template_id);
+
+        type Wrap = fn(DataRecord) -> Record;
+        let (fields, wrap): (&Arc<[ResolvedField]>, Wrap) = if let Some(t) =
+            self.templates.get(&key)
+        {
+            (t, Record::Data)
+        } else if let Some(t) = self.options_templates.get(&key) {
+            (t, Record::OptionsData)
+        } else {
+            log::debug!("Unknown template for source_id: {source_id}, template_id: {template_id}");
+            return Ok((input, vec![]));
+        };
+
+        if fields.is_empty() {
+            return Ok((input, vec![]));
+        }
+
+        let (input, records) = many0(map(
+            |i| parse_data_record(i, fields),
+            |values| DataRecord::from_template(Arc::clone(fields), values),
+        ))
+        .parse(input)?;
+
+        Ok((input, records.into_iter().map(wrap).collect()))
     }
 }
 
-fn parse_data_records<'a>(
-    input: &'a [u8],
-    fields: &Arc<[ResolvedField]>,
-) -> IResult<&'a [u8], Vec<DataRecord>> {
-    if fields.is_empty() {
-        return Ok((input, vec![]));
+impl Default for NetflowV9Parser {
+    fn default() -> Self {
+        Self::new(IERegistry::default(), Duration::from_mins(10))
     }
-
-    many0(map(
-        |input| parse_data_record(input, fields),
-        |values| DataRecord::from_template(Arc::clone(fields), values),
-    ))
-    .parse(input)
 }
 
 fn parse_data_record<'a>(
@@ -171,12 +176,6 @@ fn parse_data_record<'a>(
     }
 
     Ok((remaining, values))
-}
-
-impl Default for NetflowV9Parser {
-    fn default() -> Self {
-        Self::new(IERegistry::default(), Duration::from_mins(10))
-    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -226,34 +225,6 @@ pub struct FlowSet {
     pub records: Vec<Record>,
 }
 
-fn parse_flow_set<'a>(
-    input: &'a [u8],
-    source_id: u32,
-    registry: &IERegistry,
-    templates: &mut TemplateCache,
-    options_templates: &mut TemplateCache,
-) -> IResult<&'a [u8], FlowSet> {
-    let (input, id) = be_u16(input)?;
-    let (input, length) = be_u16(input)?;
-    let Some(value_length) = length.to_usize().checked_sub(FLOW_SET_HEADER_SIZE) else {
-        log::warn!(
-            "FlowSet length {length} is shorter than its header. Discarding the rest of the packet."
-        );
-        return fail().parse(input);
-    };
-    let (input, body) = take(value_length)(input)?;
-    let (_, records) = parse_records(body, source_id, id, registry, templates, options_templates)?;
-
-    Ok((
-        input,
-        FlowSet {
-            id,
-            length,
-            records,
-        },
-    ))
-}
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
 pub enum Record {
@@ -277,12 +248,13 @@ fn parse_template_record(input: &[u8]) -> IResult<&[u8], TemplateRecord> {
     Ok((input, TemplateRecord { id, fields }))
 }
 
-fn resolve_template(registry: &IERegistry, template: &TemplateRecord) -> Arc<[ResolvedField]> {
-    template
-        .fields
-        .iter()
-        .map(|field| ResolvedField::from_registry(registry, field.r#type, field.length))
-        .collect()
+impl TemplateRecord {
+    fn resolve(&self, registry: &IERegistry) -> Arc<[ResolvedField]> {
+        self.fields
+            .iter()
+            .map(|field| ResolvedField::from_registry(registry, field.r#type, field.length))
+            .collect()
+    }
 }
 
 pub type ResolvedField = data_record::ResolvedField<TemplateField>;
@@ -347,23 +319,22 @@ fn parse_options_template_record(input: &[u8]) -> IResult<&[u8], OptionsTemplate
     ))
 }
 
-fn resolve_options_template(
-    registry: &IERegistry,
-    template: &OptionsTemplateRecord,
-) -> Arc<[ResolvedField]> {
-    let scope = template.scope_fields.iter().map(|field| ResolvedField {
-        spec: TemplateField {
-            r#type: field.r#type.clone().into(),
-            length: field.length,
-        },
-        data_type: DataType::Unsigned,
-        name: Arc::from(field.r#type.to_string()),
-    });
-    let options = template
-        .option_fields
-        .iter()
-        .map(|field| ResolvedField::from_registry(registry, field.r#type, field.length));
-    scope.chain(options).collect()
+impl OptionsTemplateRecord {
+    fn resolve(&self, registry: &IERegistry) -> Arc<[ResolvedField]> {
+        let scope = self.scope_fields.iter().map(|field| ResolvedField {
+            spec: TemplateField {
+                r#type: field.r#type.clone().into(),
+                length: field.length,
+            },
+            data_type: DataType::Unsigned,
+            name: Arc::from(field.r#type.to_string()),
+        });
+        let options = self
+            .option_fields
+            .iter()
+            .map(|field| ResolvedField::from_registry(registry, field.r#type, field.length));
+        scope.chain(options).collect()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, strum_macros::Display, FromPrimitive, IntoPrimitive)]
