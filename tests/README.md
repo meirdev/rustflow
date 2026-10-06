@@ -56,6 +56,12 @@ The enriched variant adds four sources through `--enrich`, defined by the
 - `csv/networks.csv` by prefix: `csv_src_asn`, `csv_src_country`, `next_hop_org`
 - `csv/protocols.csv` by exact match: `proto_name`
 
+## Command enrichment
+
+`test_enrich_command.py` checks a `command` source against the same data read
+from a file, and that a command which fails, prints no rows, or times out stops
+the collector.
+
 ## Updating a snapshot
 
 When an output change is intended, regenerate the affected snapshot with
