@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -15,6 +16,8 @@ struct Shared {
     source: RwLock<Arc<dyn Source>>,
     // Serialize explicit and scheduled reloads so older loads cannot replace newer ones.
     loading: Mutex<()>,
+    /// Set when the table goes away, to give up on a load in progress.
+    cancel: AtomicBool,
     metrics: SourceMetrics,
 }
 
@@ -29,7 +32,7 @@ impl Shared {
 
     fn reload(&self) -> Result<usize> {
         let _loading = self.loading.lock().unwrap_or_else(PoisonError::into_inner);
-        match source::open(&self.config) {
+        match source::open(&self.config, &self.cancel) {
             Ok(source) => {
                 let count = source.len();
                 // Swap under the lock, but free the previous source only
@@ -66,12 +69,14 @@ pub struct Table {
 impl Table {
     pub fn new(config: SourceConfig, metrics: &TableMetrics) -> Result<Self> {
         let driver = ReloadDriver::new(config.source(), config.reload())?;
-        let source = source::open(&config)?;
+        let cancel = AtomicBool::new(false);
+        let source = source::open(&config, &cancel)?;
         let shared = Arc::new(Shared {
             metrics: metrics.for_source(&config.source().display().to_string()),
             config,
             source: RwLock::new(Arc::from(source)),
             loading: Mutex::new(()),
+            cancel,
         });
         shared.record_load(shared.source().len());
         let worker_shared = Arc::clone(&shared);
@@ -100,5 +105,13 @@ impl Table {
 
     pub fn snapshot(&self) -> Arc<dyn Source> {
         Arc::clone(&self.shared.source())
+    }
+}
+
+impl Drop for Table {
+    fn drop(&mut self) {
+        // The reload guard waits for its worker next; a command still
+        // running would hold that up for as long as its timeout.
+        self.shared.cancel.store(true, Ordering::Relaxed);
     }
 }

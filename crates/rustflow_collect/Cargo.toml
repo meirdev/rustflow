@@ -34,6 +34,7 @@ socket2 = "0.6"
 arrayvec = "0.7"
 macaddr = "1"
 prost = "0.14"
+process-wrap = { version = "10.0.1", default-features = false, features = ["std", "process-group", "job-object"] }
 
 [dev-dependencies]
 tempfile = "3"

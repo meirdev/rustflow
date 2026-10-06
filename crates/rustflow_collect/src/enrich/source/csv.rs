@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::path::Path;
+use std::io::Read;
 
 use super::{ExactTable, PrefixTable, Source};
 use crate::enrich::config::CsvLookup;
@@ -8,7 +8,7 @@ use crate::enrich::row::{Row, Schema};
 use crate::enrich::{Error, Result};
 
 pub fn open(
-    path: &Path,
+    input: impl Read,
     key_columns: &[String],
     lookup: &CsvLookup,
     schema: &Schema,
@@ -16,7 +16,7 @@ pub fn open(
     Ok(match lookup {
         CsvLookup::Exact(key_types) => {
             let mut table = ExactTable::default();
-            read(path, key_columns, schema, |keys, row| {
+            read(input, key_columns, schema, |keys, row| {
                 let key = keys
                     .iter()
                     .zip(key_types)
@@ -29,7 +29,7 @@ pub fn open(
         }
         CsvLookup::Prefix => {
             let mut table = PrefixTable::default();
-            read(path, key_columns, schema, |keys, row| {
+            read(input, key_columns, schema, |keys, row| {
                 table.insert(parse_prefix(keys[0])?, row);
                 Ok(())
             })?;
@@ -41,12 +41,12 @@ pub fn open(
 /// Calls `emit` with the key cells, in `key_columns` order, and the row of
 /// every record.
 fn read(
-    path: &Path,
+    input: impl Read,
     key_columns: &[String],
     schema: &Schema,
     mut emit: impl FnMut(&[&str], Row) -> Result<()>,
 ) -> Result<()> {
-    let mut reader = ::csv::Reader::from_path(path)?;
+    let mut reader = ::csv::Reader::from_reader(input);
 
     let headers: Vec<_> = reader
         .headers()?
@@ -125,7 +125,7 @@ mod tests {
 
         let schema = Schema::new(["name"]);
         let table = open(
-            file.path(),
+            file.reopen().unwrap(),
             &["exporter".into(), "ifindex".into()],
             &CsvLookup::Exact(vec![KeyType::Ip, KeyType::Number]),
             &schema,
