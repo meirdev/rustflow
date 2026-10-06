@@ -24,6 +24,8 @@ pub enum Error {
         #[source]
         error: Box<Error>,
     },
+    #[error("Command failed: {0}")]
+    Command(std::process::ExitStatus),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]

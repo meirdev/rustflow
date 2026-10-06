@@ -1,6 +1,7 @@
 # Enrichment
 
-RustFlow enriches normalized flows from CSV or MaxMind DB (`.mmdb`) files.
+RustFlow enriches normalized flows from CSV or MaxMind DB (`.mmdb`) files, or from
+CSV printed by a command.
 
 Use `-f common` and one `--enrich` argument per source.
 
@@ -11,11 +12,13 @@ Each `--enrich` argument is a comma-separated list of `key=value` parameters.
 | Parameter    | Description                                                                                                 |
 | ------------ | ----------------------------------------------------------------------------------------------------------- |
 | `type`       | Required. `prefix_lookup` (longest-prefix match) or `exact` (CSV only).                                     |
-| `source`     | Required. Source file path.                                                                                 |
-| `format`     | `csv` or `mmdb`; inferred from the extension unless specified.                                              |
+| `source`     | Source file path. Either `source` or `command` is required.                                                 |
+| `command`    | Path of an executable that prints the source as CSV. See [Command](#command).                               |
+| `timeout`    | How long the command may run; `30s` by default. Only with `command`.                                        |
+| `format`     | `csv` or `mmdb`; inferred from the file extension unless specified. A command is always `csv`.              |
 | `fields`     | Required. `<key>@<source>:<output>[\|<source>:<output>...]`; separate groups with `;`.                      |
 | `key_column` | CSV key column, or `+`-separated columns for a composite exact key. Required for CSV; not allowed for MMDB. |
-| `reload`     | `never` (default), an interval of at least `10s`, or `watch`.                                               |
+| `reload`     | `never` (default), an interval of at least `10s`, or `watch` (files only).                                  |
 
 ### Fields
 
@@ -82,6 +85,32 @@ exporter,ifindex,name
 rustflow collect -t netflow -p 9995 -f common \
   --enrich "type=exact,source=ifnames.csv,key_column=exporter+ifindex,fields=sampler_address+in_if@name:in_if_name;sampler_address+out_if@name:out_if_name"
 ```
+
+## Command
+
+Use `command` instead of `source` to load the CSV an executable prints on standard
+output. The executable takes no arguments.
+
+Save this as `/etc/rustflow/ifnames.sh` and make it executable:
+
+```sh
+#!/bin/sh
+set -eu
+
+echo "exporter,ifindex,name"
+for router in 10.0.0.1 10.0.0.2; do
+  names=$(snmpwalk -v2c -c public -Oqs "$router" IF-MIB::ifName)
+  echo "$names" | sed -n "s/^ifName\.\([0-9]*\) \(.*\)$/$router,\1,\2/p"
+done
+```
+
+```bash
+rustflow collect -t netflow -p 9995 -f common \
+  --enrich "type=exact,command=/etc/rustflow/ifnames.sh,reload=10m,key_column=exporter+ifindex,fields=sampler_address+in_if@name:in_if_name;sampler_address+out_if@name:out_if_name"
+```
+
+The command must exit with status 0 within `timeout` and print at least one row.
+Otherwise the load fails, and on a reload the previous data stays in use.
 
 ## MaxMind DB
 

@@ -14,7 +14,8 @@ fn datetime_to_ntp(dt: &DateTime<Utc>) -> (u32, u32) {
     let unix_secs = dt.timestamp() as u64;
     let ntp_secs = unix_secs + NTP_UNIX_EPOCH_DIFF;
     let nanos = dt.timestamp_subsec_nanos() as u64;
-    // Convert nanoseconds to NTP fractional format: nanos * 2^32 / 1_000_000_000
+    // Convert nanoseconds to NTP fractional format: nanos * 2^32 /
+    // 1_000_000_000
     let fraction = (nanos << 32) / 1_000_000_000;
     (ntp_secs as u32, fraction as u32)
 }

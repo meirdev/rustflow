@@ -20,7 +20,7 @@ It can collect flows from the network or PCAP files, normalize them into a commo
 - Raw or normalized flow output
 - NDJSON, CSV, Protobuf and Parquet serialization
 - File rotation and time-based partitioning
-- Flow enrichment using CSV or MaxMind databases
+- Flow enrichment using CSV files, MaxMind databases, or the output of a command
 - Prometheus metrics
 - IPFIX traffic generator
 - IPFIX exporter, native on Linux and via libpcap elsewhere

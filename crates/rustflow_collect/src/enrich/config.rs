@@ -28,9 +28,26 @@ pub enum SourceFormat {
     Mmdb,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Origin {
+    File(PathBuf),
+    Command {
+        program: PathBuf,
+        timeout: Duration,
+    },
+}
+
+impl Origin {
+    pub fn path(&self) -> &Path {
+        match self {
+            Self::File(path) | Self::Command { program: path, .. } => path,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SourceConfig {
-    source: PathBuf,
+    origin: Origin,
     format: SourceFormat,
     reload: ReloadPolicy,
     columns: Vec<String>,
@@ -38,13 +55,27 @@ pub struct SourceConfig {
 
 impl SourceConfig {
     pub fn new(
-        source: PathBuf,
+        origin: Origin,
         format: SourceFormat,
         columns: Vec<String>,
         reload: ReloadPolicy,
     ) -> Result<Self> {
-        if source.as_os_str().is_empty() {
+        if origin.path().as_os_str().is_empty() {
             return Err(Error::Config("Empty source".into()));
+        }
+
+        if let Origin::Command { timeout, .. } = &origin {
+            if format == SourceFormat::Mmdb {
+                return Err(Error::Config("A command supports only CSV".into()));
+            }
+            if matches!(reload, ReloadPolicy::Watch { .. }) {
+                return Err(Error::Config(
+                    "A command cannot be watched; use a reload interval".into(),
+                ));
+            }
+            if timeout.is_zero() {
+                return Err(Error::Config("Command timeout must not be zero".into()));
+            }
         }
 
         if columns.is_empty() {
@@ -68,16 +99,28 @@ impl SourceConfig {
             return Err(Error::Config("Empty CSV key column".into()));
         }
 
+        let origin = match origin {
+            Origin::File(path) => Origin::File(std::path::absolute(path)?),
+            Origin::Command { program, timeout } => Origin::Command {
+                program: std::path::absolute(program)?,
+                timeout,
+            },
+        };
+
         Ok(Self {
-            source: std::path::absolute(source)?,
+            origin,
             format,
             columns,
             reload,
         })
     }
 
+    pub fn origin(&self) -> &Origin {
+        &self.origin
+    }
+    /// The file, or the executable of a command.
     pub fn source(&self) -> &Path {
-        &self.source
+        self.origin.path()
     }
     pub fn format(&self) -> &SourceFormat {
         &self.format
@@ -93,6 +136,8 @@ impl SourceConfig {
 pub const DEFAULT_DEBOUNCE: Duration = Duration::from_millis(250);
 
 pub const MIN_INTERVAL: Duration = Duration::from_secs(10);
+
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 impl FromStr for ReloadPolicy {
     type Err = Error;
@@ -225,7 +270,16 @@ pub struct EnrichmentConfig {
     pub mappings: Vec<FieldMapping>,
 }
 
-const PARAMETERS: &[&str] = &["type", "format", "source", "key_column", "fields", "reload"];
+const PARAMETERS: &[&str] = &[
+    "type",
+    "format",
+    "source",
+    "command",
+    "timeout",
+    "key_column",
+    "fields",
+    "reload",
+];
 
 #[derive(Clone, Copy)]
 enum Kind {
@@ -350,15 +404,45 @@ pub fn parse_enrich_arg(arg: &str) -> Result<EnrichmentConfig> {
         };
 
     let kind: Kind = required("type")?.parse()?;
-    let source = PathBuf::from(required("source")?);
-    let format: Format = params
-        .get("format")
-        .copied()
-        .or_else(|| source.extension()?.to_str())
-        .ok_or_else(|| {
-            Error::Config("Specify format=csv or format=mmdb when source has no extension".into())
-        })?
-        .parse()?;
+    let origin = match (params.get("source"), params.get("command")) {
+        (Some(path), None) => {
+            forbid(&["timeout"], "a file source")?;
+            Origin::File(PathBuf::from(path))
+        }
+        (None, Some(program)) => Origin::Command {
+            program: PathBuf::from(program),
+            timeout: match params.get("timeout") {
+                Some(value) => duration_str::parse(value)
+                    .map_err(|e| Error::Config(format!("Invalid timeout '{value}': {e}")))?,
+                None => DEFAULT_TIMEOUT,
+            },
+        },
+        (Some(_), Some(_)) => {
+            return Err(Error::Config(
+                "'source' and 'command' are mutually exclusive".into(),
+            ));
+        }
+        (None, None) => {
+            return Err(Error::Config(
+                "Missing 'source' or 'command' parameter".into(),
+            ));
+        }
+    };
+
+    let format: Format = match (params.get("format"), &origin) {
+        (Some(format), _) => format.parse()?,
+        (None, Origin::File(path)) => path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .ok_or_else(|| {
+                Error::Config(
+                    "Specify format=csv or format=mmdb when source has no extension".into(),
+                )
+            })?
+            .parse()?,
+        // An executable's extension says nothing about what it prints.
+        (None, Origin::Command { .. }) => Format::Csv,
+    };
 
     let mappings = parse_field_mappings(required("fields")?)?;
 
@@ -424,7 +508,7 @@ pub fn parse_enrich_arg(arg: &str) -> Result<EnrichmentConfig> {
     }
 
     Ok(EnrichmentConfig {
-        source: SourceConfig::new(source, format, columns, reload)?,
+        source: SourceConfig::new(origin, format, columns, reload)?,
         mappings,
     })
 }
@@ -483,6 +567,73 @@ mod tests {
                  fields=in_if+out_if+src_port+dst_port+proto@name:n"
             )
             .contains("At most 4 lookup keys")
+        );
+    }
+
+    #[test]
+    fn command_is_a_csv_source_with_a_timeout() {
+        let parse = |extra: &str| {
+            parse_enrich_arg(&format!(
+                "type=exact,command=/opt/ifnames.sh,key_column=number,fields=proto@name:n{extra}"
+            ))
+            .unwrap()
+        };
+
+        let config = parse("");
+        assert_eq!(
+            config.source.origin(),
+            &Origin::Command {
+                program: "/opt/ifnames.sh".into(),
+                timeout: DEFAULT_TIMEOUT,
+            }
+        );
+        assert!(matches!(config.source.format(), SourceFormat::Csv { .. }));
+
+        let config = parse(",timeout=2m,reload=5m");
+        assert_eq!(
+            config.source.origin(),
+            &Origin::Command {
+                program: "/opt/ifnames.sh".into(),
+                timeout: Duration::from_secs(120),
+            }
+        );
+        assert_eq!(
+            config.source.reload(),
+            ReloadPolicy::Interval(Duration::from_secs(300))
+        );
+    }
+
+    #[test]
+    fn command_is_validated() {
+        let error = |arg: &str| parse_enrich_arg(arg).unwrap_err().to_string();
+
+        assert!(
+            error("type=exact,source=a.csv,command=a.sh,key_column=k,fields=proto@name:n")
+                .contains("mutually exclusive")
+        );
+        assert!(
+            error("type=exact,key_column=k,fields=proto@name:n")
+                .contains("Missing 'source' or 'command'")
+        );
+        assert!(
+            error("type=exact,source=a.csv,timeout=5s,key_column=k,fields=proto@name:n")
+                .contains("'timeout' is not valid for a file source")
+        );
+        assert!(
+            error("type=exact,command=a.sh,reload=watch,key_column=k,fields=proto@name:n")
+                .contains("cannot be watched")
+        );
+        assert!(
+            error("type=prefix_lookup,command=a.sh,format=mmdb,fields=src_addr@asn:n")
+                .contains("supports only CSV")
+        );
+        assert!(
+            error("type=exact,command=a.sh,timeout=0s,key_column=k,fields=proto@name:n")
+                .contains("must not be zero")
+        );
+        assert!(
+            error("type=exact,command=a.sh,timeout=soon,key_column=k,fields=proto@name:n")
+                .contains("Invalid timeout 'soon'")
         );
     }
 }
