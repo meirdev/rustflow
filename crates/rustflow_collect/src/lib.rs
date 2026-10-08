@@ -5,30 +5,62 @@ mod protocol;
 mod sink;
 mod source;
 
-use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
+use std::time::Duration;
 
 pub use args::CollectArgs;
-use args::FlowType;
+use args::{FlowType, Listener};
 use enrich::{EnrichmentConfig, EnrichmentEngine};
 use protocol::Protocol;
 use rustflow::IERegistry;
 use sink::OutputFormat;
-use sink::pipeline::{CHUNK_FLUSH_TIMEOUT, Pipeline};
+use sink::pipeline::{CHUNK_FLUSH_TIMEOUT, Pipeline, Producer};
 use source::{Datagram, Source};
 
 /// The socket source checks this between reads to stop ingestion before
 /// draining.
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
+/// What every ingest thread decodes with.
+#[derive(Clone)]
+struct Decoding {
+    format: OutputFormat,
+    ie_registry: IERegistry,
+    template_timeout: Duration,
+}
+
+fn ingest(
+    flow_type: FlowType,
+    source: &mut dyn Source,
+    decoding: &Decoding,
+    metrics: Arc<metrics::Metrics>,
+    output: Producer,
+) {
+    match flow_type {
+        FlowType::Netflow => {
+            let mut protocol = protocol::Netflow::new(
+                decoding.ie_registry.clone(),
+                decoding.template_timeout,
+                &metrics,
+            );
+            collect(source, &mut protocol, decoding.format, metrics, output);
+        }
+        FlowType::Sflow => {
+            let mut protocol = protocol::Sflow::new();
+            collect(source, &mut protocol, decoding.format, metrics, output);
+        }
+    }
+}
+
 fn collect<P: Protocol>(
     source: &mut dyn Source,
     protocol: &mut P,
     format: OutputFormat,
     metrics: Arc<metrics::Metrics>,
-    output: &mut Pipeline,
+    mut output: Producer,
 ) {
     let mut exporters = metrics::ExporterMetrics::new(metrics, P::FAMILY);
 
@@ -62,7 +94,7 @@ fn collect<P: Protocol>(
         );
 
         match format {
-            OutputFormat::Raw => P::push_raw(&packet, output),
+            OutputFormat::Raw => P::push_raw(&packet, &mut output),
             OutputFormat::Common => output.push(protocol.convert(src, &packet, time_received_ns)),
         }
 
@@ -70,41 +102,26 @@ fn collect<P: Protocol>(
     }
 }
 
-fn open_source<P: Protocol>(cli: &CollectArgs, metrics: &Arc<metrics::Metrics>) -> Box<dyn Source> {
-    match (&cli.pcap, cli.port) {
-        (Some(path), _) => Box::new(source::Pcap::open(path).unwrap_or_else(|e| {
-            eprintln!("Failed to open pcap file {}: {}", path.display(), e);
+fn bind(listener: &Listener, recv_buffer: usize) -> source::Socket {
+    let socket = source::Socket::bind(listener.addr, CHUNK_FLUSH_TIMEOUT, recv_buffer)
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to bind to {}: {}", listener.addr, e);
             std::process::exit(1);
-        })),
-        (None, Some(port)) => {
-            let addr = SocketAddr::new(cli.host, port);
-            let socket = source::Socket::bind(addr, CHUNK_FLUSH_TIMEOUT, cli.recv_buffer)
-                .unwrap_or_else(|e| {
-                    eprintln!("Failed to bind to {}: {}", addr, e);
-                    std::process::exit(1);
-                });
-            let recv_buffer = socket.recv_buffer_size().unwrap_or(0);
-            if recv_buffer < cli.recv_buffer {
-                eprintln!(
-                    "Warning: receive buffer limited to {} bytes by the system; raise its limit (net.core.rmem_max on Linux) to get {}",
-                    recv_buffer, cli.recv_buffer
-                );
-            }
-            eprintln!(
-                "Listening for {} data on {} (receive buffer {} bytes)",
-                P::NAME,
-                socket.local_addr().unwrap(),
-                recv_buffer
-            );
-            // Detached; it serves until the process exits.
-            metrics::start_metrics_server(Arc::clone(metrics), cli.metrics_host, cli.metrics_port);
-            Box::new(socket)
-        }
-        (None, None) => {
-            eprintln!("Error: Either --pcap or --port must be specified");
-            std::process::exit(1);
-        }
+        });
+    let granted = socket.recv_buffer_size().unwrap_or(0);
+    if granted < recv_buffer {
+        eprintln!(
+            "Warning: receive buffer limited to {} bytes by the system; raise its limit (net.core.rmem_max on Linux) to get {}",
+            granted, recv_buffer
+        );
     }
+    eprintln!(
+        "Listening for {} data on {} (receive buffer {} bytes)",
+        listener.flow_type.name(),
+        socket.local_addr().unwrap(),
+        granted
+    );
+    socket
 }
 
 fn load_ie_registry(path: Option<&Path>) -> IERegistry {
@@ -170,32 +187,55 @@ pub fn run(cli: CollectArgs) {
         eprintln!("Error: {}", e);
         std::process::exit(1);
     });
-    let mut output = Pipeline::spawn(sink, enrichment, metrics.output.clone());
+    let output = Pipeline::spawn(sink, enrichment, metrics.output.clone());
+    let decoding = Decoding {
+        format: cli.format,
+        ie_registry,
+        template_timeout: cli.template_timeout,
+    };
 
     install_shutdown_handler();
 
-    match cli.flow_type {
-        FlowType::Netflow => {
-            let mut protocol = protocol::Netflow::new(ie_registry, cli.template_timeout, &metrics);
-            let mut source = open_source::<protocol::Netflow>(&cli, &metrics);
-            collect(
-                &mut *source,
-                &mut protocol,
-                cli.format,
+    match &cli.pcap {
+        Some(pcap) => {
+            let mut source = source::Pcap::open(&pcap.path).unwrap_or_else(|e| {
+                eprintln!("Failed to open pcap file {}: {}", pcap.path.display(), e);
+                std::process::exit(1);
+            });
+            ingest(
+                pcap.flow_type,
+                &mut source,
+                &decoding,
                 metrics,
-                &mut output,
+                output.producer(),
             );
         }
-        FlowType::Sflow => {
-            let mut protocol = protocol::Sflow::new();
-            let mut source = open_source::<protocol::Sflow>(&cli, &metrics);
-            collect(
-                &mut *source,
-                &mut protocol,
-                cli.format,
-                metrics,
-                &mut output,
-            );
+        None => {
+            // Bind everything first, so a bad address fails before any
+            // thread starts.
+            let sockets: Vec<_> = cli
+                .listen
+                .iter()
+                .map(|listener| (listener.flow_type, bind(listener, cli.recv_buffer)))
+                .collect();
+            // Detached; it serves until the process exits.
+            metrics::start_metrics_server(Arc::clone(&metrics), cli.metrics_host, cli.metrics_port);
+            let threads: Vec<_> = sockets
+                .into_iter()
+                .map(|(flow_type, mut socket)| {
+                    let decoding = decoding.clone();
+                    let metrics = Arc::clone(&metrics);
+                    let producer = output.producer();
+                    thread::spawn(move || {
+                        ingest(flow_type, &mut socket, &decoding, metrics, producer)
+                    })
+                })
+                .collect();
+            for thread in threads {
+                if thread.join().is_err() {
+                    eprintln!("An ingest thread panicked");
+                }
+            }
         }
     }
 

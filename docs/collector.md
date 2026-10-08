@@ -4,10 +4,10 @@ The RustFlow collector receives NetFlow, IPFIX, and sFlow traffic over UDP or re
 
 ## Network Input
 
-Use `--flow-type` (`-t`) to select the flow protocol and `--port` (`-p`) to specify the UDP port:
+`--listen` names the flow protocol and the UDP address to receive it on:
 
 ```bash
-rustflow collect -t netflow -p 9995
+rustflow collect --listen netflow://:9995
 ```
 
 The `netflow` type handles:
@@ -21,33 +21,46 @@ The protocol version is detected automatically from the received packets.
 For sFlow:
 
 ```bash
-rustflow collect -t sflow -p 6343
+rustflow collect --listen sflow://:6343
 ```
 
-By default, RustFlow listens on all interfaces (`0.0.0.0`).
+Without a host, RustFlow listens on all interfaces (`0.0.0.0`). Give one to
+bind a specific address, with an IPv6 address in brackets:
 
-Use `--host` (`-H`) to bind to a specific address:
+```bash
+rustflow collect --listen netflow://192.0.2.10:9995
+rustflow collect --listen "sflow://[2001:db8::10]:6343"
+```
+
+### Several listeners
+
+`--listen` can be repeated, so one collector receives NetFlow and sFlow at the
+same time:
 
 ```bash
 rustflow collect \
-  -t netflow \
-  -H 192.0.2.10 \
-  -p 9995
+  --listen netflow://:9995 \
+  --listen sflow://:6343 \
+  -f common
 ```
+
+Each listener decodes on its own thread and all of them feed the same output,
+so the common format is the natural choice. With `--format raw`, NetFlow and
+sFlow records are interleaved in one stream and are told apart only by their
+fields.
 
 See [Supported Protocols](protocols.md) for protocol support and references.
 
 ## PCAP Input
 
-Instead of listening on a UDP socket, flows can be read from a PCAP file:
+Instead of listening on a UDP socket, flows can be read from a PCAP file. The
+URL names the protocol the capture holds:
 
 ```bash
-rustflow collect \
-  -t netflow \
-  --pcap capture.pcap
+rustflow collect --pcap netflow://capture.pcap
 ```
 
-`--pcap` cannot be used together with `--host` or `--port`.
+`--pcap` cannot be used together with `--listen`.
 
 ## Output
 
@@ -57,8 +70,7 @@ Use `--format common` to normalize flows into the common flow schema:
 
 ```bash
 rustflow collect \
-  -t netflow \
-  -p 9995 \
+  --listen netflow://:9995 \
   --format common
 ```
 
@@ -70,8 +82,7 @@ Custom IPFIX Information Element mappings can be loaded from a CSV file using `-
 
 ```bash
 rustflow collect \
-  -t netflow \
-  -p 4739 \
+  --listen netflow://:4739 \
   --ie-mapping ie-mapping.csv
 ```
 
@@ -87,8 +98,7 @@ The template cache timeout can be configured with `--template-timeout`:
 
 ```bash
 rustflow collect \
-  -t netflow \
-  -p 4739 \
+  --listen netflow://:4739 \
   --template-timeout 1200
 ```
 
@@ -103,8 +113,7 @@ configured with `--recv-buffer` (bytes, default 4 MiB):
 
 ```bash
 rustflow collect \
-  -t netflow \
-  -p 4739 \
+  --listen netflow://:4739 \
   --recv-buffer 16777216
 ```
 
@@ -126,8 +135,7 @@ Multiple enrichment configurations can be specified:
 
 ```bash
 rustflow collect \
-  -t netflow \
-  -p 9995 \
+  --listen netflow://:9995 \
   -f common \
   --enrich "..." \
   --enrich "..."
@@ -149,8 +157,7 @@ The address and port can be changed using `--metrics-host` and `--metrics-port`:
 
 ```bash
 rustflow collect \
-  -t netflow \
-  -p 9995 \
+  --listen netflow://:9995 \
   --metrics-host 127.0.0.1 \
   --metrics-port 9091
 ```

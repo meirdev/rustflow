@@ -1,4 +1,4 @@
-//! The pipeline between the ingest thread and the encoder thread: decoded
+//! The pipeline between the ingest threads and the encoder thread: decoded
 //! flows, or raw packets already serialized, cross it in chunks.
 
 pub mod errors;
@@ -45,26 +45,20 @@ pub enum Chunk {
     Raw(Vec<u8>),
 }
 
-/// The ingest thread's end of the pipeline: batches records into chunks
-/// and hands them to the encoder thread over a bounded channel. Dropping
-/// the sender closes the channel; the encoder then drains every queued
-/// chunk, finalizes the output, and `join` returns — so nothing decoded
-/// before shutdown is lost.
+/// The encoder thread and the channel feeding it. Each ingest thread gets
+/// a [`Producer`]; once every producer is dropped the channel closes, the
+/// encoder drains every queued chunk, finalizes the output, and `drain`
+/// returns — so nothing decoded before shutdown is lost.
 pub struct Pipeline {
     tx: mpsc::SyncSender<Chunk>,
     handle: thread::JoinHandle<io::Result<()>>,
-    flows: Vec<CommonFlow>,
-    raw: Vec<u8>,
-    raw_records: usize,
     /// A discard sink never looks at raw bytes, so they are not produced.
     discard: bool,
-    /// When the first record of the current chunk arrived.
-    chunk_started: Instant,
 }
 
 impl Pipeline {
     /// Spawn the encoder thread: it owns enrichment + serialization + writing,
-    /// so the ingest thread only decodes.
+    /// so the ingest threads only decode.
     pub fn spawn(sink: RotatingSink, enrichment: EnrichmentEngine, metrics: OutputMetrics) -> Self {
         let discard = sink.serialization() == Serialization::Discard;
         let (tx, rx) = mpsc::sync_channel::<Chunk>(PIPELINE_DEPTH);
@@ -74,14 +68,46 @@ impl Pipeline {
         Self {
             tx,
             handle,
+            discard,
+        }
+    }
+
+    /// An ingest thread's end of the pipeline.
+    pub fn producer(&self) -> Producer {
+        Producer {
+            tx: self.tx.clone(),
             flows: Vec::with_capacity(CHUNK_RECORDS),
             raw: Vec::new(),
             raw_records: 0,
-            discard,
+            discard: self.discard,
             chunk_started: Instant::now(),
         }
     }
 
+    /// Close the channel and wait for the encoder to write everything out.
+    /// Every producer must be gone by then, or this never returns.
+    pub fn drain(self) -> io::Result<()> {
+        let Self { tx, handle, .. } = self;
+        drop(tx);
+        handle
+            .join()
+            .unwrap_or_else(|_| Err(io::Error::other("encoder thread panicked")))
+    }
+}
+
+/// Batches records into chunks and hands them to the encoder thread over
+/// the bounded channel. Dropping it flushes what is buffered.
+pub struct Producer {
+    tx: mpsc::SyncSender<Chunk>,
+    flows: Vec<CommonFlow>,
+    raw: Vec<u8>,
+    raw_records: usize,
+    discard: bool,
+    /// When the first record of the current chunk arrived.
+    chunk_started: Instant,
+}
+
+impl Producer {
     /// Queue decoded flows; sends to the encoder once a chunk is full or
     /// has waited long enough, so a slow trickle is not held back.
     pub fn push(&mut self, flows: impl IntoIterator<Item = CommonFlow>) {
@@ -135,16 +161,11 @@ impl Pipeline {
             std::process::exit(1);
         }
     }
+}
 
-    /// Flush, close the channel, and wait for the encoder to write
-    /// everything out.
-    pub fn drain(mut self) -> io::Result<()> {
+impl Drop for Producer {
+    fn drop(&mut self) {
         self.flush();
-        let Self { tx, handle, .. } = self;
-        drop(tx);
-        handle
-            .join()
-            .unwrap_or_else(|_| Err(io::Error::other("encoder thread panicked")))
     }
 }
 
