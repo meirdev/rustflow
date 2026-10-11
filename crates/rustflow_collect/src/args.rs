@@ -15,7 +15,7 @@ pub struct CollectArgs {
     /// `sflow://[host]:port` listens on UDP, `netflow+pcap://capture.pcap`
     /// or `sflow+pcap://capture.pcap` reads a capture file. Repeat to
     /// combine several
-    #[arg(long, value_name = "URL", required = true)]
+    #[arg(short = 'I', long, value_name = "URL", required = true)]
     pub(crate) input: Vec<Input>,
 
     /// Socket receive buffer size in bytes
@@ -266,6 +266,10 @@ mod tests {
     #[test]
     fn an_input_is_required_and_malformed_urls_are_rejected() {
         assert!(parse(&[]).is_err());
+        assert_eq!(
+            parse(&["-I", "sflow://:6343"]).unwrap().input,
+            [listen(FlowType::Sflow, "0.0.0.0:6343")]
+        );
         for url in [
             "flows.pcap",
             "netflow",
