@@ -37,7 +37,7 @@ cargo install rustflow_cli
 rustflow --version
 ```
 
-Prebuilt static Linux binaries are also available from the [releases](https://github.com/meirdev/rustflow/releases) page.
+Prebuilt static Linux binaries for x86_64 and aarch64 are also available from the [releases](https://github.com/meirdev/rustflow/releases) page.
 
 ## Quick Start
 

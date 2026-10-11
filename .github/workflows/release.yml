@@ -58,29 +58,38 @@ jobs:
     permissions:
       contents: write
 
-    runs-on: ubuntu-latest
-
     strategy:
+      fail-fast: false
       matrix:
-        BUILD_TARGET: [x86_64-unknown-linux-musl]
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+
+    # Each target builds natively on a runner of its own architecture.
+    runs-on: ${{ matrix.runner }}
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Add the musl target
-        run: rustup target add ${{ matrix.BUILD_TARGET }}
+        run: rustup target add ${{ matrix.target }}
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.BUILD_TARGET }}
+        run: cargo build --release --target ${{ matrix.target }}
 
       - name: Strip the binary
-        run: strip target/${{ matrix.BUILD_TARGET }}/release/rustflow
+        run: strip target/${{ matrix.target }}/release/rustflow
+
+      - name: Name the binary after its target
+        run: cp target/${{ matrix.target }}/release/rustflow rustflow-${{ matrix.target }}
 
       - name: Upload the rustflow binary to the release
         uses: softprops/action-gh-release@v2
         if: github.ref_type == 'tag'
         with:
-          files: target/${{ matrix.BUILD_TARGET }}/release/rustflow
+          files: rustflow-${{ matrix.target }}
 
   docker:
     if: github.ref_type == 'tag'
