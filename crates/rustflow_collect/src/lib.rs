@@ -12,7 +12,7 @@ use std::thread;
 use std::time::Duration;
 
 pub use args::CollectArgs;
-use args::{FlowType, Listener};
+use args::{FlowType, Input};
 use enrich::{EnrichmentConfig, EnrichmentEngine};
 use protocol::Protocol;
 use rustflow::IERegistry;
@@ -102,26 +102,37 @@ fn collect<P: Protocol>(
     }
 }
 
-fn bind(listener: &Listener, recv_buffer: usize) -> source::Socket {
-    let socket = source::Socket::bind(listener.addr, CHUNK_FLUSH_TIMEOUT, recv_buffer)
-        .unwrap_or_else(|e| {
-            eprintln!("Failed to bind to {}: {}", listener.addr, e);
-            std::process::exit(1);
-        });
-    let granted = socket.recv_buffer_size().unwrap_or(0);
-    if granted < recv_buffer {
-        eprintln!(
-            "Warning: receive buffer limited to {} bytes by the system; raise its limit (net.core.rmem_max on Linux) to get {}",
-            granted, recv_buffer
-        );
+fn open(input: &Input, recv_buffer: usize) -> Box<dyn Source + Send> {
+    match input {
+        Input::Pcap { path, .. } => {
+            let source = source::Pcap::open(path).unwrap_or_else(|e| {
+                eprintln!("Failed to open pcap file {}: {}", path.display(), e);
+                std::process::exit(1);
+            });
+            Box::new(source)
+        }
+        Input::Listen { flow_type, addr } => {
+            let socket = source::Socket::bind(*addr, CHUNK_FLUSH_TIMEOUT, recv_buffer)
+                .unwrap_or_else(|e| {
+                    eprintln!("Failed to bind to {}: {}", addr, e);
+                    std::process::exit(1);
+                });
+            let granted = socket.recv_buffer_size().unwrap_or(0);
+            if granted < recv_buffer {
+                eprintln!(
+                    "Warning: receive buffer limited to {} bytes by the system; raise its limit (net.core.rmem_max on Linux) to get {}",
+                    granted, recv_buffer
+                );
+            }
+            eprintln!(
+                "Listening for {} data on {} (receive buffer {} bytes)",
+                flow_type.name(),
+                socket.local_addr().unwrap(),
+                granted
+            );
+            Box::new(socket)
+        }
     }
-    eprintln!(
-        "Listening for {} data on {} (receive buffer {} bytes)",
-        listener.flow_type.name(),
-        socket.local_addr().unwrap(),
-        granted
-    );
-    socket
 }
 
 fn load_ie_registry(path: Option<&Path>) -> IERegistry {
@@ -196,46 +207,31 @@ pub fn run(cli: CollectArgs) {
 
     install_shutdown_handler();
 
-    match &cli.pcap {
-        Some(pcap) => {
-            let mut source = source::Pcap::open(&pcap.path).unwrap_or_else(|e| {
-                eprintln!("Failed to open pcap file {}: {}", pcap.path.display(), e);
-                std::process::exit(1);
-            });
-            ingest(
-                pcap.flow_type,
-                &mut source,
-                &decoding,
-                metrics,
-                output.producer(),
-            );
-        }
-        None => {
-            // Bind everything first, so a bad address fails before any
-            // thread starts.
-            let sockets: Vec<_> = cli
-                .listen
-                .iter()
-                .map(|listener| (listener.flow_type, bind(listener, cli.recv_buffer)))
-                .collect();
-            // Detached; it serves until the process exits.
-            metrics::start_metrics_server(Arc::clone(&metrics), cli.metrics_host, cli.metrics_port);
-            let threads: Vec<_> = sockets
-                .into_iter()
-                .map(|(flow_type, mut socket)| {
-                    let decoding = decoding.clone();
-                    let metrics = Arc::clone(&metrics);
-                    let producer = output.producer();
-                    thread::spawn(move || {
-                        ingest(flow_type, &mut socket, &decoding, metrics, producer)
-                    })
-                })
-                .collect();
-            for thread in threads {
-                if thread.join().is_err() {
-                    eprintln!("An ingest thread panicked");
-                }
-            }
+    let sources: Vec<_> = cli
+        .input
+        .iter()
+        .map(|input| (input.flow_type(), open(input, cli.recv_buffer)))
+        .collect();
+    if cli
+        .input
+        .iter()
+        .any(|input| matches!(input, Input::Listen { .. }))
+    {
+        // Detached; it serves until the process exits.
+        metrics::start_metrics_server(Arc::clone(&metrics), cli.metrics_host, cli.metrics_port);
+    }
+    let threads: Vec<_> = sources
+        .into_iter()
+        .map(|(flow_type, mut source)| {
+            let decoding = decoding.clone();
+            let metrics = Arc::clone(&metrics);
+            let producer = output.producer();
+            thread::spawn(move || ingest(flow_type, &mut *source, &decoding, metrics, producer))
+        })
+        .collect();
+    for thread in threads {
+        if thread.join().is_err() {
+            eprintln!("An ingest thread panicked");
         }
     }
 

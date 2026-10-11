@@ -44,26 +44,26 @@ Prebuilt static Linux binaries are also available from the [releases](https://gi
 Collect NetFlow/IPFIX traffic:
 
 ```bash
-rustflow collect --listen netflow://:9995
+rustflow collect --input netflow://:9995
 ```
 
 Collect sFlow:
 
 ```bash
-rustflow collect --listen sflow://:6343
+rustflow collect --input sflow://:6343
 ```
 
 Or both at once:
 
 ```bash
-rustflow collect --listen netflow://:9995 --listen sflow://:6343 -f common
+rustflow collect --input netflow://:9995 --input sflow://:6343 -f common
 ```
 
 Write normalized flows to Parquet:
 
 ```bash
 rustflow collect \
-  --listen netflow://:9995 \
+  --input netflow://:9995 \
   -f common \
   -s parquet \
   -o flows.parquet
@@ -72,7 +72,7 @@ rustflow collect \
 Read flows from a PCAP file:
 
 ```bash
-rustflow collect --pcap netflow://capture.pcap
+rustflow collect --input netflow+pcap://capture.pcap
 ```
 
 ## Commands

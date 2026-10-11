@@ -3,24 +3,20 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
 
-use clap::{ArgGroup, Args as ClapArgs, ValueEnum};
+use clap::{Args as ClapArgs, ValueEnum};
 
 use crate::enrich::{EnrichmentConfig, parse_enrich_arg};
 use crate::sink::{MAX_PARTITION_LEVEL, OutputFormat, Serialization, SinkConfig};
 
 /// Arguments for the `collect` subcommand.
 #[derive(ClapArgs)]
-#[command(group(ArgGroup::new("input").required(true).multiple(false).args(["listen", "pcap"])))]
 pub struct CollectArgs {
-    /// Listen for flow data at `netflow://[host]:port` or
-    /// `sflow://[host]:port`; repeat to collect several protocols at once
-    #[arg(long, value_name = "URL")]
-    pub(crate) listen: Vec<Listener>,
-
-    /// Read flow packets from a pcap file instead of listening:
-    /// `netflow://capture.pcap` or `sflow://capture.pcap`
-    #[arg(long, value_name = "URL")]
-    pub(crate) pcap: Option<Pcap>,
+    /// Where flow data comes from: `netflow://[host]:port` or
+    /// `sflow://[host]:port` listens on UDP, `netflow+pcap://capture.pcap`
+    /// or `sflow+pcap://capture.pcap` reads a capture file. Repeat to
+    /// combine several
+    #[arg(long, value_name = "URL", required = true)]
+    pub(crate) input: Vec<Input>,
 
     /// Socket receive buffer size in bytes
     #[arg(long, default_value = "4194304", value_name = "BYTES")]
@@ -129,35 +125,57 @@ impl FlowType {
     }
 }
 
-/// Splits `netflow://rest` or `sflow://rest` into the protocol and the rest.
-fn split_scheme(value: &str) -> Result<(FlowType, &str), String> {
-    let (scheme, rest) = value
-        .split_once("://")
-        .ok_or("expected netflow://... or sflow://...")?;
-    let flow_type = match scheme {
-        "netflow" => FlowType::Netflow,
-        "sflow" => FlowType::Sflow,
-        other => {
-            return Err(format!(
-                "unknown protocol '{other}', expected netflow or sflow"
-            ));
-        }
-    };
-    Ok((flow_type, rest))
-}
-
-/// A UDP socket to receive one flow protocol on.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Listener {
-    pub flow_type: FlowType,
-    pub addr: SocketAddr,
+pub(crate) enum Input {
+    /// A UDP socket to listen on.
+    Listen {
+        flow_type: FlowType,
+        addr: SocketAddr,
+    },
+    /// A capture file to read.
+    Pcap { flow_type: FlowType, path: PathBuf },
 }
 
-impl FromStr for Listener {
+impl Input {
+    pub(crate) fn flow_type(&self) -> FlowType {
+        match self {
+            Self::Listen { flow_type, .. } | Self::Pcap { flow_type, .. } => *flow_type,
+        }
+    }
+}
+
+impl FromStr for Input {
     type Err = String;
 
     fn from_str(value: &str) -> Result<Self, String> {
-        let (flow_type, rest) = split_scheme(value)?;
+        let (scheme, rest) = value.split_once("://").ok_or(
+            "expected netflow://[host]:port, sflow://[host]:port or <protocol>+pcap://file",
+        )?;
+        let (protocol, pcap) = match scheme.split_once('+') {
+            None => (scheme, false),
+            Some((protocol, "pcap")) => (protocol, true),
+            Some((_, other)) => return Err(format!("unknown input kind '{other}', expected pcap")),
+        };
+        let flow_type = match protocol {
+            "netflow" => FlowType::Netflow,
+            "sflow" => FlowType::Sflow,
+            other => {
+                return Err(format!(
+                    "unknown protocol '{other}', expected netflow or sflow"
+                ));
+            }
+        };
+
+        if pcap {
+            if rest.is_empty() {
+                return Err("missing file path".into());
+            }
+            return Ok(Self::Pcap {
+                flow_type,
+                path: PathBuf::from(rest),
+            });
+        }
+
         let (host, port) = rest.rsplit_once(':').ok_or("missing port")?;
         let port = port.parse().map_err(|_| format!("invalid port '{port}'"))?;
         let host = host.trim_start_matches('[').trim_end_matches(']');
@@ -167,31 +185,9 @@ impl FromStr for Listener {
             host.parse()
                 .map_err(|_| format!("invalid host address '{host}'"))?
         };
-        Ok(Self {
+        Ok(Self::Listen {
             flow_type,
             addr: SocketAddr::new(host, port),
-        })
-    }
-}
-
-/// A capture file holding one flow protocol.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Pcap {
-    pub flow_type: FlowType,
-    pub path: PathBuf,
-}
-
-impl FromStr for Pcap {
-    type Err = String;
-
-    fn from_str(value: &str) -> Result<Self, String> {
-        let (flow_type, path) = split_scheme(value)?;
-        if path.is_empty() {
-            return Err("missing file path".into());
-        }
-        Ok(Self {
-            flow_type,
-            path: PathBuf::from(path),
         })
     }
 }
@@ -226,65 +222,61 @@ mod tests {
             .map(|cli| cli.args)
     }
 
-    fn listener(flow_type: FlowType, addr: &str) -> Listener {
-        Listener {
+    fn listen(flow_type: FlowType, addr: &str) -> Input {
+        Input::Listen {
             flow_type,
             addr: addr.parse().unwrap(),
         }
     }
 
+    fn pcap(flow_type: FlowType, path: &str) -> Input {
+        Input::Pcap {
+            flow_type,
+            path: PathBuf::from(path),
+        }
+    }
+
     #[test]
-    fn listen_urls_name_the_protocol_and_address() {
+    fn input_urls_name_the_protocol_and_the_socket_or_file() {
         let args = parse(&[
-            "--listen",
+            "--input",
             "netflow://:9995",
-            "--listen",
+            "--input",
             "sflow://[::1]:6343",
-            "--listen",
+            "--input",
             "netflow://192.0.2.1:2055",
+            "--input",
+            "sflow+pcap:///var/tmp/flows.pcap",
+            "--input",
+            "netflow+pcap://flows.pcap",
         ])
         .unwrap();
         assert_eq!(
-            args.listen,
+            args.input,
             [
-                listener(FlowType::Netflow, "0.0.0.0:9995"),
-                listener(FlowType::Sflow, "[::1]:6343"),
-                listener(FlowType::Netflow, "192.0.2.1:2055"),
+                listen(FlowType::Netflow, "0.0.0.0:9995"),
+                listen(FlowType::Sflow, "[::1]:6343"),
+                listen(FlowType::Netflow, "192.0.2.1:2055"),
+                pcap(FlowType::Sflow, "/var/tmp/flows.pcap"),
+                pcap(FlowType::Netflow, "flows.pcap"),
             ]
         );
-        assert_eq!(args.pcap, None);
     }
 
     #[test]
-    fn pcap_urls_name_the_protocol_and_file() {
-        let args = parse(&["--pcap", "sflow:///var/tmp/flows.pcap"]).unwrap();
-        assert_eq!(
-            args.pcap,
-            Some(Pcap {
-                flow_type: FlowType::Sflow,
-                path: PathBuf::from("/var/tmp/flows.pcap"),
-            })
-        );
-        assert!(args.listen.is_empty());
-        assert_eq!(
-            parse(&["--pcap", "netflow://flows.pcap"])
-                .unwrap()
-                .pcap
-                .unwrap()
-                .path,
-            PathBuf::from("flows.pcap")
-        );
-    }
-
-    #[test]
-    fn inputs_are_required_and_exclusive() {
+    fn an_input_is_required_and_malformed_urls_are_rejected() {
         assert!(parse(&[]).is_err());
-        assert!(parse(&["--listen", "netflow://:1", "--pcap", "netflow://flows.pcap"]).is_err());
-        assert!(parse(&["--pcap", "flows.pcap"]).is_err());
-        assert!(parse(&["--pcap", "netflow://"]).is_err());
-        assert!(parse(&["--listen", "http://:1"]).is_err());
-        assert!(parse(&["--listen", "netflow://:x"]).is_err());
-        assert!(parse(&["--listen", "netflow://router:1"]).is_err());
-        assert!(parse(&["--listen", "netflow"]).is_err());
+        for url in [
+            "flows.pcap",
+            "netflow",
+            "netflow+pcap://",
+            "netflow+file://flows.pcap",
+            "http://:1",
+            "netflow://:x",
+            "netflow://router:1",
+            "netflow://",
+        ] {
+            assert!(parse(&["--input", url]).is_err(), "{url}");
+        }
     }
 }
