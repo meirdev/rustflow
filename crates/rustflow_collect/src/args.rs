@@ -75,9 +75,9 @@ pub struct CollectArgs {
     pub(crate) prefix: String,
 
     /// Run a command after each rotated file is complete. `%f` is the file,
-    /// `%t` the window start as in the file name, `%u` the same as Unix
-    /// time; without a placeholder the file is appended. Requires
-    /// `--interval`.
+    /// `%p` its path below the output directory, `%t` the window start as
+    /// in the file name, `%u` the same as Unix time; without a placeholder
+    /// the file is appended. Requires `--interval`.
     #[arg(
         short = 'x',
         long = "exec",

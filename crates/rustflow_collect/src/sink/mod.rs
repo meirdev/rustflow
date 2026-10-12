@@ -5,7 +5,7 @@ pub mod metrics;
 pub mod pipeline;
 pub mod rotating;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use std::{fmt, io};
 
@@ -138,7 +138,8 @@ pub fn build(
     let mut sink =
         RotatingSink::open(serialization, destination, enriched_fields, metrics.clone())?;
     if let Some(command) = &config.exec {
-        sink = sink.with_hook(FileHook::spawn(command, metrics)?);
+        let root = config.path.as_deref().unwrap_or(Path::new(""));
+        sink = sink.with_hook(FileHook::spawn(command, root, metrics)?);
     }
     Ok(sink)
 }

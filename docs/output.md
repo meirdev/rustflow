@@ -205,17 +205,19 @@ rustflow collect \
   -s parquet \
   -o flows \
   --interval 10m \
-  -x "aws s3 cp %f s3://bucket/flows/%t.parquet"
+  --level 2 \
+  -x "aws s3 cp %f s3://bucket/flows/%p"
 ```
 
 Placeholders in the command are replaced for each file:
 
-| Placeholder | Value                                                    |
-| ----------- | -------------------------------------------------------- |
-| `%f`        | The file's path                                          |
-| `%t`        | The window start as in the file name, `20260820T120000Z` |
-| `%u`        | The window start as a Unix timestamp                     |
-| `%%`        | A percent sign                                           |
+| Placeholder | Value                                                                                                 |
+| ----------- | ----------------------------------------------------------------------------------------------------- |
+| `%f`        | The file's path                                                                                       |
+| `%p`        | The file's path below the output directory, `2026/08/20/12/flows-20260820T120000Z.parquet` at level 2 |
+| `%t`        | The window start as in the file name, `20260820T120000Z`                                              |
+| `%u`        | The window start as a Unix timestamp                                                                  |
+| `%%`        | A percent sign                                                                                        |
 
 `-x` requires `--interval`.
 
