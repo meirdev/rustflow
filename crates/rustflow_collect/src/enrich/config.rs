@@ -31,10 +31,7 @@ pub enum SourceFormat {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Origin {
     File(PathBuf),
-    Command {
-        program: PathBuf,
-        timeout: Duration,
-    },
+    Command { program: PathBuf, timeout: Duration },
 }
 
 impl Origin {

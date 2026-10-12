@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread::{self, JoinHandle};
@@ -33,10 +33,11 @@ pub struct FileHook {
 }
 
 impl FileHook {
-    /// `command` is split on whitespace. `%f` is the file, `%t` the window
-    /// start as in the file name, `%u` the same as Unix time, `%%` a
-    /// percent sign. Without a placeholder the file is appended.
-    pub fn spawn(command: &str, metrics: &OutputMetrics) -> io::Result<Self> {
+    /// `command` is split on whitespace. `%f` is the file, `%p` its path
+    /// relative to `root`, `%t` the window start as in the file name, `%u`
+    /// the same as Unix time, `%%` a percent sign. Without a placeholder
+    /// the file is appended.
+    pub fn spawn(command: &str, root: &Path, metrics: &OutputMetrics) -> io::Result<Self> {
         let words: Vec<String> = command.split_whitespace().map(String::from).collect();
         if words.is_empty() {
             return Err(io::Error::other("-x command is empty"));
@@ -45,10 +46,11 @@ impl FileHook {
             check_placeholders(word)?;
         }
         let metrics = metrics.clone();
+        let root = root.to_path_buf();
         let (tx, rx) = mpsc::channel();
         let worker = thread::Builder::new()
             .name("exec".into())
-            .spawn(move || Launcher::new(words, metrics).run(rx))?;
+            .spawn(move || Launcher::new(words, root, metrics).run(rx))?;
         Ok(Self { tx, worker })
     }
 
@@ -67,9 +69,9 @@ impl FileHook {
 fn check_placeholders(word: &str) -> io::Result<()> {
     let mut chars = word.chars();
     while let Some(c) = chars.next() {
-        if c == '%' && !matches!(chars.next(), Some('f' | 't' | 'u' | '%')) {
+        if c == '%' && !matches!(chars.next(), Some('f' | 'p' | 't' | 'u' | '%')) {
             return Err(io::Error::other(format!(
-                "-x: unknown placeholder in '{word}', use %f, %t, %u or %%"
+                "-x: unknown placeholder in '{word}', use %f, %p, %t, %u or %%"
             )));
         }
     }
@@ -78,15 +80,17 @@ fn check_placeholders(word: &str) -> io::Result<()> {
 
 struct Launcher {
     words: Vec<String>,
+    root: PathBuf,
     metrics: OutputMetrics,
     pending: VecDeque<Job>,
     running: Vec<(Child, PathBuf)>,
 }
 
 impl Launcher {
-    fn new(words: Vec<String>, metrics: OutputMetrics) -> Self {
+    fn new(words: Vec<String>, root: PathBuf, metrics: OutputMetrics) -> Self {
         Self {
             words,
+            root,
             metrics,
             pending: VecDeque::new(),
             running: Vec::new(),
@@ -160,7 +164,11 @@ impl Launcher {
     }
 
     fn arguments(&self, job: &Job) -> Vec<String> {
-        let mut args: Vec<String> = self.words.iter().map(|w| expand(w, job)).collect();
+        let mut args: Vec<String> = self
+            .words
+            .iter()
+            .map(|w| expand(w, job, &self.root))
+            .collect();
         if !self.words.iter().any(|w| w.contains('%')) {
             args.push(job.path.display().to_string());
         }
@@ -168,7 +176,7 @@ impl Launcher {
     }
 }
 
-fn expand(word: &str, job: &Job) -> String {
+fn expand(word: &str, job: &Job, root: &Path) -> String {
     let mut out = String::with_capacity(word.len());
     let mut chars = word.chars();
     while let Some(c) = chars.next() {
@@ -178,10 +186,58 @@ fn expand(word: &str, job: &Job) -> String {
         }
         match chars.next() {
             Some('f') => out.push_str(&job.path.display().to_string()),
+            Some('p') => {
+                let relative = job.path.strip_prefix(root).unwrap_or(&job.path);
+                out.push_str(&relative.display().to_string());
+            }
             Some('t') => out.push_str(&job.window.format(STAMP_FORMAT).to_string()),
             Some('u') => out.push_str(&job.window.timestamp().to_string()),
             _ => out.push('%'),
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn placeholders_expand_per_file() {
+        let job = Job {
+            path: PathBuf::from("out/2026/08/27/12/flows-20260827T120000Z.parquet"),
+            window: DateTime::from_timestamp(1_787_832_000, 0).unwrap(),
+        };
+        let root = Path::new("out");
+        assert_eq!(
+            expand("s3://bucket/flows/%p", &job, root),
+            "s3://bucket/flows/2026/08/27/12/flows-20260827T120000Z.parquet"
+        );
+        assert_eq!(
+            expand("%f", &job, root),
+            "out/2026/08/27/12/flows-20260827T120000Z.parquet"
+        );
+        assert_eq!(
+            expand("%t-%u-100%%", &job, root),
+            "20260827T120000Z-1787832000-100%"
+        );
+
+        let flat = Job {
+            path: PathBuf::from("out/flows-20260827T120000Z.parquet"),
+            window: job.window,
+        };
+        assert_eq!(expand("%p", &flat, root), "flows-20260827T120000Z.parquet");
+        assert_eq!(
+            expand("%p", &flat, Path::new("elsewhere")),
+            "out/flows-20260827T120000Z.parquet"
+        );
+    }
+
+    #[test]
+    fn unknown_placeholders_are_rejected() {
+        assert!(check_placeholders("%p").is_ok());
+        assert!(check_placeholders("%%").is_ok());
+        assert!(check_placeholders("%x").is_err());
+        assert!(check_placeholders("50%").is_err());
+    }
 }
