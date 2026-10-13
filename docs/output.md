@@ -11,45 +11,46 @@ The common format can be serialized as **NDJSON, CSV, Protobuf, Parquet, or Arro
 
 The common flow format provides a consistent schema across the supported flow protocols.
 
-| Field                   | Type      | Optional | Description                            |
-| ----------------------- | --------- | -------- | -------------------------------------- |
-| `flow_type`             | string    | No       | Source flow protocol/type              |
-| `time_received_ns`      | timestamp | Yes      | Time the flow was received             |
-| `sequence_num`          | uint32    | No       | Export packet sequence number          |
-| `sampling_rate`         | uint32    | Yes      | Sampling rate reported by the exporter |
-| `sampler_address`       | string    | Yes      | Address of the flow exporter/sampler   |
-| `time_flow_start_ns`    | timestamp | Yes      | Flow start time                        |
-| `time_flow_end_ns`      | timestamp | Yes      | Flow end time                          |
-| `bytes`                 | uint64    | No       | Number of bytes in the flow            |
-| `packets`               | uint64    | No       | Number of packets in the flow          |
-| `src_addr`              | string    | Yes      | Source IPv4 or IPv6 address            |
-| `dst_addr`              | string    | Yes      | Destination IPv4 or IPv6 address       |
-| `src_mac`               | string    | Yes      | Source MAC address                     |
-| `dst_mac`               | string    | Yes      | Destination MAC address                |
-| `etype`                 | uint16    | Yes      | Ethernet EtherType                     |
-| `proto`                 | uint8     | Yes      | IP protocol number                     |
-| `src_port`              | uint16    | Yes      | Source transport port                  |
-| `dst_port`              | uint16    | Yes      | Destination transport port             |
-| `in_if`                 | uint32    | Yes      | Input interface index                  |
-| `out_if`                | uint32    | Yes      | Output interface index                 |
-| `ip_tos`                | uint8     | Yes      | IP Type of Service / traffic class     |
-| `ip_ttl`                | uint8     | Yes      | IP TTL / hop limit                     |
-| `tcp_flags`             | uint16    | Yes      | TCP flags bitmask                      |
-| `icmp_type`             | uint8     | Yes      | ICMP type                              |
-| `icmp_code`             | uint8     | Yes      | ICMP code                              |
-| `ipv6_flow_label`       | uint32    | Yes      | IPv6 flow label                        |
-| `fragment_id`           | uint32    | Yes      | IP fragment identifier                 |
-| `fragment_offset`       | uint16    | Yes      | IP fragment offset                     |
-| `src_as`                | uint32    | Yes      | Source autonomous system number        |
-| `dst_as`                | uint32    | Yes      | Destination autonomous system number   |
-| `next_hop`              | string    | Yes      | IP next-hop address                    |
-| `src_net`               | uint8     | Yes      | Source prefix length                   |
-| `dst_net`               | uint8     | Yes      | Destination prefix length              |
-| `bgp_next_hop`          | string    | Yes      | BGP next-hop address                   |
-| `src_vlan`              | uint16    | Yes      | Source VLAN ID                         |
-| `dst_vlan`              | uint16    | Yes      | Destination VLAN ID                    |
-| `observation_domain_id` | uint32    | Yes      | IPFIX observation domain ID            |
-| `template_id`           | uint16    | Yes      | NetFlow v9 / IPFIX template ID         |
+| Field                   | Type      | Optional | Description                                                                                                                                            |
+| ----------------------- | --------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `flow_type`             | string    | No       | Source flow protocol/type                                                                                                                              |
+| `time_received_ns`      | timestamp | Yes      | Time the flow was received                                                                                                                             |
+| `sequence_num`          | uint32    | No       | Export packet sequence number                                                                                                                          |
+| `sampling_rate`         | uint32    | Yes      | Sampling rate reported by the exporter                                                                                                                 |
+| `sampler_address`       | string    | Yes      | Address of the flow exporter/sampler                                                                                                                   |
+| `time_flow_start_ns`    | timestamp | Yes      | Flow start time                                                                                                                                        |
+| `time_flow_end_ns`      | timestamp | Yes      | Flow end time                                                                                                                                          |
+| `bytes`                 | uint64    | No       | Number of bytes in the flow                                                                                                                            |
+| `packets`               | uint64    | No       | Number of packets in the flow                                                                                                                          |
+| `src_addr`              | string    | Yes      | Source IPv4 or IPv6 address                                                                                                                            |
+| `dst_addr`              | string    | Yes      | Destination IPv4 or IPv6 address                                                                                                                       |
+| `src_mac`               | string    | Yes      | Source MAC address                                                                                                                                     |
+| `dst_mac`               | string    | Yes      | Destination MAC address                                                                                                                                |
+| `etype`                 | uint16    | Yes      | Ethernet EtherType                                                                                                                                     |
+| `proto`                 | uint8     | Yes      | IP protocol number                                                                                                                                     |
+| `src_port`              | uint16    | Yes      | Source transport port                                                                                                                                  |
+| `dst_port`              | uint16    | Yes      | Destination transport port                                                                                                                             |
+| `in_if`                 | uint32    | Yes      | Input interface index                                                                                                                                  |
+| `out_if`                | uint32    | Yes      | Output interface index                                                                                                                                 |
+| `ip_tos`                | uint8     | Yes      | IP Type of Service / traffic class                                                                                                                     |
+| `ip_ttl`                | uint8     | Yes      | IP TTL / hop limit                                                                                                                                     |
+| `tcp_flags`             | uint16    | Yes      | TCP flags bitmask                                                                                                                                      |
+| `icmp_type`             | uint8     | Yes      | ICMP type                                                                                                                                              |
+| `icmp_code`             | uint8     | Yes      | ICMP code                                                                                                                                              |
+| `ipv6_flow_label`       | uint32    | Yes      | IPv6 flow label                                                                                                                                        |
+| `fragment_id`           | uint32    | Yes      | IP fragment identifier                                                                                                                                 |
+| `fragment_offset`       | uint16    | Yes      | IP fragment offset                                                                                                                                     |
+| `src_as`                | uint32    | Yes      | Source autonomous system number                                                                                                                        |
+| `dst_as`                | uint32    | Yes      | Destination autonomous system number                                                                                                                   |
+| `next_hop`              | string    | Yes      | IP next-hop address                                                                                                                                    |
+| `src_net`               | uint8     | Yes      | Source prefix length                                                                                                                                   |
+| `dst_net`               | uint8     | Yes      | Destination prefix length                                                                                                                              |
+| `bgp_next_hop`          | string    | Yes      | BGP next-hop address                                                                                                                                   |
+| `src_vlan`              | uint16    | Yes      | Source VLAN ID                                                                                                                                         |
+| `dst_vlan`              | uint16    | Yes      | Destination VLAN ID                                                                                                                                    |
+| `observation_domain_id` | uint32    | Yes      | IPFIX observation domain ID                                                                                                                            |
+| `template_id`           | uint16    | Yes      | NetFlow v9 / IPFIX template ID                                                                                                                         |
+| `forwarding_status`     | uint32    | Yes      | NetFlow v9 / IPFIX forwarding status. In its low byte, the top two bits are forwarded (1), dropped (2) or consumed (3) and the low six bits the reason |
 
 Fields that are unavailable in the original flow record are left unset.
 
@@ -80,7 +81,7 @@ Optional fields that do not have a value are omitted.
 CSV output uses a fixed set of columns matching the common flow schema.
 
 ```text
-flow_type,time_received_ns,sequence_num,sampling_rate,sampler_address,...,template_id
+flow_type,time_received_ns,sequence_num,sampling_rate,sampler_address,...,forwarding_status
 ```
 
 Fields without a value are represented as empty CSV values.

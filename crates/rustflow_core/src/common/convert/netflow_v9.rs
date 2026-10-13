@@ -69,6 +69,7 @@ impl NetFlowV9Context<'_> {
                     }
                     DestinationIpv4PrefixLength => flow.dst_net = extract_u8(value),
                     EgressInterface => flow.out_if = extract_u32(value),
+                    ForwardingStatus => flow.forwarding_status = extract_u32(value),
                     IpNextHopIpv4Address => {
                         if let V9FieldValue::Ipv4Address(addr) = value {
                             flow.next_hop = Some(IpAddr::V4(*addr));

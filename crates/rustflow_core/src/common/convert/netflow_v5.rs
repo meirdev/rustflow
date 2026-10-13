@@ -58,7 +58,8 @@ impl NetFlowV5Context<'_> {
             src_vlan: None,
             dst_vlan: None,
             observation_domain_id: None,
-            template_id: None, // NetFlow v5 has no templates
+            template_id: None,
+            forwarding_status: None,
         }
     }
 }

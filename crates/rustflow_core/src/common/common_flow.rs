@@ -94,6 +94,7 @@ macro_rules! for_each_flow_field {
             dst_vlan: U16 optional,
             observation_domain_id: U32 optional,
             template_id: U16 optional,
+            forwarding_status: U32 optional,
         }
     };
 }
@@ -208,6 +209,9 @@ pub struct CommonFlow {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub template_id: Option<u16>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub forwarding_status: Option<u32>,
 }
 
 impl Default for CommonFlow {
@@ -250,6 +254,7 @@ impl Default for CommonFlow {
             dst_vlan: None,
             observation_domain_id: None,
             template_id: None,
+            forwarding_status: None,
         }
     }
 }
@@ -288,8 +293,8 @@ mod tests {
     #[test]
     fn list_names_every_field_of_the_struct() {
         let names = names(&CommonFlow::new(FlowType::Ipfix));
-        assert_eq!(names.len(), 37);
+        assert_eq!(names.len(), 38);
         assert_eq!(names[0], "flow_type");
-        assert_eq!(names[36], "template_id");
+        assert_eq!(names[37], "forwarding_status");
     }
 }

@@ -76,6 +76,7 @@ impl IpfixContext<'_> {
                     }
                     DestinationIpv4PrefixLength => flow.dst_net = ipfix_extract_u8(value),
                     EgressInterface => flow.out_if = ipfix_extract_u32(value),
+                    ForwardingStatus => flow.forwarding_status = ipfix_extract_u32(value),
                     IpNextHopIpv4Address => {
                         if let IpfixFieldValue::Ipv4Address(addr) = value {
                             flow.next_hop = Some(IpAddr::V4(*addr));

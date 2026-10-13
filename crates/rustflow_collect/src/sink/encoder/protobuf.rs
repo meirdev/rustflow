@@ -86,7 +86,9 @@ pub struct FlowMessage {
     pub observation_domain_id: Option<u32>,
     #[prost(uint32, optional, tag = "37")]
     pub template_id: Option<u32>,
-    #[prost(btree_map = "string, string", tag = "38")]
+    #[prost(uint32, optional, tag = "38")]
+    pub forwarding_status: Option<u32>,
+    #[prost(btree_map = "string, string", tag = "39")]
     pub enriched: BTreeMap<String, String>,
 }
 
@@ -140,6 +142,7 @@ impl FlowMessage {
             dst_vlan,
             observation_domain_id,
             template_id,
+            forwarding_status,
         } = flow;
         Self {
             flow_type: flow_type.to_string(),
@@ -179,6 +182,7 @@ impl FlowMessage {
             dst_vlan: dst_vlan.map(u32::from),
             observation_domain_id: *observation_domain_id,
             template_id: template_id.map(u32::from),
+            forwarding_status: *forwarding_status,
             enriched: names
                 .iter()
                 .zip(enriched.iter())
