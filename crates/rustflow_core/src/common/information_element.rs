@@ -62,6 +62,7 @@ pub enum InformationElement {
     FlowEndNanoseconds = 157,
     FlowStartDeltaMicroseconds = 158,
     FlowEndDeltaMicroseconds = 159,
+    SystemInitTimeMilliseconds = 160,
     IcmpTypeIpv4 = 176,
     IcmpCodeIpv4 = 177,
     IcmpTypeIpv6 = 178,

@@ -5,7 +5,7 @@ use rustc_hash::FxHashMap;
 use rustflow_core::common::common_flow::{CommonFlow, SamplingRateCache};
 use rustflow_core::common::convert::{
     IpfixContext, NetFlowV5Context, NetFlowV9Context, SFlowV5Context, extract_ipfix_sampling_rate,
-    extract_v9_sampling_rate,
+    extract_ipfix_system_init_time, extract_v9_sampling_rate,
 };
 use rustflow_core::common::ie_registry::IERegistry;
 use rustflow_core::ipfix::parser::{
@@ -40,6 +40,7 @@ pub struct NetflowProcessor {
     pub v9_parsers: FxHashMap<IpAddr, NetflowV9Parser>,
     pub ipfix_parsers: FxHashMap<IpAddr, IpfixParser>,
     pub sampling_cache: SamplingRateCache,
+    pub boot_times: FxHashMap<(IpAddr, u32), i64>,
 }
 
 impl NetflowProcessor {
@@ -51,6 +52,7 @@ impl NetflowProcessor {
             v9_parsers: FxHashMap::default(),
             ipfix_parsers: FxHashMap::default(),
             sampling_cache: SamplingRateCache::default(),
+            boot_times: FxHashMap::default(),
         }
     }
 
@@ -109,14 +111,17 @@ impl NetflowProcessor {
                 });
 
                 if let Ok((_, parsed)) = parser.parse(payload) {
-                    // Update sampling cache from options data
+                    // Update the caches from options data
                     let cache_key = (src, parsed.header.observation_domain_id);
                     for set in &parsed.sets {
                         for record in &set.records {
-                            if let IpfixRecord::OptionsData(data_record) = record
-                                && let Some(rate) = extract_ipfix_sampling_rate(data_record)
-                            {
-                                self.sampling_cache.set(cache_key, rate);
+                            if let IpfixRecord::OptionsData(data_record) = record {
+                                if let Some(rate) = extract_ipfix_sampling_rate(data_record) {
+                                    self.sampling_cache.set(cache_key, rate);
+                                }
+                                if let Some(boot) = extract_ipfix_system_init_time(data_record) {
+                                    self.boot_times.insert(cache_key, boot);
+                                }
                             }
                         }
                     }
@@ -175,6 +180,7 @@ impl NetflowProcessor {
             NetflowPacket::Ipfix(parsed) => {
                 let cache_key = (src, parsed.header.observation_domain_id);
                 let sampling_rate = self.sampling_cache.get(&cache_key);
+                let system_init_time_ms = self.boot_times.get(&cache_key).copied();
 
                 for set in parsed.sets.iter() {
                     for record in set.records.iter() {
@@ -183,6 +189,7 @@ impl NetflowProcessor {
                                 header: &parsed.header,
                                 sampler_address: Some(src),
                                 sampling_rate,
+                                system_init_time_ms,
                             };
                             let mut flow = ctx.convert(data_record, set.id);
                             flow.time_received_ns = time_received_ns;
@@ -279,6 +286,7 @@ impl NetflowProcessor {
 
                     let cache_key = (src, parsed.header.observation_domain_id);
                     let mut sampling_rate = self.sampling_cache.get(&cache_key);
+                    let mut system_init_time_ms = self.boot_times.get(&cache_key).copied();
 
                     for set in parsed.sets.iter() {
                         for record in set.records.iter() {
@@ -287,6 +295,11 @@ impl NetflowProcessor {
                                     if let Some(rate) = extract_ipfix_sampling_rate(data_record) {
                                         self.sampling_cache.set(cache_key, rate);
                                         sampling_rate = Some(rate);
+                                    }
+                                    if let Some(boot) = extract_ipfix_system_init_time(data_record)
+                                    {
+                                        self.boot_times.insert(cache_key, boot);
+                                        system_init_time_ms = Some(boot);
                                     }
                                 }
                                 IpfixRecord::Data(data_record) => {
@@ -299,6 +312,7 @@ impl NetflowProcessor {
                                         header: &parsed.header,
                                         sampler_address: Some(src),
                                         sampling_rate,
+                                        system_init_time_ms,
                                     };
                                     let mut flow = ctx.convert(data_record, set.id);
                                     flow.time_received_ns = time_received_ns;

@@ -11,6 +11,7 @@ pub struct IpfixContext<'a> {
     pub header: &'a IpfixHeader,
     pub sampler_address: Option<IpAddr>,
     pub sampling_rate: Option<u32>,
+    pub system_init_time_ms: Option<i64>,
 }
 
 impl IpfixContext<'_> {
@@ -21,6 +22,12 @@ impl IpfixContext<'_> {
     fn delta_to_absolute_ns(&self, delta_us: u32) -> Option<i64> {
         let export_time_ns = self.header.export_time.timestamp_nanos_opt()?;
         Some(export_time_ns - (delta_us as i64 * 1_000))
+    }
+
+    fn uptime_to_absolute_ns(&self, uptime_ms: u32) -> Option<i64> {
+        self.system_init_time_ms?
+            .checked_add(i64::from(uptime_ms))?
+            .checked_mul(1_000_000)
     }
 
     pub fn convert(&self, record: &IpfixDataRecord, template_id: u16) -> CommonFlow {
@@ -98,6 +105,14 @@ impl IpfixContext<'_> {
                     FlowEndSeconds | FlowEndMilliseconds | FlowEndMicroseconds
                     | FlowEndNanoseconds => {
                         flow.time_flow_end_ns = ipfix_extract_datetime_ns(value);
+                    }
+                    FlowStartSysUpTime => {
+                        flow.time_flow_start_ns =
+                            ipfix_extract_u32(value).and_then(|v| self.uptime_to_absolute_ns(v));
+                    }
+                    FlowEndSysUpTime => {
+                        flow.time_flow_end_ns =
+                            ipfix_extract_u32(value).and_then(|v| self.uptime_to_absolute_ns(v));
                     }
                     FlowStartDeltaMicroseconds => {
                         flow.time_flow_start_ns =
@@ -260,6 +275,19 @@ fn ipfix_extract_datetime_ns(value: &IpfixFieldValue) -> Option<i64> {
     }
 }
 
+pub fn extract_ipfix_system_init_time(record: &IpfixDataRecord) -> Option<i64> {
+    record.iter().find_map(|(field, _, value)| {
+        let element = InformationElement::from_id(field.information_element_identifier);
+        if element != Some(InformationElement::SystemInitTimeMilliseconds) {
+            return None;
+        }
+        match value {
+            IpfixFieldValue::DateTimeMilliseconds(dt) => Some(dt.timestamp_millis()),
+            _ => None,
+        }
+    })
+}
+
 /// The 1-in-N rate an options record describes: `samplingInterval` and
 /// `samplerRandomInterval` state it directly; the PSAMP count-based pair
 /// selects `samplingPacketInterval` packets out of every
@@ -347,6 +375,65 @@ mod sampling_tests {
                 (SamplingPacketSpace, 7)
             ])),
             Some(20)
+        );
+    }
+
+    fn context(header: &IpfixHeader, boot_ms: Option<i64>) -> IpfixContext<'_> {
+        IpfixContext {
+            header,
+            sampler_address: None,
+            sampling_rate: None,
+            system_init_time_ms: boot_ms,
+        }
+    }
+
+    #[test]
+    fn uptimes_become_absolute_with_the_boot_time() {
+        let header = IpfixHeader::new(chrono::Utc::now(), 1, 1);
+        let flow = context(&header, Some(1_700_000_000_000)).convert(
+            &record(&[
+                (InformationElement::FlowStartSysUpTime, 5_000),
+                (InformationElement::FlowEndSysUpTime, 8_000),
+            ]),
+            256,
+        );
+        assert_eq!(flow.time_flow_start_ns, Some(1_700_000_005_000_000_000));
+        assert_eq!(flow.time_flow_end_ns, Some(1_700_000_008_000_000_000));
+    }
+
+    #[test]
+    fn uptimes_stay_unset_until_the_boot_time_is_known() {
+        let header = IpfixHeader::new(chrono::Utc::now(), 1, 1);
+        let flow = context(&header, None).convert(
+            &record(&[
+                (InformationElement::FlowStartSysUpTime, 5_000),
+                (InformationElement::FlowEndSysUpTime, 8_000),
+            ]),
+            256,
+        );
+        assert_eq!(flow.time_flow_start_ns, None);
+        assert_eq!(flow.time_flow_end_ns, None);
+    }
+
+    #[test]
+    fn the_boot_time_is_read_from_options_records() {
+        let boot = chrono::DateTime::from_timestamp_millis(1_700_000_000_123).unwrap();
+        let specs = vec![crate::ipfix::parser::ResolvedField {
+            spec: FieldSpecifier::from_ie(InformationElement::SystemInitTimeMilliseconds, 8),
+            data_type: crate::common::ie_registry::DataType::DateTimeMilliseconds,
+            name: Arc::from(""),
+        }];
+        let options = IpfixDataRecord::from_template(
+            specs.into(),
+            vec![IpfixFieldValue::DateTimeMilliseconds(boot)],
+        );
+        assert_eq!(
+            extract_ipfix_system_init_time(&options),
+            Some(1_700_000_000_123)
+        );
+        assert_eq!(
+            extract_ipfix_system_init_time(&record(&[(InformationElement::OctetDeltaCount, 1)])),
+            None
         );
     }
 }
