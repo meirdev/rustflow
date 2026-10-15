@@ -102,8 +102,7 @@ Use `--output` (`-o`) to write flows to a file:
 
 ```bash
 rustflow collect \
-  -t netflow \
-  -p 9995 \
+  --input netflow://:9995 \
   -f common \
   -s ndjson \
   -o flows.ndjson
@@ -115,8 +114,7 @@ Without `--interval`, `--output` refers to a single file.
 
 ```bash
 rustflow collect \
-  -t netflow \
-  -p 9995 \
+  --input netflow://:9995 \
   -f common \
   -s parquet \
   -o flows.parquet
@@ -132,8 +130,7 @@ It requires `--format common`, and files use the `.pb` extension.
 
 ```bash
 rustflow collect \
-  -t netflow \
-  -p 9995 \
+  --input netflow://:9995 \
   -f common \
   -s protobuf \
   -o flows.pb
@@ -149,8 +146,7 @@ ingest throughput without paying for serialization or disk:
 
 ```bash
 rustflow collect \
-  -t netflow \
-  -p 9995 \
+  --input netflow://:9995 \
   -f common \
   -s discard
 ```
@@ -165,8 +161,7 @@ For example:
 
 ```bash
 rustflow collect \
-  -t netflow \
-  -p 9995 \
+  --input netflow://:9995 \
   -f common \
   -s parquet \
   -o flows \
@@ -179,8 +174,7 @@ A custom file name prefix can be specified with `--prefix`:
 
 ```bash
 rustflow collect \
-  -t netflow \
-  -p 9995 \
+  --input netflow://:9995 \
   -f common \
   -s parquet \
   -o flows \
@@ -200,8 +194,7 @@ Use `-x` to run a command after each rotated file is complete:
 
 ```bash
 rustflow collect \
-  -t netflow \
-  -p 9995 \
+  --input netflow://:9995 \
   -f common \
   -s parquet \
   -o flows \
@@ -239,8 +232,7 @@ For example:
 
 ```bash
 rustflow collect \
-  -t netflow \
-  -p 9995 \
+  --input netflow://:9995 \
   -f common \
   -s parquet \
   -o flows \

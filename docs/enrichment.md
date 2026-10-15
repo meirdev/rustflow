@@ -44,7 +44,7 @@ prefix,asn,org
 ```
 
 ```bash
-rustflow collect -t netflow -p 9995 -f common \
+rustflow collect --input netflow://:9995 -f common \
   --enrich "type=prefix_lookup,source=asn.csv,key_column=prefix,fields=dst_addr@prefix:dst_network"
 ```
 
@@ -63,7 +63,7 @@ number,name
 ```
 
 ```bash
-rustflow collect -t netflow -p 9995 -f common \
+rustflow collect --input netflow://:9995 -f common \
   --enrich "type=exact,source=protocols.csv,key_column=number,fields=proto@name:proto_name"
 ```
 
@@ -82,7 +82,7 @@ exporter,ifindex,name
 ```
 
 ```bash
-rustflow collect -t netflow -p 9995 -f common \
+rustflow collect --input netflow://:9995 -f common \
   --enrich "type=exact,source=ifnames.csv,key_column=exporter+ifindex,fields=sampler_address+in_if@name:in_if_name;sampler_address+out_if@name:out_if_name"
 ```
 
@@ -105,7 +105,7 @@ done
 ```
 
 ```bash
-rustflow collect -t netflow -p 9995 -f common \
+rustflow collect --input netflow://:9995 -f common \
   --enrich "type=exact,command=/etc/rustflow/ifnames.sh,reload=10m,key_column=exporter+ifindex,fields=sampler_address+in_if@name:in_if_name;sampler_address+out_if@name:out_if_name"
 ```
 
@@ -117,7 +117,7 @@ Otherwise the load fails, and on a reload the previous data stays in use.
 MMDB supports only prefix lookups. Use dotted paths for nested fields:
 
 ```bash
-rustflow collect -t netflow -p 9995 -f common \
+rustflow collect --input netflow://:9995 -f common \
   --enrich "type=prefix_lookup,source=GeoLite2-City.mmdb,fields=src_addr@country.iso_code:src_country|city.names.en:src_city"
 ```
 
@@ -128,7 +128,7 @@ Values of any type are emitted as strings; arrays and maps are rendered as JSON.
 Repeat `--enrich` to combine sources:
 
 ```bash
-rustflow collect -t netflow -p 9995 -f common \
+rustflow collect --input netflow://:9995 -f common \
   --enrich "type=prefix_lookup,source=asn.csv,key_column=prefix,fields=dst_addr@asn:dst_asn|org:dst_org" \
   --enrich "type=prefix_lookup,source=GeoLite2-Country.mmdb,fields=dst_addr@country.iso_code:dst_country"
 ```

@@ -11,13 +11,10 @@ use rustflow_core::netflow_v9::parser::{NETFLOW_V9_VERSION, Record as V9Record};
 use rustflow_core::sflow_v5::parser::{SFLOW_V5_VERSION, Sample};
 
 use crate::metrics::{self, Metrics};
-use crate::sink::pipeline::Pipeline;
+use crate::sink::pipeline::Producer;
 
 pub trait Protocol {
     type Packet;
-
-    /// Display name for startup messages, e.g. "NetFlow".
-    const NAME: &'static str;
 
     /// The metrics family label.
     const FAMILY: &'static str;
@@ -34,7 +31,7 @@ pub trait Protocol {
     ) -> Vec<CommonFlow>;
 
     /// Write the packet in its original structure.
-    fn push_raw(packet: &Self::Packet, output: &mut Pipeline);
+    fn push_raw(packet: &Self::Packet, output: &mut Producer);
 
     /// The metrics label of the packet's version.
     fn version_label(packet: &Self::Packet) -> &'static str;
@@ -71,7 +68,6 @@ impl Netflow {
 impl Protocol for Netflow {
     type Packet = NetflowPacket;
 
-    const NAME: &'static str = "NetFlow";
     const FAMILY: &'static str = metrics::LABEL_NETFLOW;
 
     fn parse(&mut self, src: IpAddr, payload: &[u8]) -> Option<NetflowPacket> {
@@ -88,7 +84,7 @@ impl Protocol for Netflow {
             .convert_to_flows(src, packet, time_received_ns)
     }
 
-    fn push_raw(packet: &NetflowPacket, output: &mut Pipeline) {
+    fn push_raw(packet: &NetflowPacket, output: &mut Producer) {
         match packet {
             NetflowPacket::V5(p) => output.push_raw(p),
             NetflowPacket::V9(p) => output.push_raw(p),
@@ -154,7 +150,6 @@ impl Sflow {
 impl Protocol for Sflow {
     type Packet = SflowPacket;
 
-    const NAME: &'static str = "sFlow";
     const FAMILY: &'static str = metrics::LABEL_SFLOW;
 
     fn parse(&mut self, _src: IpAddr, payload: &[u8]) -> Option<SflowPacket> {
@@ -170,7 +165,7 @@ impl Protocol for Sflow {
         SflowProcessor::convert_to_flows(packet, time_received_ns)
     }
 
-    fn push_raw(packet: &SflowPacket, output: &mut Pipeline) {
+    fn push_raw(packet: &SflowPacket, output: &mut Producer) {
         match packet {
             SflowPacket::V5(p) => output.push_raw(p),
         }
