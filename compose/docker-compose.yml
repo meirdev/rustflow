@@ -4,7 +4,7 @@ services:
       context: ..
       dockerfile: compose/Dockerfile
     command: >
-      collect -t netflow -p 9995 -f common -s parquet
+      collect --input netflow://:9995 -f common -s parquet
       -o /data/flows -i 1m -l 2
       --metrics-host 0.0.0.0 --metrics-port 9090
     ports:

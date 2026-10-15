@@ -68,8 +68,8 @@ When an output change is intended, regenerate the affected snapshot with
 the same command the test runs and review the diff before committing:
 
 ```sh
-./target/release/rustflow collect --flow-type netflow \
-  --pcap tests/fixtures/pcap/ipfix_sanity.pcap \
+./target/release/rustflow collect \
+  --input netflow+pcap://tests/fixtures/pcap/ipfix_sanity.pcap \
   --format common --serialization ndjson \
   > tests/fixtures/snapshots/ipfix.common.ndjson
 ```

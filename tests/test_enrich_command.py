@@ -27,7 +27,7 @@ def script(tmp_path) -> Callable[[str], Path]:
 @pytest.fixture
 def args(pcap_dir) -> tuple[Path, tuple[str, ...]]:
     pcap = pcap_dir / "netflow_v5_sanity.pcap"
-    return pcap, ("--flow-type", "netflow", "--format", "common")
+    return pcap, ("netflow", "--format", "common")
 
 
 def test_command_enriches_like_the_file(collect, script, args):

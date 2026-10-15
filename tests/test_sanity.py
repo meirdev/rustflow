@@ -12,7 +12,7 @@ from pathlib import Path
 import pyarrow.parquet as pq
 import pytest
 
-# pcap name -> --flow-type
+# pcap name -> input protocol
 PCAPS = {
     "netflow_v5": "netflow",
     "netflow_v9": "netflow",
@@ -70,23 +70,16 @@ def test_snapshot(
     serialization,
 ):
     pcap = pcap_dir / f"{name}_sanity.pcap"
-    args = [
-        "--flow-type",
-        PCAPS[name],
-        "--format",
-        fmt,
-        "--serialization",
-        serialization,
-    ]
+    args = ["--format", fmt, "--serialization", serialization]
     if variant == "enriched":
         args += enrich_args
 
     if serialization == "parquet":
         output = tmp_path / "out.parquet"
-        collect(pcap, *args, output=output)
+        collect(pcap, PCAPS[name], *args, output=output)
         actual = parquet_as_text(output)
     else:
-        actual = collect(pcap, *args)
+        actual = collect(pcap, PCAPS[name], *args)
 
     expected = (
         snapshot_dir / f"{name}.{variant}.{EXTENSION[serialization]}"

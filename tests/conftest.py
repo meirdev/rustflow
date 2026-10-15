@@ -61,12 +61,11 @@ def enrich_args() -> list[str]:
 
 @pytest.fixture
 def collect(rustflow_bin: Path) -> Callable[..., bytes]:
-    """Runs `rustflow collect --pcap <pcap> <args...>` and returns what it
-    wrote: stdout, or the contents of `output` when one is given (Parquet
-    needs a file)."""
-
-    def run(pcap: Path, *args: str, output: Path | None = None) -> bytes:
-        cmd = [rustflow_bin, "collect", "--pcap", pcap, *args]
+    def run(
+        pcap: Path, protocol: str, *args: str, output: Path | None = None
+    ) -> bytes:
+        cmd = [rustflow_bin, "collect", "--input", f"{protocol}+pcap://{pcap}"]
+        cmd += args
         if output is not None:
             cmd += ["--output", output]
         result = subprocess.run(cmd, capture_output=True, check=True, timeout=30)
