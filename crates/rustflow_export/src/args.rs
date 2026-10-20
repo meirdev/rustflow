@@ -62,9 +62,25 @@ pub struct ExportArgs {
     /// Enable promiscuous mode
     #[arg(long)]
     pub promiscuous: bool,
+
+    /// Capture only the packets matching a tcpdump filter expression
+    #[cfg(feature = "pcap")]
+    #[arg(long, value_name = "EXPRESSION")]
+    pub filter: Option<String>,
 }
 
 impl ExportArgs {
+    pub(crate) fn filter(&self) -> Option<&str> {
+        #[cfg(feature = "pcap")]
+        {
+            self.filter.as_deref()
+        }
+        #[cfg(not(feature = "pcap"))]
+        {
+            None
+        }
+    }
+
     pub(crate) fn sampling(&self) -> Sampling {
         Sampling::Count {
             interval: self.sampling_packet_interval,

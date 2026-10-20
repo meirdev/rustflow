@@ -40,30 +40,58 @@ pub enum Backend {
     Pcap,
 }
 
-pub fn open(backend: Backend, interface: &str, promiscuous: bool) -> Result<Box<dyn Capture>> {
+/// `filter` is a tcpdump expression; it needs libpcap to compile, so
+/// only builds with the `pcap` feature offer it.
+pub fn open(
+    backend: Backend,
+    interface: &str,
+    promiscuous: bool,
+    filter: Option<&str>,
+) -> Result<Box<dyn Capture>> {
     match backend {
-        Backend::Auto if cfg!(target_os = "linux") => open_af_packet(interface, promiscuous),
-        Backend::Auto | Backend::Pcap => open_pcap(interface, promiscuous),
-        Backend::AfPacket => open_af_packet(interface, promiscuous),
+        Backend::Auto if cfg!(target_os = "linux") => {
+            open_af_packet(interface, promiscuous, filter)
+        }
+        Backend::Auto | Backend::Pcap => open_pcap(interface, promiscuous, filter),
+        Backend::AfPacket => open_af_packet(interface, promiscuous, filter),
     }
 }
 
 #[cfg(target_os = "linux")]
-fn open_af_packet(interface: &str, promiscuous: bool) -> Result<Box<dyn Capture>> {
-    Ok(Box::new(af_packet::AfPacket::new(interface, promiscuous)?))
+fn open_af_packet(
+    interface: &str,
+    promiscuous: bool,
+    filter: Option<&str>,
+) -> Result<Box<dyn Capture>> {
+    let program: Option<Vec<libc::sock_filter>> = match filter {
+        #[cfg(feature = "pcap")]
+        Some(expression) => Some(libpcap::compile(expression, af_packet::SNAPLEN)?),
+        #[cfg(not(feature = "pcap"))]
+        Some(_) => anyhow::bail!("Filters need a build with the `pcap` feature"),
+        None => None,
+    };
+    Ok(Box::new(af_packet::AfPacket::new(
+        interface,
+        promiscuous,
+        program.as_deref(),
+    )?))
 }
 
 #[cfg(not(target_os = "linux"))]
-fn open_af_packet(_: &str, _: bool) -> Result<Box<dyn Capture>> {
+fn open_af_packet(_: &str, _: bool, _: Option<&str>) -> Result<Box<dyn Capture>> {
     anyhow::bail!("The af-packet capture backend requires Linux; use --capture pcap")
 }
 
 #[cfg(any(feature = "pcap", target_os = "macos"))]
-fn open_pcap(interface: &str, promiscuous: bool) -> Result<Box<dyn Capture>> {
-    Ok(Box::new(libpcap::Libpcap::new(interface, promiscuous)?))
+fn open_pcap(interface: &str, promiscuous: bool, filter: Option<&str>) -> Result<Box<dyn Capture>> {
+    Ok(Box::new(libpcap::Libpcap::new(
+        interface,
+        promiscuous,
+        filter,
+    )?))
 }
 
 #[cfg(not(any(feature = "pcap", target_os = "macos")))]
-fn open_pcap(_: &str, _: bool) -> Result<Box<dyn Capture>> {
+fn open_pcap(_: &str, _: bool, _: Option<&str>) -> Result<Box<dyn Capture>> {
     anyhow::bail!("This build has no pcap support; rebuild with `--features pcap`")
 }

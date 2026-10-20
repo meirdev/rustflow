@@ -33,9 +33,17 @@ pub fn run(args: ExportArgs) -> Result<()> {
     info!("  Template refresh: {}s", args.template_refresh_rate);
     info!("  Sampling: {}", args.sampling());
     info!("  Mode: {:?}", args.mode);
+    if let Some(filter) = args.filter() {
+        info!("  Filter: {filter}");
+    }
 
     let mut exporter = Exporter::new(args.clone())?;
-    let mut capture = capture::open(args.capture, &args.interface, args.promiscuous)?;
+    let mut capture = capture::open(
+        args.capture,
+        &args.interface,
+        args.promiscuous,
+        args.filter(),
+    )?;
     let mut meter = Meter::new(
         &args,
         capture.link(),

@@ -27,10 +27,10 @@ pub struct Libpcap {
 }
 
 impl Libpcap {
-    pub fn new(interface: &str, promiscuous: bool) -> Result<Self> {
+    pub fn new(interface: &str, promiscuous: bool, filter: Option<&str>) -> Result<Self> {
         info!("Opening pcap capture on interface: {}", interface);
 
-        let capture = pcap::Capture::from_device(interface)
+        let mut capture = pcap::Capture::from_device(interface)
             .with_context(|| format!("Failed to open device '{interface}'"))?
             .promisc(promiscuous)
             .snaplen(SNAPLEN)
@@ -39,6 +39,12 @@ impl Libpcap {
             .immediate_mode(true)
             .open()
             .with_context(|| format!("Failed to start capture on '{interface}'"))?;
+
+        if let Some(expression) = filter {
+            capture
+                .filter(expression, true)
+                .with_context(|| format!("Invalid filter '{expression}'"))?;
+        }
 
         // On Linux the read timeout only starts once a packet has arrived,
         // so an idle link would block forever; the wait is done with `poll`
@@ -118,5 +124,55 @@ impl Capture for Libpcap {
             data: packet.data.get(skip..)?,
             length: packet.header.len.saturating_sub(skip as u32),
         })
+    }
+}
+
+/// Classic BPF `ret` with a constant; libpcap's accepting returns.
+#[cfg(target_os = "linux")]
+const BPF_RET_K: u16 = 0x06;
+
+/// Compiles a tcpdump expression for Ethernet frames into a program an
+/// `AF_PACKET` socket runs in the kernel. Accepting returns are set to
+/// `snaplen`, as the socket's own snap length program would.
+#[cfg(target_os = "linux")]
+pub fn compile(expression: &str, snaplen: u32) -> Result<Vec<libc::sock_filter>> {
+    let program = pcap::Capture::dead(Linktype::ETHERNET)?
+        .compile(expression, true)
+        .with_context(|| format!("Invalid filter '{expression}'"))?;
+    let instructions = program.get_instructions();
+    // `BpfInstruction` is a transparent wrapper of libpcap's `bpf_insn`,
+    // which has the layout of `sock_filter`.
+    let instructions: &[libc::sock_filter] =
+        unsafe { std::slice::from_raw_parts(instructions.as_ptr().cast(), instructions.len()) };
+    Ok(instructions
+        .iter()
+        .map(|instruction| {
+            let mut instruction = *instruction;
+            if instruction.code == BPF_RET_K && instruction.k != 0 {
+                instruction.k = snaplen;
+            }
+            instruction
+        })
+        .collect())
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compiled_filters_accept_with_the_snap_length() {
+        let program = compile("udp port 53", 2048).unwrap();
+        let returns: Vec<u32> = program
+            .iter()
+            .filter(|instruction| instruction.code == BPF_RET_K)
+            .map(|instruction| instruction.k)
+            .collect();
+        assert!(returns.contains(&2048), "{returns:?}");
+        assert!(returns.contains(&0), "{returns:?}");
+        assert!(returns.iter().all(|&k| k == 0 || k == 2048), "{returns:?}");
+        assert!(program.len() > returns.len());
+
+        assert!(compile("udp port", 2048).is_err());
     }
 }

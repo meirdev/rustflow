@@ -125,6 +125,18 @@ rustflow export \
 
 > The `pcap` backend is compiled in with the `pcap` cargo feature, which links against libpcap.
 
+## Filtering
+
+`--filter` takes a tcpdump expression and captures only the packets that
+match it:
+
+```bash
+rustflow export -i eth0 --filter "ip and not port 4739"
+```
+
+The expression is compiled by libpcap, so the option exists in builds with the
+`pcap` feature.
+
 ## Permissions
 
 Capturing packets from a network interface requires sufficient privileges.
