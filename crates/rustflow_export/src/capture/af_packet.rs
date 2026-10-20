@@ -29,7 +29,7 @@ const BLOCK_TIMEOUT_MS: u32 = 100;
 
 /// Bytes of each frame copied into the ring: the headers are all that is
 /// parsed, and a V3 frame is otherwise as large as the packet.
-const SNAPLEN: u32 = 2048;
+pub const SNAPLEN: u32 = 2048;
 
 /// Classic BPF `ret k`: accept the packet, truncated to `k` bytes.
 const BPF_RET: u16 = 0x06;
@@ -104,7 +104,14 @@ fn set_option<T>(
 }
 
 impl AfPacket {
-    pub fn new(interface: &str, promiscuous: bool) -> Result<Self> {
+    /// `filter` is a classic BPF program to run in the kernel, whose
+    /// accepting returns already carry the snap length; without one every
+    /// frame is taken, cut at the snap length.
+    pub fn new(
+        interface: &str,
+        promiscuous: bool,
+        filter: Option<&[libc::sock_filter]>,
+    ) -> Result<Self> {
         info!("Opening AF_PACKET capture on interface: {}", interface);
 
         let protocol = (libc::ETH_P_ALL as u16).to_be();
@@ -120,18 +127,19 @@ impl AfPacket {
         set_option(&socket, libc::SOL_PACKET, libc::PACKET_VERSION, &TPACKET_V3)
             .map_err(|e| anyhow!("Failed to set TPACKET_V3: {}", e))?;
 
-        let mut snap = libc::sock_filter {
+        let snap = [libc::sock_filter {
             code: BPF_RET,
             jt: 0,
             jf: 0,
             k: SNAPLEN,
-        };
+        }];
+        let program = filter.unwrap_or(&snap);
         let filter = libc::sock_fprog {
-            len: 1,
-            filter: &mut snap,
+            len: program.len() as u16,
+            filter: program.as_ptr().cast_mut(),
         };
         set_option(&socket, libc::SOL_SOCKET, libc::SO_ATTACH_FILTER, &filter)
-            .map_err(|e| anyhow!("Failed to set the snap length: {}", e))?;
+            .map_err(|e| anyhow!("Failed to attach the packet filter: {}", e))?;
 
         let req = libc::tpacket_req3 {
             tp_block_size: BLOCK_SIZE,
