@@ -4,7 +4,7 @@ use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 /// IANA IPFIX Information Elements (commonly used subset)
 ///
-/// See: https://www.iana.org/assignments/ipfix/ipfix.xhtml
+/// See: <https://www.iana.org/assignments/ipfix/ipfix.xhtml>
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IntoPrimitive, TryFromPrimitive)]
 #[repr(u16)]
 pub enum InformationElement {
