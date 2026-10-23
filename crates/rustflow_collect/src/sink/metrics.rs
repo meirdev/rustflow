@@ -20,6 +20,10 @@ pub struct OutputMetrics {
     pub hook_completed: Counter,
     /// `-x` commands that failed or could not run.
     pub hook_errors: Counter,
+    /// Files removed by `--expire`.
+    pub expired_files: Counter,
+    /// Files `--expire` could not remove.
+    pub expire_errors: Counter,
 }
 
 impl OutputMetrics {
@@ -68,6 +72,16 @@ impl OutputMetrics {
             "output_hook_errors",
             "Failed -x commands",
             self.hook_errors.clone(),
+        );
+        registry.register(
+            "output_expired_files",
+            "Files removed by --expire",
+            self.expired_files.clone(),
+        );
+        registry.register(
+            "output_expire_errors",
+            "Files --expire could not remove",
+            self.expire_errors.clone(),
         );
     }
 }

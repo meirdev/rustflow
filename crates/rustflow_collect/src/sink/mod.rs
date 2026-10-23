@@ -1,5 +1,6 @@
 pub mod destination;
 pub mod encoder;
+pub mod expire;
 pub mod hook;
 pub mod metrics;
 pub mod pipeline;
@@ -12,6 +13,7 @@ use std::{fmt, io};
 use clap::ValueEnum;
 pub use destination::{Destination, MAX_PARTITION_LEVEL};
 pub use encoder::{ArrowIpc, Csv, Discard, Encoder, Ndjson, Parquet, Protobuf, Writer};
+pub use expire::{Expirer, Expiry};
 pub use hook::FileHook;
 pub use metrics::OutputMetrics;
 pub use rotating::RotatingSink;
@@ -93,6 +95,8 @@ pub struct SinkConfig {
     pub level: u8,
     pub prefix: String,
     pub exec: Option<String>,
+    /// Remove rotated files older than this.
+    pub expire: Option<Duration>,
 }
 
 impl SinkConfig {
@@ -124,6 +128,14 @@ pub fn build(
             "--serialization {serialization} requires --format common"
         )));
     }
+    if let (Some(expire), Some(interval)) = (config.expire, config.interval)
+        && expire < interval
+    {
+        // A file is never removed while its -x command may still be using it.
+        return Err(io::Error::other(
+            "--expire must be at least as long as --interval",
+        ));
+    }
     let destination = match serialization {
         Serialization::Discard => Destination::Null,
         _ => config.destination(),
@@ -135,11 +147,24 @@ pub fn build(
         }
         (serialization, _) => serialization,
     };
+    let expiry = match (config.expire, &destination) {
+        (Some(max_age), Destination::Partitioned { root, prefix, .. }) => Some(Expiry {
+            root: root.clone(),
+            prefix: prefix.clone(),
+            extension: serialization.extension().into(),
+            max_age,
+        }),
+        _ => None,
+    };
     let mut sink =
         RotatingSink::open(serialization, destination, enriched_fields, metrics.clone())?;
     if let Some(command) = &config.exec {
         let root = config.path.as_deref().unwrap_or(Path::new(""));
         sink = sink.with_hook(FileHook::spawn(command, root, metrics)?);
+    }
+    if let Some(expiry) = expiry {
+        let every = config.interval.unwrap_or(expiry.max_age);
+        sink = sink.with_expirer(Expirer::spawn(expiry, every, metrics)?);
     }
     Ok(sink)
 }

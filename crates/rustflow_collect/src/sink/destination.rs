@@ -6,11 +6,18 @@ use chrono::{DateTime, Timelike, Utc};
 
 pub const MAX_PARTITION_LEVEL: u8 = 3;
 
+/// Directories below the root at [`MAX_PARTITION_LEVEL`]: year, month,
+/// day, hour and the 5 minute bucket.
+pub const MAX_PARTITION_DEPTH: usize = 5;
+
 /// Directory resolution, in minutes, of the deepest partitioning level.
 const LEVEL_3_MINUTES: u32 = 5;
 
 /// The window start as it appears in a rotated file's name.
 pub const STAMP_FORMAT: &str = "%Y%m%dT%H%M%SZ";
+
+/// Length of a stamp in [`STAMP_FORMAT`], `20260820T120000Z`.
+pub const STAMP_LEN: usize = 16;
 
 /// Where bytes go. Knows about paths, temporary names, and renames, and
 /// nothing about formats.
@@ -241,4 +248,29 @@ pub fn partition_path(
         extension
     ));
     path
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn layout_constants_match_the_layout() {
+        let stamp = DateTime::from_timestamp(1_787_832_000, 0).unwrap();
+        assert_eq!(stamp.format(STAMP_FORMAT).to_string().len(), STAMP_LEN);
+
+        let path = partition_path(
+            Path::new("root"),
+            MAX_PARTITION_LEVEL,
+            "flows",
+            "parquet",
+            stamp,
+        );
+        let depth = path.strip_prefix("root").unwrap().components().count() - 1;
+        assert_eq!(depth, MAX_PARTITION_DEPTH);
+        assert_eq!(
+            path,
+            Path::new("root/2026/08/27/12/00/flows-20260827T120000Z.parquet")
+        );
+    }
 }

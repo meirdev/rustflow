@@ -6,6 +6,7 @@ use rustflow_core::common::common_flow::CommonFlow;
 use super::Serialization;
 use super::destination::{Destination, Opened, PendingRename};
 use super::encoder::Encoder;
+use super::expire::Expirer;
 use super::hook::{FileHook, Job};
 use super::metrics::{CountingWriter, OutputMetrics};
 use crate::enrich::Enriched;
@@ -20,6 +21,7 @@ pub struct RotatingSink {
     /// leaves no empty file behind.
     current: Option<Window>,
     hook: Option<FileHook>,
+    expirer: Option<Expirer>,
 }
 
 struct Window {
@@ -80,6 +82,7 @@ impl RotatingSink {
             metrics,
             current: None,
             hook: None,
+            expirer: None,
         };
         sink.current = Some(sink.open_window(now)?);
         Ok(sink)
@@ -88,6 +91,12 @@ impl RotatingSink {
     /// Runs `hook` for every file this sink completes.
     pub fn with_hook(mut self, hook: FileHook) -> Self {
         self.hook = Some(hook);
+        self
+    }
+
+    /// Removes old files from the tree while this sink lives.
+    pub fn with_expirer(mut self, expirer: Expirer) -> Self {
+        self.expirer = Some(expirer);
         self
     }
 
@@ -151,7 +160,8 @@ impl RotatingSink {
     }
 
     /// Ends the stream, gives a rotated file its final name, and waits for
-    /// the `-x` commands still queued.
+    /// the `-x` commands still queued and for a sweep of old files in
+    /// progress.
     pub fn finish(mut self) -> io::Result<()> {
         let result = match self.current.take() {
             Some(window) => window.close(self.hook.as_ref()),
@@ -159,6 +169,9 @@ impl RotatingSink {
         };
         if let Some(hook) = self.hook.take() {
             hook.finish();
+        }
+        if let Some(expirer) = self.expirer.take() {
+            expirer.finish();
         }
         result
     }
