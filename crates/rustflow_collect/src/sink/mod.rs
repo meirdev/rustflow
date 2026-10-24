@@ -2,6 +2,7 @@ pub mod destination;
 pub mod encoder;
 pub mod expire;
 pub mod hook;
+pub mod layout;
 pub mod metrics;
 pub mod pipeline;
 pub mod rotating;
@@ -15,6 +16,7 @@ pub use destination::{Destination, MAX_PARTITION_LEVEL};
 pub use encoder::{ArrowIpc, Csv, Discard, Encoder, Ndjson, Parquet, Protobuf, Writer};
 pub use expire::{Expirer, Expiry};
 pub use hook::FileHook;
+pub use layout::Layout;
 pub use metrics::OutputMetrics;
 pub use rotating::RotatingSink;
 
@@ -149,9 +151,11 @@ pub fn build(
     };
     let expiry = match (config.expire, &destination) {
         (Some(max_age), Destination::Partitioned { root, prefix, .. }) => Some(Expiry {
-            root: root.clone(),
-            prefix: prefix.clone(),
-            extension: serialization.extension().into(),
+            layout: Layout {
+                root: root.clone(),
+                prefix: prefix.clone(),
+                extension: serialization.extension().into(),
+            },
             max_age,
         }),
         _ => None,

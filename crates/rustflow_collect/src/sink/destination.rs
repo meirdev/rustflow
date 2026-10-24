@@ -7,11 +7,11 @@ use chrono::{DateTime, Timelike, Utc};
 pub const MAX_PARTITION_LEVEL: u8 = 3;
 
 /// Directories below the root at [`MAX_PARTITION_LEVEL`]: year, month,
-/// day, hour and the 5 minute bucket.
+/// day, hour and the minute bucket.
 pub const MAX_PARTITION_DEPTH: usize = 5;
 
 /// Directory resolution, in minutes, of the deepest partitioning level.
-const LEVEL_3_MINUTES: u32 = 5;
+pub const LEVEL_3_MINUTES: u32 = 5;
 
 /// The window start as it appears in a rotated file's name.
 pub const STAMP_FORMAT: &str = "%Y%m%dT%H%M%SZ";
