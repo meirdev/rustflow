@@ -78,9 +78,7 @@ pub struct CollectArgs {
     )]
     pub(crate) exec: Option<String>,
 
-    /// Remove rotated files older than this age (e.g. `7d`, `30d`), judged
-    /// by the window stamp in their names. Checked at startup and then
-    /// every interval. Requires `--interval`, and must be at least as long.
+    /// Remove rotated files older than this age (e.g. `7d`, `30d`)
     #[arg(
         long,
         value_name = "DURATION",
