@@ -19,7 +19,7 @@ It can collect flows from the network or PCAP files, normalize them into a commo
 - Network and PCAP input
 - Raw or normalized flow output
 - NDJSON, CSV, Protobuf and Parquet serialization
-- File rotation and time-based partitioning
+- File rotation, time-based partitioning, and expiry of old files
 - Flow enrichment using CSV files, MaxMind databases, or the output of a command
 - Prometheus metrics
 - IPFIX traffic generator

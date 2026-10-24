@@ -215,6 +215,26 @@ Placeholders in the command are replaced for each file:
 
 `-x` requires `--interval`.
 
+## Expiring old files
+
+Use `--expire` to remove rotated files once they are older than a given age:
+
+```bash
+rustflow collect \
+  --input netflow://:9995 \
+  -f common \
+  -s parquet \
+  -o flows \
+  --interval 10m \
+  --expire 30d
+```
+
+A file's age is taken from the window stamp in its name. The check runs at
+startup and then every interval; it only touches files of the collector's own
+prefix and serialization, and removes partition directories it leaves empty.
+
+`--expire` requires `--interval` and must be at least as long.
+
 ## Partitioning
 
 Rotated output can be organized into time-based directory partitions using `--level` (`-l`).

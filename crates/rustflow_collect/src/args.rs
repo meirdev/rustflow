@@ -78,6 +78,15 @@ pub struct CollectArgs {
     )]
     pub(crate) exec: Option<String>,
 
+    /// Remove rotated files older than this age (e.g. `7d`, `30d`)
+    #[arg(
+        long,
+        value_name = "DURATION",
+        requires = "interval",
+        value_parser = |value: &str| duration_str::parse(value.trim())
+    )]
+    pub(crate) expire: Option<Duration>,
+
     /// Host address for Prometheus metrics HTTP server
     #[arg(long, default_value = "0.0.0.0")]
     pub(crate) metrics_host: IpAddr,
@@ -201,6 +210,7 @@ impl CollectArgs {
             level: self.level,
             prefix: self.prefix.clone(),
             exec: self.exec.clone(),
+            expire: self.expire,
         }
     }
 }

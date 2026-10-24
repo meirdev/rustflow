@@ -62,6 +62,9 @@ The enriched variant adds four sources through `--enrich`, defined by the
 from a file, and that a command which fails, prints no rows, or times out stops
 the collector.
 
+`test_expire.py` seeds an output tree and checks that `--expire` removes only
+the collector's own old files.
+
 ## Updating a snapshot
 
 When an output change is intended, regenerate the affected snapshot with
