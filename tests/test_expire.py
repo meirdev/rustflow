@@ -18,6 +18,8 @@ def touch(path: Path) -> Path:
 
 def test_old_files_are_removed_and_the_rest_kept(collect, pcap_dir, tmp_path):
     out = tmp_path / "out"
+    heard = tmp_path / "heard"
+    heard.mkdir()
     recent = (datetime.now(UTC) - timedelta(minutes=30)).strftime(STAMP)
     old = [
         touch(out / "flows-20260101T000000Z.parquet"),
@@ -37,6 +39,7 @@ def test_old_files_are_removed_and_the_rest_kept(collect, pcap_dir, tmp_path):
         "netflow",
         "--format", "common", "--serialization", "parquet",
         "--output", str(out), "--interval", "1m", "--level", "2", "--expire", "1h",
+        "--expire-exec", f"touch {heard}/%t",
     )
 
     for path in old:
@@ -47,6 +50,11 @@ def test_old_files_are_removed_and_the_rest_kept(collect, pcap_dir, tmp_path):
     assert (out / "2026/01/05/11").exists()
     written = [p for p in out.rglob("flows-*.parquet") if p not in kept]
     assert len(written) == 1, written
+    # The hook heard of the complete files, not of the temporary one.
+    assert sorted(p.name for p in heard.iterdir()) == [
+        "20260101T000000Z",
+        "20260105T100000Z",
+    ]
 
 
 @pytest.mark.parametrize(

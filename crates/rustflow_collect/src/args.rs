@@ -87,6 +87,11 @@ pub struct CollectArgs {
     )]
     pub(crate) expire: Option<Duration>,
 
+    /// Run a command after `--expire` removes a file, with the same
+    /// placeholders as `-x`; the file is already gone when it runs.
+    #[arg(long, value_name = "COMMAND", requires = "expire")]
+    pub(crate) expire_exec: Option<String>,
+
     /// Host address for Prometheus metrics HTTP server
     #[arg(long, default_value = "0.0.0.0")]
     pub(crate) metrics_host: IpAddr,
@@ -211,6 +216,7 @@ impl CollectArgs {
             prefix: self.prefix.clone(),
             exec: self.exec.clone(),
             expire: self.expire,
+            expire_exec: self.expire_exec.clone(),
         }
     }
 }

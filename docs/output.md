@@ -235,6 +235,23 @@ prefix and serialization, and removes partition directories it leaves empty.
 
 `--expire` requires `--interval` and must be at least as long.
 
+Use `--expire-exec` to run a command after each removal, with the same
+placeholders as `-x`:
+
+```bash
+rustflow collect \
+  --input netflow://:9995 \
+  -f common \
+  -s parquet \
+  -o flows \
+  --interval 10m \
+  --expire 30d \
+  --expire-exec "logger expired %p"
+```
+
+The file is already removed when the command runs. A command that fails is
+counted in `output_hook_errors`.
+
 ## Partitioning
 
 Rotated output can be organized into time-based directory partitions using `--level` (`-l`).

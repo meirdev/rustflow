@@ -9,6 +9,7 @@ use std::{fs, io};
 use chrono::{DateTime, Utc};
 
 use super::OutputMetrics;
+use super::hook::{FileHook, Job};
 use super::layout::Layout;
 
 /// Which files in an output tree are old enough to go.
@@ -20,6 +21,8 @@ use super::layout::Layout;
 pub struct Expiry {
     pub layout: Layout,
     pub max_age: Duration,
+    /// Told about every complete file removed, after the fact.
+    pub hook: Option<FileHook>,
 }
 
 #[derive(Debug, Default)]
@@ -37,7 +40,16 @@ impl Expiry {
         let mut outcome = Outcome::default();
         for entry in self.layout.files(..cutoff) {
             match remove_file(&entry.path) {
-                Ok(()) => outcome.removed += 1,
+                Ok(()) => {
+                    outcome.removed += 1;
+                    // A temporary file was never anyone's to know about.
+                    if let (Some(hook), false) = (&self.hook, entry.temporary) {
+                        hook.run(Job {
+                            path: entry.path,
+                            window: entry.window,
+                        });
+                    }
+                }
                 Err(error) => {
                     outcome.failures += 1;
                     outcome.first_failure.get_or_insert((entry.path, error));
@@ -50,6 +62,13 @@ impl Expiry {
             let _ = fs::remove_dir(dir);
         }
         outcome
+    }
+
+    /// Waits for the commands still queued for removed files.
+    pub fn finish(self) {
+        if let Some(hook) = self.hook {
+            hook.finish();
+        }
     }
 }
 
@@ -74,7 +93,7 @@ impl Expirer {
         let (tx, rx) = mpsc::channel();
         let worker = thread::Builder::new()
             .name("expire".into())
-            .spawn(move || run(&expiry, every, &metrics, rx))?;
+            .spawn(move || run(expiry, every, &metrics, rx))?;
         Ok(Self { _tx: tx, worker })
     }
 
@@ -85,7 +104,7 @@ impl Expirer {
     }
 }
 
-fn run(expiry: &Expiry, every: Duration, metrics: &OutputMetrics, rx: Receiver<()>) {
+fn run(expiry: Expiry, every: Duration, metrics: &OutputMetrics, rx: Receiver<()>) {
     loop {
         let outcome = expiry.run(Utc::now());
         metrics.expired_files.inc_by(outcome.removed);
@@ -111,6 +130,7 @@ fn run(expiry: &Expiry, every: Duration, metrics: &OutputMetrics, rx: Receiver<(
             Ok(()) | Err(RecvTimeoutError::Disconnected) => break,
         }
     }
+    expiry.finish();
 }
 
 #[cfg(test)]
@@ -129,7 +149,44 @@ mod tests {
                 extension: "parquet".into(),
             },
             max_age,
+            hook: None,
         }
+    }
+
+    #[test]
+    fn the_hook_hears_of_removed_files_but_not_temporary_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let heard = dir.path().join("heard");
+        fs::create_dir(&heard).unwrap();
+        for name in [
+            "flows-20260801T000000Z.parquet",
+            "flows-20260802T000000Z.parquet",
+            ".flows-20260803T000000Z.parquet.7.tmp",
+            "flows-20260820T000000Z.parquet",
+        ] {
+            File::create(root.join(name)).unwrap();
+        }
+        let hook = FileHook::spawn(
+            "--expire-exec",
+            &format!("touch {}/%t", heard.display()),
+            root,
+            &OutputMetrics::new(),
+        )
+        .unwrap();
+        let mut expiry = expiry(root, Duration::from_secs(86400));
+        expiry.hook = Some(hook);
+
+        let outcome = expiry.run(stamp("20260820T120000Z"));
+        expiry.finish();
+
+        assert_eq!((outcome.removed, outcome.failures), (3, 0));
+        let mut told: Vec<_> = fs::read_dir(&heard)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        told.sort();
+        assert_eq!(told, ["20260801T000000Z", "20260802T000000Z"]);
     }
 
     #[test]

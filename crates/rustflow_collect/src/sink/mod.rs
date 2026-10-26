@@ -99,6 +99,8 @@ pub struct SinkConfig {
     pub exec: Option<String>,
     /// Remove rotated files older than this.
     pub expire: Option<Duration>,
+    /// Run for every file `expire` removes.
+    pub expire_exec: Option<String>,
 }
 
 impl SinkConfig {
@@ -157,6 +159,10 @@ pub fn build(
                 extension: serialization.extension().into(),
             },
             max_age,
+            hook: match &config.expire_exec {
+                Some(command) => Some(FileHook::spawn("--expire-exec", command, root, metrics)?),
+                None => None,
+            },
         }),
         _ => None,
     };
@@ -164,7 +170,7 @@ pub fn build(
         RotatingSink::open(serialization, destination, enriched_fields, metrics.clone())?;
     if let Some(command) = &config.exec {
         let root = config.path.as_deref().unwrap_or(Path::new(""));
-        sink = sink.with_hook(FileHook::spawn(command, root, metrics)?);
+        sink = sink.with_hook(FileHook::spawn("-x", command, root, metrics)?);
     }
     if let Some(expiry) = expiry {
         let every = config.interval.unwrap_or(expiry.max_age);

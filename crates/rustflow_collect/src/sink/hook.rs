@@ -24,33 +24,39 @@ pub struct Job {
     pub window: DateTime<Utc>,
 }
 
-/// Runs the `-x` command for every completed file. One thread
-/// starts the commands and reaps them; the commands themselves run as
-/// child processes, up to [`MAX_RUNNING`] at a time.
+/// Runs a command for every file handed to it: `-x` for completed files,
+/// `--expire-exec` for removed ones. One thread starts the commands and
+/// reaps them; the commands themselves run as child processes, up to
+/// [`MAX_RUNNING`] at a time.
 pub struct FileHook {
     tx: Sender<Job>,
     worker: JoinHandle<()>,
 }
 
 impl FileHook {
-    /// `command` is split on whitespace. `%f` is the file, `%p` its path
-    /// relative to `root`, `%t` the window start as in the file name, `%u`
-    /// the same as Unix time, `%%` a percent sign. Without a placeholder
-    /// the file is appended.
-    pub fn spawn(command: &str, root: &Path, metrics: &OutputMetrics) -> io::Result<Self> {
+    /// `flag` names the option in messages. `command` is split on
+    /// whitespace. `%f` is the file, `%p` its path relative to `root`, `%t`
+    /// the window start as in the file name, `%u` the same as Unix time,
+    /// `%%` a percent sign. Without a placeholder the file is appended.
+    pub fn spawn(
+        flag: &'static str,
+        command: &str,
+        root: &Path,
+        metrics: &OutputMetrics,
+    ) -> io::Result<Self> {
         let words: Vec<String> = command.split_whitespace().map(String::from).collect();
         if words.is_empty() {
-            return Err(io::Error::other("-x command is empty"));
+            return Err(io::Error::other(format!("{flag} command is empty")));
         }
         for word in &words {
-            check_placeholders(word)?;
+            check_placeholders(flag, word)?;
         }
         let metrics = metrics.clone();
         let root = root.to_path_buf();
         let (tx, rx) = mpsc::channel();
         let worker = thread::Builder::new()
             .name("exec".into())
-            .spawn(move || Launcher::new(words, root, metrics).run(rx))?;
+            .spawn(move || Launcher::new(flag, words, root, metrics).run(rx))?;
         Ok(Self { tx, worker })
     }
 
@@ -66,12 +72,12 @@ impl FileHook {
     }
 }
 
-fn check_placeholders(word: &str) -> io::Result<()> {
+fn check_placeholders(flag: &str, word: &str) -> io::Result<()> {
     let mut chars = word.chars();
     while let Some(c) = chars.next() {
         if c == '%' && !matches!(chars.next(), Some('f' | 'p' | 't' | 'u' | '%')) {
             return Err(io::Error::other(format!(
-                "-x: unknown placeholder in '{word}', use %f, %p, %t, %u or %%"
+                "{flag}: unknown placeholder in '{word}', use %f, %p, %t, %u or %%"
             )));
         }
     }
@@ -79,6 +85,7 @@ fn check_placeholders(word: &str) -> io::Result<()> {
 }
 
 struct Launcher {
+    flag: &'static str,
     words: Vec<String>,
     root: PathBuf,
     metrics: OutputMetrics,
@@ -87,8 +94,9 @@ struct Launcher {
 }
 
 impl Launcher {
-    fn new(words: Vec<String>, root: PathBuf, metrics: OutputMetrics) -> Self {
+    fn new(flag: &'static str, words: Vec<String>, root: PathBuf, metrics: OutputMetrics) -> Self {
         Self {
+            flag,
             words,
             root,
             metrics,
@@ -128,7 +136,8 @@ impl Launcher {
                 }
                 Err(e) => {
                     eprintln!(
-                        "-x {} could not run for {}: {e}",
+                        "{} {} could not run for {}: {e}",
+                        self.flag,
                         args[0],
                         job.path.display()
                     );
@@ -141,6 +150,7 @@ impl Launcher {
     /// Accounts for the commands that have exited since the last call.
     fn reap(&mut self) {
         let metrics = &self.metrics;
+        let flag = self.flag;
         self.running
             .retain_mut(|(child, path)| match child.try_wait() {
                 Ok(None) => true,
@@ -149,14 +159,14 @@ impl Launcher {
                     if status.success() {
                         metrics.hook_completed.inc();
                     } else {
-                        eprintln!("-x failed for {}: {status}", path.display());
+                        eprintln!("{flag} failed for {}: {status}", path.display());
                         metrics.hook_errors.inc();
                     }
                     false
                 }
                 Err(e) => {
                     metrics.hook_running.dec();
-                    eprintln!("-x lost for {}: {e}", path.display());
+                    eprintln!("{flag} lost for {}: {e}", path.display());
                     metrics.hook_errors.inc();
                     false
                 }
@@ -235,9 +245,9 @@ mod tests {
 
     #[test]
     fn unknown_placeholders_are_rejected() {
-        assert!(check_placeholders("%p").is_ok());
-        assert!(check_placeholders("%%").is_ok());
-        assert!(check_placeholders("%x").is_err());
-        assert!(check_placeholders("50%").is_err());
+        assert!(check_placeholders("-x", "%p").is_ok());
+        assert!(check_placeholders("-x", "%%").is_ok());
+        assert!(check_placeholders("-x", "%x").is_err());
+        assert!(check_placeholders("-x", "50%").is_err());
     }
 }
