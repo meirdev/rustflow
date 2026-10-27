@@ -138,7 +138,7 @@ mod tests {
     use std::fs::File;
 
     use super::*;
-    use crate::sink::destination::partition_path;
+    use crate::sink::destination::{Partitioning, partition_path};
     use crate::sink::layout::tests::stamp;
 
     fn expiry(root: &Path, max_age: Duration) -> Expiry {
@@ -147,6 +147,7 @@ mod tests {
                 root: root.to_path_buf(),
                 prefix: "flows".into(),
                 extension: "parquet".into(),
+                partitioning: Partitioning::Plain,
             },
             max_age,
             hook: None,
@@ -198,7 +199,16 @@ mod tests {
             File::create(&path).unwrap();
             path
         };
-        let own = |level: u8, s: &str| partition_path(root, level, "flows", "parquet", stamp(s));
+        let own = |level: u8, s: &str| {
+            partition_path(
+                root,
+                level,
+                Partitioning::Plain,
+                "flows",
+                "parquet",
+                stamp(s),
+            )
+        };
 
         let old = [
             touch(own(0, "20260801T000000Z")),

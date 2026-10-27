@@ -57,13 +57,35 @@ def test_old_files_are_removed_and_the_rest_kept(collect, pcap_dir, tmp_path):
     ]
 
 
+def test_hive_trees_are_written_and_expired_alike(collect, pcap_dir, tmp_path):
+    out = tmp_path / "out"
+    old = touch(out / "date=2026-01-05/hour=10/flows-20260105T100000Z.parquet")
+    kept = touch(out / "date=2026-01-05/hour=10/other-20260105T100000Z.parquet")
+    plain = touch(out / "2026/01/05/10/flows-20260105T100000Z.parquet")
+
+    collect(
+        pcap_dir / "ipfix_sanity.pcap",
+        "netflow",
+        "--format", "common", "--serialization", "parquet",
+        "--output", str(out), "--interval", "1m", "--level", "2", "--hive", "--expire", "1h",
+    )
+
+    assert not old.exists()
+    assert kept.exists()
+    # A plain-named directory is not a partition of a Hive tree.
+    assert plain.exists()
+    written = list(out.glob("date=*/hour=*/flows-*.parquet"))
+    assert len(written) == 1, written
+
+
 @pytest.mark.parametrize(
     "args,message",
     [
         (["--interval", "1m", "--expire", "30s"], "at least as long as --interval"),
         (["--expire", "1h"], "required arguments were not provided"),
+        (["--interval", "1m", "--hive"], "--hive needs --level"),
     ],
-    ids=["shorter-than-interval", "without-interval"],
+    ids=["shorter-than-interval", "without-interval", "hive-without-level"],
 )
 def test_expire_is_validated(collect, pcap_dir, tmp_path, args, message):
     with pytest.raises(subprocess.CalledProcessError) as error:

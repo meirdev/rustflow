@@ -7,15 +7,27 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Datelike, NaiveDateTime, TimeZone, Utc};
 
-use super::destination::{LEVEL_3_MINUTES, MAX_PARTITION_DEPTH, STAMP_FORMAT, STAMP_LEN};
+use super::destination::{LEVEL_3_MINUTES, Partitioning, STAMP_FORMAT, STAMP_LEN};
 
-/// One output tree, as `--output`, `--prefix` and `--serialization`
-/// describe it. Files are recognised by name alone: see [`Layout::name`].
+/// One output tree, as `--output`, `--prefix`, `--serialization` and
+/// `--hive` describe it. Files are recognised by name alone: see
+/// [`Layout::name`].
 #[derive(Clone, Debug)]
 pub struct Layout {
     pub root: PathBuf,
     pub prefix: String,
     pub extension: String,
+    pub partitioning: Partitioning,
+}
+
+/// What a partition directory spans.
+#[derive(Clone, Copy)]
+enum Span {
+    Year,
+    Month,
+    Day,
+    Hour,
+    Bucket,
 }
 
 /// A file of the tree.
@@ -149,35 +161,32 @@ impl Layout {
     /// The period of partition directory `name` under `parent`, or `None`
     /// when the name is not a partition of this tree.
     pub fn period(&self, parent: &Path, name: &str) -> Option<Period> {
-        let parts: Vec<u32> = parent
+        let names: Vec<String> = parent
             .strip_prefix(&self.root)
             .ok()?
             .components()
             .map(|c| c.as_os_str().to_string_lossy().into_owned())
             .chain(std::iter::once(name.to_owned()))
-            .enumerate()
-            .map(|(depth, name)| partition_number(&name, depth))
-            .collect::<Option<_>>()?;
-        if parts.len() > MAX_PARTITION_DEPTH {
+            .collect();
+        if names.len() > self.partitioning.max_depth() {
             return None;
         }
-        let part = |i: usize, default: u32| parts.get(i).copied().unwrap_or(default);
-        let year = i32::try_from(part(0, 1970)).ok()?;
-        let start = Utc
-            .with_ymd_and_hms(year, part(1, 1), part(2, 1), part(3, 0), part(4, 0), 0)
-            .single()?;
-        let end = match parts.len() {
-            1 => start.with_year(start.year() + 1)?,
-            2 => {
+        let (start, span) = match self.partitioning {
+            Partitioning::Plain => plain_period(&names)?,
+            Partitioning::Hive => hive_period(&names)?,
+        };
+        let end = match span {
+            Span::Year => start.with_year(start.year() + 1)?,
+            Span::Month => {
                 if start.month() == 12 {
                     start.with_year(start.year() + 1)?.with_month(1)?
                 } else {
                     start.with_month(start.month() + 1)?
                 }
             }
-            3 => start + chrono::Duration::days(1),
-            4 => start + chrono::Duration::hours(1),
-            _ => start + chrono::Duration::minutes(i64::from(LEVEL_3_MINUTES)),
+            Span::Day => start + chrono::Duration::days(1),
+            Span::Hour => start + chrono::Duration::hours(1),
+            Span::Bucket => start + chrono::Duration::minutes(i64::from(LEVEL_3_MINUTES)),
         };
         Some(Period {
             start: start.timestamp(),
@@ -186,24 +195,83 @@ impl Layout {
     }
 }
 
+/// `2026/08/27/12/00`: a four-digit year, then a two-digit month, day,
+/// hour and minute bucket.
+fn plain_period(names: &[String]) -> Option<(DateTime<Utc>, Span)> {
+    let parts: Vec<u32> = names
+        .iter()
+        .enumerate()
+        .map(|(depth, name)| partition_number(name, if depth == 0 { 4 } else { 2 }))
+        .collect::<Option<_>>()?;
+    let span = match parts.len() {
+        1 => Span::Year,
+        2 => Span::Month,
+        3 => Span::Day,
+        4 => Span::Hour,
+        _ => Span::Bucket,
+    };
+    if matches!(span, Span::Bucket) && !parts[4].is_multiple_of(LEVEL_3_MINUTES) {
+        return None;
+    }
+    let part = |i: usize, default: u32| parts.get(i).copied().unwrap_or(default);
+    let start = Utc
+        .with_ymd_and_hms(
+            i32::try_from(part(0, 1970)).ok()?,
+            part(1, 1),
+            part(2, 1),
+            part(3, 0),
+            part(4, 0),
+            0,
+        )
+        .single()?;
+    Some((start, span))
+}
+
+/// `date=2026-08-27/hour=12/minute=00`.
+fn hive_period(names: &[String]) -> Option<(DateTime<Utc>, Span)> {
+    let date = names.first()?.strip_prefix("date=")?;
+    let (year, rest) = date.split_once('-')?;
+    let (month, day) = rest.split_once('-')?;
+    let year = i32::try_from(partition_number(year, 4)?).ok()?;
+    let month = partition_number(month, 2)?;
+    let day = partition_number(day, 2)?;
+    let hour = match names.get(1) {
+        Some(name) => partition_number(name.strip_prefix("hour=")?, 2)?,
+        None => 0,
+    };
+    let minute = match names.get(2) {
+        Some(name) => {
+            let bucket = partition_number(name.strip_prefix("minute=")?, 2)?;
+            if !bucket.is_multiple_of(LEVEL_3_MINUTES) {
+                return None;
+            }
+            bucket
+        }
+        None => 0,
+    };
+    let span = match names.len() {
+        1 => Span::Day,
+        2 => Span::Hour,
+        _ => Span::Bucket,
+    };
+    let start = Utc
+        .with_ymd_and_hms(year, month, day, hour, minute, 0)
+        .single()?;
+    Some((start, span))
+}
+
 enum Visit<'a> {
     File(Entry),
     /// A partition directory, after everything in it.
     LeaveDir(&'a Path),
 }
 
-/// A partition directory is a four-digit year at the top, then a two-digit
-/// month, day, hour, and finally a minute bucket.
-fn partition_number(name: &str, depth: usize) -> Option<u32> {
-    let width = if depth == 0 { 4 } else { 2 };
+/// A part of a partition name: digits of exactly `width`.
+fn partition_number(name: &str, width: usize) -> Option<u32> {
     if name.len() != width || !is_number(name) {
         return None;
     }
-    let number: u32 = name.parse().ok()?;
-    if depth == MAX_PARTITION_DEPTH - 1 && !number.is_multiple_of(LEVEL_3_MINUTES) {
-        return None;
-    }
-    Some(number)
+    name.parse().ok()
 }
 
 fn is_number(s: &str) -> bool {
@@ -228,6 +296,14 @@ pub(crate) mod tests {
             root: root.to_path_buf(),
             prefix: "flows".into(),
             extension: "parquet".into(),
+            partitioning: Partitioning::Plain,
+        }
+    }
+
+    fn hive(root: &Path) -> Layout {
+        Layout {
+            partitioning: Partitioning::Hive,
+            ..layout(root)
         }
     }
 
@@ -291,10 +367,74 @@ pub(crate) mod tests {
 
         assert_eq!(period(root, "archive"), None);
         assert_eq!(period(root, "26"), None);
+        assert_eq!(period(root, "date=2026-08-20"), None);
         assert_eq!(period(&root.join("2026"), "2026"), None);
         assert_eq!(period(&root.join("2026"), "13"), None);
         assert_eq!(period(&root.join("2026/08/20/12"), "37"), None);
         assert_eq!(period(&root.join("2026/08/20/12/35"), "00"), None);
+    }
+
+    #[test]
+    fn hive_partitions_are_read_the_same_way() {
+        let root = Path::new("/out");
+        let layout = hive(root);
+        let period =
+            |parent: &Path, name: &str| layout.period(parent, name).map(|p| (p.start, p.end));
+        let at = |s: &str| stamp(s).timestamp();
+
+        assert_eq!(
+            period(root, "date=2026-08-20"),
+            Some((at("20260820T000000Z"), at("20260821T000000Z")))
+        );
+        assert_eq!(
+            period(&root.join("date=2026-12-31"), "hour=23"),
+            Some((at("20261231T230000Z"), at("20270101T000000Z")))
+        );
+        assert_eq!(
+            period(&root.join("date=2026-08-20/hour=12"), "minute=35"),
+            Some((at("20260820T123500Z"), at("20260820T124000Z")))
+        );
+
+        assert_eq!(period(root, "2026"), None);
+        assert_eq!(period(root, "date=2026-8-20"), None);
+        assert_eq!(period(root, "date=2026-13-20"), None);
+        assert_eq!(period(&root.join("date=2026-08-20"), "12"), None);
+        assert_eq!(
+            period(&root.join("date=2026-08-20/hour=12"), "minute=37"),
+            None
+        );
+        assert_eq!(
+            period(&root.join("date=2026-08-20/hour=12/minute=35"), "x=1"),
+            None
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let layout = hive(dir.path());
+        let own = |level: u8, s: &str| {
+            partition_path(
+                dir.path(),
+                level,
+                Partitioning::Hive,
+                "flows",
+                "parquet",
+                stamp(s),
+            )
+        };
+        let touch = |path: PathBuf| {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            File::create(&path).unwrap();
+            path
+        };
+        let inside = touch(own(3, "20260820T120500Z"));
+        touch(own(2, "20260820T110000Z"));
+        touch(
+            dir.path()
+                .join("2026/08/20/12/flows-20260820T121000Z.parquet"),
+        );
+
+        let range = at("20260820T120000Z")..at("20260820T130000Z");
+        let listed: Vec<_> = layout.files(range).into_iter().map(|e| e.path).collect();
+        assert_eq!(listed, [inside]);
     }
 
     #[test]
@@ -307,7 +447,16 @@ pub(crate) mod tests {
             File::create(&path).unwrap();
             path
         };
-        let own = |level: u8, s: &str| partition_path(root, level, "flows", "parquet", stamp(s));
+        let own = |level: u8, s: &str| {
+            partition_path(
+                root,
+                level,
+                Partitioning::Plain,
+                "flows",
+                "parquet",
+                stamp(s),
+            )
+        };
 
         let before = touch(own(2, "20260820T115500Z"));
         let first = touch(own(2, "20260820T120000Z"));
