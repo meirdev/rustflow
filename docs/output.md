@@ -265,7 +265,10 @@ Rotated output can be organized into time-based directory partitions using `--le
 | `2`   | `%Y/%m/%d/%H`                                    |
 | `3`   | `%Y/%m/%d/%H` with an additional 5-minute bucket |
 
-`--level` requires `--interval`.
+`--level` requires `--interval`, and the interval must divide the directory's
+period, a day, an hour or 5 minutes, so that every file in a directory holds
+flows received in that period. Windows are aligned to the clock, so a 5-minute
+interval gives files at 13:55, 14:00, 14:05 and so on.
 
 For example:
 
