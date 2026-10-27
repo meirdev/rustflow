@@ -6,7 +6,7 @@ use std::time::Duration;
 use clap::{Args as ClapArgs, ValueEnum};
 
 use crate::enrich::{EnrichmentConfig, parse_enrich_arg};
-use crate::sink::{MAX_PARTITION_LEVEL, OutputFormat, Serialization, SinkConfig};
+use crate::sink::{MAX_PARTITION_LEVEL, OutputFormat, Partitioning, Serialization, SinkConfig};
 
 /// Arguments for the `collect` subcommand.
 #[derive(ClapArgs)]
@@ -60,6 +60,12 @@ pub struct CollectArgs {
         requires = "interval"
     )]
     pub(crate) level: u8,
+
+    /// Name partition directories the Hive way,
+    /// `date=2026-08-27/hour=12/minute=00`, which query engines read as
+    /// columns and prune by. Requires `--level`.
+    #[arg(long, requires = "interval")]
+    pub(crate) hive: bool,
 
     /// File name prefix inside the output tree, e.g. `flows` produces
     /// `flows-20240102T150500Z.parquet`. Requires `--interval`.
@@ -213,6 +219,11 @@ impl CollectArgs {
             serialization: self.serialization,
             interval: self.interval,
             level: self.level,
+            partitioning: if self.hive {
+                Partitioning::Hive
+            } else {
+                Partitioning::Plain
+            },
             prefix: self.prefix.clone(),
             exec: self.exec.clone(),
             expire: self.expire,

@@ -6,9 +6,26 @@ use chrono::{DateTime, Timelike, Utc};
 
 pub const MAX_PARTITION_LEVEL: u8 = 3;
 
-/// Directories below the root at [`MAX_PARTITION_LEVEL`]: year, month,
-/// day, hour and the minute bucket.
-pub const MAX_PARTITION_DEPTH: usize = 5;
+/// How partition directories are named.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Partitioning {
+    /// `2026/08/27/12/00`: one directory per date part.
+    #[default]
+    Plain,
+    /// `date=2026-08-27/hour=12/minute=00`: the Hive convention, which
+    /// query engines read as columns and prune by.
+    Hive,
+}
+
+impl Partitioning {
+    /// Directories below the root at [`MAX_PARTITION_LEVEL`].
+    pub fn max_depth(self) -> usize {
+        match self {
+            Self::Plain => 5,
+            Self::Hive => 3,
+        }
+    }
+}
 
 /// Directory resolution, in minutes, of the deepest partitioning level.
 pub const LEVEL_3_MINUTES: u32 = 5;
@@ -29,6 +46,7 @@ pub enum Destination {
     Partitioned {
         root: PathBuf,
         level: u8,
+        partitioning: Partitioning,
         prefix: String,
         interval_secs: i64,
     },
@@ -165,6 +183,7 @@ impl Destination {
             Destination::Partitioned {
                 root,
                 level,
+                partitioning,
                 prefix,
                 interval_secs,
             } => {
@@ -172,7 +191,8 @@ impl Destination {
                 // round boundaries, e.g. the top of every hour for `1h`.
                 let window_start = now.timestamp().div_euclid(*interval_secs) * interval_secs;
                 let stamp = DateTime::from_timestamp(window_start, 0).unwrap_or(now);
-                let final_path = partition_path(root, *level, prefix, extension, stamp);
+                let final_path =
+                    partition_path(root, *level, *partitioning, prefix, extension, stamp);
                 let tmp = temp_path(&final_path);
                 Ok(Opened {
                     writer: Box::new(create(&tmp)?),
@@ -216,29 +236,44 @@ fn temp_path(final_path: &Path) -> PathBuf {
 /// The file holding the interval window starting at `stamp`:
 /// `<prefix>-<window start>.<extension>` under the level's directory,
 /// `root/`, `root/%Y/%m/%d/`, `root/%Y/%m/%d/%H/`, or
-/// `root/%Y/%m/%d/%H/%M/` in 5 minute steps.
+/// `root/%Y/%m/%d/%H/%M/` in 5 minute steps; with Hive partitioning
+/// `root/date=%Y-%m-%d/hour=%H/minute=%M/`.
 pub fn partition_path(
     root: &Path,
     level: u8,
+    partitioning: Partitioning,
     prefix: &str,
     extension: &str,
     stamp: DateTime<Utc>,
 ) -> PathBuf {
     let mut path = root.to_path_buf();
+    let bucket = stamp.minute() / LEVEL_3_MINUTES * LEVEL_3_MINUTES;
 
-    if level >= 1 {
-        path.push(stamp.format("%Y").to_string());
-        path.push(stamp.format("%m").to_string());
-        path.push(stamp.format("%d").to_string());
-    }
-    if level >= 2 {
-        path.push(stamp.format("%H").to_string());
-    }
-    if level >= 3 {
-        path.push(format!(
-            "{:02}",
-            stamp.minute() / LEVEL_3_MINUTES * LEVEL_3_MINUTES
-        ));
+    match partitioning {
+        Partitioning::Plain => {
+            if level >= 1 {
+                path.push(stamp.format("%Y").to_string());
+                path.push(stamp.format("%m").to_string());
+                path.push(stamp.format("%d").to_string());
+            }
+            if level >= 2 {
+                path.push(stamp.format("%H").to_string());
+            }
+            if level >= 3 {
+                path.push(format!("{bucket:02}"));
+            }
+        }
+        Partitioning::Hive => {
+            if level >= 1 {
+                path.push(stamp.format("date=%Y-%m-%d").to_string());
+            }
+            if level >= 2 {
+                path.push(stamp.format("hour=%H").to_string());
+            }
+            if level >= 3 {
+                path.push(format!("minute={bucket:02}"));
+            }
+        }
     }
 
     path.push(format!(
@@ -259,18 +294,38 @@ mod tests {
         let stamp = DateTime::from_timestamp(1_787_832_000, 0).unwrap();
         assert_eq!(stamp.format(STAMP_FORMAT).to_string().len(), STAMP_LEN);
 
-        let path = partition_path(
-            Path::new("root"),
-            MAX_PARTITION_LEVEL,
-            "flows",
-            "parquet",
-            stamp,
-        );
-        let depth = path.strip_prefix("root").unwrap().components().count() - 1;
-        assert_eq!(depth, MAX_PARTITION_DEPTH);
+        for (partitioning, expected) in [
+            (
+                Partitioning::Plain,
+                "root/2026/08/27/12/00/flows-20260827T120000Z.parquet",
+            ),
+            (
+                Partitioning::Hive,
+                "root/date=2026-08-27/hour=12/minute=00/flows-20260827T120000Z.parquet",
+            ),
+        ] {
+            let path = partition_path(
+                Path::new("root"),
+                MAX_PARTITION_LEVEL,
+                partitioning,
+                "flows",
+                "parquet",
+                stamp,
+            );
+            let depth = path.strip_prefix("root").unwrap().components().count() - 1;
+            assert_eq!(depth, partitioning.max_depth());
+            assert_eq!(path, Path::new(expected));
+        }
         assert_eq!(
-            path,
-            Path::new("root/2026/08/27/12/00/flows-20260827T120000Z.parquet")
+            partition_path(
+                Path::new("root"),
+                1,
+                Partitioning::Hive,
+                "flows",
+                "csv",
+                stamp
+            ),
+            Path::new("root/date=2026-08-27/flows-20260827T120000Z.csv")
         );
     }
 }

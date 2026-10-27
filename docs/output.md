@@ -296,3 +296,30 @@ flows/
 ```
 
 For level `3`, files are additionally grouped into 5-minute buckets below the hour directory.
+
+### Hive partitioning
+
+With `--hive`, the directories are named the way query engines expect, as
+`key=value`:
+
+| Level | Directory layout                                     |
+| ----- | ---------------------------------------------------- |
+| `1`   | `date=%Y-%m-%d`                                      |
+| `2`   | `date=%Y-%m-%d/hour=%H`                              |
+| `3`   | `date=%Y-%m-%d/hour=%H/minute=%M`, in 5-minute steps |
+
+DuckDB, Spark, DataFusion and the like then read `date`, `hour` and `minute`
+as columns and skip the directories a query rules out, without opening a
+file. With a 10-second interval and 30 days kept, that is the difference
+between reading 360 files and 260,000:
+
+```sql
+SELECT hour, sum(bytes * sampling_rate) * 8 / 3600 AS bits_per_second
+FROM read_parquet('flows/**/*.parquet', hive_partitioning = true)
+WHERE date = '2026-08-27' AND hour BETWEEN 12 AND 13
+GROUP BY hour ORDER BY hour;
+```
+
+Filter on the partition columns: a filter on `time_received_ns` alone still
+reads every file. On a very large tree, narrowing the glob to the day,
+`flows/date=2026-08-27/**/*.parquet`, also spares listing the rest.

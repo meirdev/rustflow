@@ -12,7 +12,7 @@ use std::time::Duration;
 use std::{fmt, io};
 
 use clap::ValueEnum;
-pub use destination::{Destination, LEVEL_3_MINUTES, MAX_PARTITION_LEVEL};
+pub use destination::{Destination, LEVEL_3_MINUTES, MAX_PARTITION_LEVEL, Partitioning};
 pub use encoder::{ArrowIpc, Csv, Discard, Encoder, Ndjson, Parquet, Protobuf, Writer};
 pub use expire::{Expirer, Expiry};
 pub use hook::FileHook;
@@ -95,6 +95,7 @@ pub struct SinkConfig {
     /// Start a new file every interval.
     pub interval: Option<Duration>,
     pub level: u8,
+    pub partitioning: Partitioning,
     pub prefix: String,
     pub exec: Option<String>,
     /// Remove rotated files older than this.
@@ -111,6 +112,7 @@ impl SinkConfig {
             (Some(root), Some(interval)) => Destination::Partitioned {
                 root: root.clone(),
                 level: self.level.min(MAX_PARTITION_LEVEL),
+                partitioning: self.partitioning,
                 prefix: self.prefix.clone(),
                 interval_secs: interval.as_secs().max(1) as i64,
             },
@@ -135,6 +137,9 @@ pub fn build(
     if let Some(interval) = config.interval {
         check_interval(interval, config.level)?;
     }
+    if config.partitioning == Partitioning::Hive && config.level == 0 {
+        return Err(io::Error::other("--hive needs --level 1, 2 or 3"));
+    }
     if let (Some(expire), Some(interval)) = (config.expire, config.interval)
         && expire < interval
     {
@@ -155,11 +160,20 @@ pub fn build(
         (serialization, _) => serialization,
     };
     let expiry = match (config.expire, &destination) {
-        (Some(max_age), Destination::Partitioned { root, prefix, .. }) => Some(Expiry {
+        (
+            Some(max_age),
+            Destination::Partitioned {
+                root,
+                prefix,
+                partitioning,
+                ..
+            },
+        ) => Some(Expiry {
             layout: Layout {
                 root: root.clone(),
                 prefix: prefix.clone(),
                 extension: serialization.extension().into(),
+                partitioning: *partitioning,
             },
             max_age,
             hook: match &config.expire_exec {
