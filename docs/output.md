@@ -230,8 +230,10 @@ rustflow collect \
 ```
 
 A file's age is taken from the window stamp in its name. The check runs at
-startup and then every interval; it only touches files of the collector's own
-prefix and serialization, and removes partition directories it leaves empty.
+startup and then every hour, or more often for a short retention, so a file may
+be removed a little after it reaches the age. It only touches files of the
+collector's own prefix and serialization, and removes partition directories it
+leaves empty.
 
 `--expire` requires `--interval` and must be at least as long.
 

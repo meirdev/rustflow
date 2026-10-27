@@ -173,8 +173,32 @@ pub fn build(
         sink = sink.with_hook(FileHook::spawn("-x", command, root, metrics)?);
     }
     if let Some(expiry) = expiry {
-        let every = config.interval.unwrap_or(expiry.max_age);
+        let every = sweep_every(expiry.max_age, config.interval.unwrap_or(expiry.max_age));
         sink = sink.with_expirer(Expirer::spawn(expiry, every, metrics)?);
     }
     Ok(sink)
+}
+
+/// The longest an expired file waits for a sweep.
+const MAX_SWEEP_GAP: Duration = Duration::from_secs(3600);
+
+/// How often expiry looks for old files.
+fn sweep_every(max_age: Duration, interval: Duration) -> Duration {
+    (max_age / 100).clamp(interval, MAX_SWEEP_GAP.max(interval))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sweeps_follow_the_retention_within_bounds() {
+        let s = Duration::from_secs;
+        assert_eq!(sweep_every(s(30 * 86400), s(10)), s(3600));
+        assert_eq!(sweep_every(s(7 * 86400), s(10)), s(3600));
+        assert_eq!(sweep_every(s(86400), s(10)), s(864));
+        assert_eq!(sweep_every(s(3600), s(10)), s(36));
+        assert_eq!(sweep_every(s(3600), s(60)), s(60));
+        assert_eq!(sweep_every(s(2 * 3600), s(2 * 3600)), s(2 * 3600));
+    }
 }
