@@ -287,29 +287,42 @@ impl Capture for AfPacket {
     }
 
     fn next_frame(&mut self) -> Option<Frame<'_>> {
-        if self.frames_left == 0 {
-            if self.block_held {
-                self.release_block();
+        loop {
+            if self.frames_left == 0 {
+                if self.block_held {
+                    self.release_block();
+                }
+                if !self.acquire_block() {
+                    return None;
+                }
             }
-            if !self.acquire_block() {
-                return None;
+
+            let frame = unsafe { self.ring.ptr.add(self.frame_offset) };
+            let hdr = unsafe { &*(frame as *const libc::tpacket3_hdr) };
+            self.frames_left -= 1;
+            self.frame_offset += hdr.tp_next_offset as usize;
+
+            if is_loopback_echo(frame) {
+                continue;
             }
+            let data = unsafe {
+                slice::from_raw_parts(frame.add(hdr.tp_mac as usize), hdr.tp_snaplen as usize)
+            };
+            return Some(Frame {
+                data,
+                length: hdr.tp_len,
+            });
         }
-
-        let frame = unsafe { self.ring.ptr.add(self.frame_offset) };
-        let hdr = unsafe { &*(frame as *const libc::tpacket3_hdr) };
-        let data = unsafe {
-            slice::from_raw_parts(frame.add(hdr.tp_mac as usize), hdr.tp_snaplen as usize)
-        };
-
-        self.frames_left -= 1;
-        self.frame_offset += hdr.tp_next_offset as usize;
-
-        Some(Frame {
-            data,
-            length: hdr.tp_len,
-        })
     }
+}
+
+/// A loopback device hands every packet to a packet socket twice, as sent
+/// and as received; like libpcap, keep only the received copy.
+fn is_loopback_echo(frame: *const u8) -> bool {
+    // The frame's link-layer address follows its header, aligned.
+    let offset = libc::TPACKET3_HDRLEN - mem::size_of::<libc::sockaddr_ll>();
+    let sll = unsafe { &*(frame.add(offset) as *const libc::sockaddr_ll) };
+    sll.sll_pkttype == libc::PACKET_OUTGOING && sll.sll_hatype == libc::ARPHRD_LOOPBACK
 }
 
 fn get_interface_index(socket: &OwnedFd, interface: &str) -> Result<libc::c_int> {
