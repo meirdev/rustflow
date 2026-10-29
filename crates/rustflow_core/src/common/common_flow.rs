@@ -1,5 +1,4 @@
 use std::net::IpAddr;
-use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use macaddr::MacAddr6;
@@ -7,7 +6,6 @@ use serde::Serialize;
 use strum::Display;
 
 use crate::common::serializer::serialize_mac_as_text;
-use crate::common::timeout_map::TimeoutHashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Display)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -17,40 +15,6 @@ pub enum FlowType {
     NetflowV9,
     Ipfix,
     SflowV5,
-}
-
-/// Key for sampling rate cache: (exporter_address,
-/// source_id/observation_domain_id)
-pub type SamplingRateCacheKey = (IpAddr, u32);
-
-pub struct SamplingRateCache {
-    cache: TimeoutHashMap<SamplingRateCacheKey, u32>,
-}
-
-impl SamplingRateCache {
-    pub fn new(timeout: Duration) -> Self {
-        Self {
-            cache: TimeoutHashMap::new(timeout),
-        }
-    }
-
-    pub fn get(&self, key: &SamplingRateCacheKey) -> Option<u32> {
-        self.cache.get(key).copied()
-    }
-
-    pub fn set(&mut self, key: SamplingRateCacheKey, rate: u32) {
-        self.cache.insert(key, rate);
-    }
-
-    pub fn cleanup(&mut self) {
-        self.cache.cleanup();
-    }
-}
-
-impl Default for SamplingRateCache {
-    fn default() -> Self {
-        Self::new(Duration::from_secs(600))
-    }
 }
 
 #[macro_export]

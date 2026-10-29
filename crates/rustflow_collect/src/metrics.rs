@@ -1,6 +1,7 @@
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::thread;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use prometheus_client::encoding::{EncodeLabelSet, text};
 use prometheus_client::metrics::counter::Counter;
@@ -21,11 +22,6 @@ pub const LABEL_SFLOW: &str = "sflow";
 pub const LABEL_SFLOW_V5: &str = "sflow_v5";
 
 const CONTENT_TYPE: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
-
-#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
-pub struct TypeLabel {
-    pub r#type: &'static str,
-}
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 pub struct SourceLabel {
@@ -56,8 +52,8 @@ pub struct Metrics {
     /// Unknown protocol versions encountered, labeled by source_ip
     pub unknown_version_total: Family<SourceLabel, Counter>,
 
-    /// Number of unique exporters (netflow_v9/ipfix)
-    pub active_exporters: Family<TypeLabel, Gauge>,
+    /// Unix time of the last datagram, labeled by type, source_ip
+    pub exporter_last_seen: Family<TypeSourceLabel, Gauge>,
 
     /// Load statistics of the enrichment tables, labeled by source
     pub enrichment: TableMetrics,
@@ -106,11 +102,11 @@ impl Metrics {
             unknown_version_total.clone(),
         );
 
-        let active_exporters = Family::default();
+        let exporter_last_seen = Family::default();
         registry.register(
-            "active_exporters",
-            "Number of unique exporters",
-            active_exporters.clone(),
+            "exporter_last_seen_timestamp_seconds",
+            "Unix time of the last datagram from the exporter",
+            exporter_last_seen.clone(),
         );
 
         let enrichment = TableMetrics::new();
@@ -128,13 +124,8 @@ impl Metrics {
             flows_processed_total,
             parse_errors_total,
             unknown_version_total,
-            active_exporters,
+            exporter_last_seen,
         }
-    }
-
-    pub fn active_exporters(&self, version: &'static str) -> Gauge {
-        self.active_exporters
-            .get_or_create_owned(&TypeLabel { r#type: version })
     }
 
     pub fn encode(&self) -> String {
@@ -161,6 +152,7 @@ pub struct ExporterMetrics {
     metrics: Arc<Metrics>,
     family: &'static str,
     counters: FxHashMap<(IpAddr, &'static str), ExporterCounters>,
+    last_seen: FxHashMap<IpAddr, Gauge>,
 }
 
 impl ExporterMetrics {
@@ -169,7 +161,29 @@ impl ExporterMetrics {
             metrics,
             family,
             counters: FxHashMap::default(),
+            last_seen: FxHashMap::default(),
         }
+    }
+
+    /// Any datagram counts, whether it parses or not. `time_received_ns`
+    /// falls back to the current time.
+    pub fn heard_from(&mut self, src: IpAddr, time_received_ns: Option<i64>) {
+        let (metrics, family) = (&self.metrics, self.family);
+        let gauge = self.last_seen.entry(src).or_insert_with(|| {
+            metrics
+                .exporter_last_seen
+                .get_or_create_owned(&TypeSourceLabel {
+                    r#type: family,
+                    source_ip: src.to_string(),
+                })
+        });
+        let secs = match time_received_ns {
+            Some(ns) => ns.div_euclid(1_000_000_000),
+            None => SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs() as i64),
+        };
+        gauge.set(secs);
     }
 
     fn get_or_create(&mut self, src: IpAddr, version: &'static str) -> &ExporterCounters {

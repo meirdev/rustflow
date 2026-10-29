@@ -41,11 +41,8 @@ fn ingest(
 ) {
     match flow_type {
         FlowType::Netflow => {
-            let mut protocol = protocol::Netflow::new(
-                decoding.ie_registry.clone(),
-                decoding.template_timeout,
-                &metrics,
-            );
+            let mut protocol =
+                protocol::Netflow::new(decoding.ie_registry.clone(), decoding.template_timeout);
             collect(source, &mut protocol, decoding.format, metrics, output);
         }
         FlowType::Sflow => {
@@ -77,6 +74,7 @@ fn collect<P: Protocol>(
             }
             Datagram::End => return,
         };
+        exporters.heard_from(src, time_received_ns);
 
         let Some(packet) = protocol.parse(src, payload) else {
             match P::version_label_of(payload) {
@@ -97,8 +95,6 @@ fn collect<P: Protocol>(
             OutputFormat::Raw => P::push_raw(&packet, &mut output),
             OutputFormat::Common => output.push(protocol.convert(src, &packet, time_received_ns)),
         }
-
-        protocol.update_gauges();
     }
 }
 

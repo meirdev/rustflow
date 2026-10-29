@@ -179,7 +179,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(active_exporters)",
+          "expr": "count(time() - exporter_last_seen_timestamp_seconds < 300)",
           "legendFormat": "exporters"
         }
       ]

@@ -1,7 +1,6 @@
 use std::net::IpAddr;
 use std::time::Duration;
 
-use prometheus_client::metrics::gauge::Gauge;
 use rustflow::{
     CommonFlow, IERegistry, NetflowPacket, NetflowProcessor, SflowPacket, SflowProcessor,
 };
@@ -10,7 +9,7 @@ use rustflow_core::netflow_v5::parser::NETFLOW_V5_VERSION;
 use rustflow_core::netflow_v9::parser::{NETFLOW_V9_VERSION, Record as V9Record};
 use rustflow_core::sflow_v5::parser::{SFLOW_V5_VERSION, Sample};
 
-use crate::metrics::{self, Metrics};
+use crate::metrics;
 use crate::sink::pipeline::Producer;
 
 pub trait Protocol {
@@ -42,25 +41,18 @@ pub trait Protocol {
 
     /// Number of data records (NetFlow/IPFIX) or flow samples (sFlow).
     fn flow_count(packet: &Self::Packet) -> usize;
-
-    /// Refresh protocol-specific gauges after a successful parse.
-    fn update_gauges(&self) {}
 }
 
 pub struct Netflow {
     processor: NetflowProcessor,
-    v9_exporters: Gauge,
-    ipfix_exporters: Gauge,
 }
 
 impl Netflow {
-    pub fn new(ie_registry: IERegistry, template_timeout: Duration, metrics: &Metrics) -> Self {
+    pub fn new(ie_registry: IERegistry, template_timeout: Duration) -> Self {
         Self {
             processor: NetflowProcessor::new()
                 .with_ie_registry(ie_registry)
                 .with_template_timeout(template_timeout),
-            v9_exporters: metrics.active_exporters(metrics::LABEL_NETFLOW_V9),
-            ipfix_exporters: metrics.active_exporters(metrics::LABEL_IPFIX),
         }
     }
 }
@@ -125,13 +117,6 @@ impl Protocol for Netflow {
                 .filter(|r| matches!(r, IpfixRecord::Data(_)))
                 .count(),
         }
-    }
-
-    fn update_gauges(&self) {
-        self.v9_exporters
-            .set(self.processor.v9_parsers.len() as i64);
-        self.ipfix_exporters
-            .set(self.processor.ipfix_parsers.len() as i64);
     }
 }
 
