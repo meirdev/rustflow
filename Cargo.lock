@@ -667,15 +667,6 @@ dependencies = [
 
 [[package]]
 name = "etherparse"
-version = "0.16.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8d8a704b617484e9d867a0423cd45f7577f008c4068e2e33378f8d3860a6d73"
-dependencies = [
- "arrayvec",
-]
-
-[[package]]
-name = "etherparse"
 version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b119b9796ff800751a220394b8b3613f26dd30c48f254f6837e64c464872d1c7"
@@ -1690,7 +1681,7 @@ dependencies = [
  "bytes",
  "chrono",
  "csv",
- "etherparse 0.19.0",
+ "etherparse",
  "hex",
  "hex-literal",
  "log",
@@ -1713,7 +1704,7 @@ dependencies = [
  "clap",
  "ctrlc",
  "env_logger",
- "etherparse 0.16.0",
+ "etherparse",
  "libc",
  "log",
  "pcap",

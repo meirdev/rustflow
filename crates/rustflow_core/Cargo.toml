@@ -10,17 +10,17 @@ description = "Core types and parsers for NetFlow, IPFIX, and sFlow protocols"
 aes = "0.9"
 bytes = "1"
 byteorder = "1.5"
-chrono = { version = "0.4.43", features = ["serde"] }
-csv = "1.4.0"
-etherparse = "0.19.0"
+chrono = { workspace = true, features = ["serde"] }
+csv.workspace = true
+etherparse.workspace = true
 hex = { version = "0.4.3", features = ["serde"] }
-log = "0.4.29"
-macaddr = { version = "1.0.1", features = ["serde"] }
+log.workspace = true
+macaddr = { workspace = true, features = ["serde"] }
 nom = "8.0.0"
 num_enum = "0.7.5"
 primitive-types = { version = "0.14.0", features = ["serde"] }
-rustc-hash = "2.1.1"
-serde = { version = "1.0.228", features = ["derive", "rc"] }
+rustc-hash.workspace = true
+serde = { workspace = true, features = ["rc"] }
 strum = { version = "0.27.2", features = ["derive"] }
 strum_macros = "0.27.2"
 

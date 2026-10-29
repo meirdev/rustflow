@@ -11,14 +11,14 @@ pcap = ["dep:pcap"]
 
 [dependencies]
 rustflow_core.workspace = true
-etherparse = "0.16"
+etherparse.workspace = true
 pcap = { version = "2.3", optional = true }
-anyhow = "1.0"
-clap = { version = "4.5", features = ["derive"] }
-chrono = "0.4"
-log = "0.4"
-env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
-ctrlc = "3.4"
+anyhow.workspace = true
+clap.workspace = true
+chrono.workspace = true
+log.workspace = true
+env_logger.workspace = true
+ctrlc.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"

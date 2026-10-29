@@ -49,7 +49,7 @@ fn packet_info(sliced: &LaxSlicedPacket) -> Option<PacketInfo> {
                 u64::from(header.payload_length()) + 40,
             )
         }
-        None => {
+        Some(LaxNetSlice::Arp(_)) | None => {
             debug!("No IP layer found");
             return None;
         }

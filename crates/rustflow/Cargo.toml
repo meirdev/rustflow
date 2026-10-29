@@ -12,9 +12,9 @@ tokio = ["dep:tokio"]
 
 [dependencies]
 rustflow_core.workspace = true
-chrono = "0.4"
-log = "0.4"
-rustc-hash = "2.1"
+chrono.workspace = true
+log.workspace = true
+rustc-hash.workspace = true
 tokio = { version = "1", features = ["net"], optional = true }
-pcap-file = "2"
-socket2 = "0.6"
+pcap-file.workspace = true
+socket2.workspace = true
