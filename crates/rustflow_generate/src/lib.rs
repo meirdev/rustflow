@@ -466,7 +466,7 @@ fn join<T: fmt::Display>(values: &[T]) -> String {
 }
 
 /// Run the IPFIX flow generator.
-pub fn run(args: GenerateArgs) -> std::io::Result<()> {
+pub fn run(args: GenerateArgs) -> anyhow::Result<()> {
     let mut generator = IpfixGenerator::new(&args)?;
 
     eprintln!("IPFIX Generator");

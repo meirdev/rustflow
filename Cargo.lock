@@ -1724,6 +1724,7 @@ dependencies = [
 name = "rustflow_generate"
 version = "0.18.0"
 dependencies = [
+ "anyhow",
  "chrono",
  "clap",
  "ipnet",

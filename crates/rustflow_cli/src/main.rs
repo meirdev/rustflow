@@ -28,10 +28,7 @@ fn main() -> Result<()> {
 
     match Cli::parse().command {
         Command::Collect(args) => rustflow_collect::run(*args),
-        Command::Generate(args) => {
-            rustflow_generate::run(*args)?;
-            Ok(())
-        }
+        Command::Generate(args) => rustflow_generate::run(*args),
         Command::Export(args) => rustflow_export::run(*args),
     }
 }
