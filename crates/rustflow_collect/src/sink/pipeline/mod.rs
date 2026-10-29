@@ -95,6 +95,11 @@ impl Pipeline {
     }
 }
 
+/// The encoder thread is gone, which happens only if it panicked; nothing
+/// sent from here on would be written.
+#[derive(Debug)]
+pub struct EncoderGone;
+
 /// Batches records into chunks and hands them to the encoder thread over
 /// the bounded channel. Dropping it flushes what is buffered.
 pub struct Producer {
@@ -110,22 +115,22 @@ pub struct Producer {
 impl Producer {
     /// Queue decoded flows; sends to the encoder once a chunk is full or
     /// has waited long enough, so a slow trickle is not held back.
-    pub fn push(&mut self, flows: impl IntoIterator<Item = CommonFlow>) {
+    pub fn push(&mut self, flows: impl IntoIterator<Item = CommonFlow>) -> Result<(), EncoderGone> {
         self.start_chunk();
         self.flows.extend(flows);
-        self.send_if_ready(self.flows.len());
+        self.send_if_ready(self.flows.len())
     }
 
     /// Queue a raw packet as one JSON line.
-    pub fn push_raw<T: Serialize + ?Sized>(&mut self, record: &T) {
+    pub fn push_raw<T: Serialize + ?Sized>(&mut self, record: &T) -> Result<(), EncoderGone> {
         if self.discard {
-            return;
+            return Ok(());
         }
         self.start_chunk();
         serde_json::to_writer(&mut self.raw, record).expect("packet types serialize");
         self.raw.push(b'\n');
         self.raw_records += 1;
-        self.send_if_ready(self.raw_records);
+        self.send_if_ready(self.raw_records)
     }
 
     fn start_chunk(&mut self) {
@@ -134,38 +139,36 @@ impl Producer {
         }
     }
 
-    fn send_if_ready(&mut self, records: usize) {
+    fn send_if_ready(&mut self, records: usize) -> Result<(), EncoderGone> {
         if records >= CHUNK_RECORDS || self.chunk_started.elapsed() >= CHUNK_FLUSH_TIMEOUT {
-            self.flush();
+            self.flush()?;
         }
+        Ok(())
     }
 
     /// Send whatever is buffered, even a partial chunk (idle / shutdown).
-    pub fn flush(&mut self) {
+    pub fn flush(&mut self) -> Result<(), EncoderGone> {
         if !self.flows.is_empty() {
             let full = std::mem::replace(&mut self.flows, Vec::with_capacity(CHUNK_RECORDS));
-            self.send(Chunk::Flows(full));
+            self.send(Chunk::Flows(full))?;
         }
         if !self.raw.is_empty() {
             let full = std::mem::take(&mut self.raw);
             self.raw_records = 0;
-            self.send(Chunk::Raw(full));
+            self.send(Chunk::Raw(full))?;
         }
+        Ok(())
     }
 
-    fn send(&self, chunk: Chunk) {
-        if self.tx.send(chunk).is_err() {
-            // The receiver is gone only if the encoder thread panicked.
-            // Continuing would silently discard every record from here on.
-            eprintln!("Encoder thread has died; exiting");
-            std::process::exit(1);
-        }
+    fn send(&self, chunk: Chunk) -> Result<(), EncoderGone> {
+        self.tx.send(chunk).map_err(|_| EncoderGone)
     }
 }
 
 impl Drop for Producer {
     fn drop(&mut self) {
-        self.flush();
+        // A dead encoder is reported when the pipeline is drained.
+        let _ = self.flush();
     }
 }
 

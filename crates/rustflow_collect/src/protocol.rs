@@ -10,7 +10,7 @@ use rustflow_core::netflow_v9::parser::{NETFLOW_V9_VERSION, Record as V9Record};
 use rustflow_core::sflow_v5::parser::{SFLOW_V5_VERSION, Sample};
 
 use crate::metrics;
-use crate::sink::pipeline::Producer;
+use crate::sink::pipeline::{EncoderGone, Producer};
 
 pub trait Protocol {
     type Packet;
@@ -30,7 +30,7 @@ pub trait Protocol {
     ) -> Vec<CommonFlow>;
 
     /// Write the packet in its original structure.
-    fn push_raw(packet: &Self::Packet, output: &mut Producer);
+    fn push_raw(packet: &Self::Packet, output: &mut Producer) -> Result<(), EncoderGone>;
 
     /// The metrics label of the packet's version.
     fn version_label(packet: &Self::Packet) -> &'static str;
@@ -76,7 +76,7 @@ impl Protocol for Netflow {
             .convert_to_flows(src, packet, time_received_ns)
     }
 
-    fn push_raw(packet: &NetflowPacket, output: &mut Producer) {
+    fn push_raw(packet: &NetflowPacket, output: &mut Producer) -> Result<(), EncoderGone> {
         match packet {
             NetflowPacket::V5(p) => output.push_raw(p),
             NetflowPacket::V9(p) => output.push_raw(p),
@@ -150,7 +150,7 @@ impl Protocol for Sflow {
         SflowProcessor::convert_to_flows(packet, time_received_ns)
     }
 
-    fn push_raw(packet: &SflowPacket, output: &mut Producer) {
+    fn push_raw(packet: &SflowPacket, output: &mut Producer) -> Result<(), EncoderGone> {
         match packet {
             SflowPacket::V5(p) => output.push_raw(p),
         }

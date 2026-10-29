@@ -7,22 +7,18 @@ mod source;
 
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
+use anyhow::{Context, Result, bail};
 pub use args::CollectArgs;
 use args::{FlowType, Input};
 use enrich::{EnrichmentConfig, EnrichmentEngine};
 use protocol::Protocol;
 use rustflow::IERegistry;
 use sink::OutputFormat;
-use sink::pipeline::{CHUNK_FLUSH_TIMEOUT, Pipeline, Producer};
-use source::{Datagram, Source};
-
-/// The socket source checks this between reads to stop ingestion before
-/// draining.
-static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+use sink::pipeline::{CHUNK_FLUSH_TIMEOUT, EncoderGone, Pipeline, Producer};
+use source::{Datagram, Shutdown, Source};
 
 /// What every ingest thread decodes with.
 #[derive(Clone)]
@@ -38,17 +34,23 @@ fn ingest(
     decoding: &Decoding,
     metrics: Arc<metrics::Metrics>,
     output: Producer,
+    shutdown: &Shutdown,
 ) {
-    match flow_type {
+    let result = match flow_type {
         FlowType::Netflow => {
             let mut protocol =
                 protocol::Netflow::new(decoding.ie_registry.clone(), decoding.template_timeout);
-            collect(source, &mut protocol, decoding.format, metrics, output);
+            collect(source, &mut protocol, decoding.format, metrics, output)
         }
         FlowType::Sflow => {
             let mut protocol = protocol::Sflow::new();
-            collect(source, &mut protocol, decoding.format, metrics, output);
+            collect(source, &mut protocol, decoding.format, metrics, output)
         }
+    };
+    // Without an encoder nothing more can be written; stop the other
+    // sources too.
+    if let Err(EncoderGone) = result {
+        shutdown.request();
     }
 }
 
@@ -58,7 +60,7 @@ fn collect<P: Protocol>(
     format: OutputFormat,
     metrics: Arc<metrics::Metrics>,
     mut output: Producer,
-) {
+) -> Result<(), EncoderGone> {
     let mut exporters = metrics::ExporterMetrics::new(metrics, P::FAMILY);
 
     loop {
@@ -69,10 +71,10 @@ fn collect<P: Protocol>(
                 time_received_ns,
             } => (src, payload, time_received_ns),
             Datagram::Idle => {
-                output.flush();
+                output.flush()?;
                 continue;
             }
-            Datagram::End => return,
+            Datagram::End => return Ok(()),
         };
         exporters.heard_from(src, time_received_ns);
 
@@ -92,27 +94,25 @@ fn collect<P: Protocol>(
         );
 
         match format {
-            OutputFormat::Raw => P::push_raw(&packet, &mut output),
-            OutputFormat::Common => output.push(protocol.convert(src, &packet, time_received_ns)),
+            OutputFormat::Raw => P::push_raw(&packet, &mut output)?,
+            OutputFormat::Common => {
+                output.push(protocol.convert(src, &packet, time_received_ns))?
+            }
         }
     }
 }
 
-fn open(input: &Input, recv_buffer: usize) -> Box<dyn Source + Send> {
+fn open(input: &Input, recv_buffer: usize, shutdown: &Shutdown) -> Result<Box<dyn Source + Send>> {
     match input {
         Input::Pcap { path, .. } => {
-            let source = source::Pcap::open(path).unwrap_or_else(|e| {
-                eprintln!("Failed to open pcap file {}: {}", path.display(), e);
-                std::process::exit(1);
-            });
-            Box::new(source)
+            let source = source::Pcap::open(path, shutdown.clone())
+                .with_context(|| format!("Failed to open pcap file {}", path.display()))?;
+            Ok(Box::new(source))
         }
         Input::Listen { flow_type, addr } => {
-            let socket = source::Socket::bind(*addr, CHUNK_FLUSH_TIMEOUT, recv_buffer)
-                .unwrap_or_else(|e| {
-                    eprintln!("Failed to bind to {}: {}", addr, e);
-                    std::process::exit(1);
-                });
+            let socket =
+                source::Socket::bind(*addr, CHUNK_FLUSH_TIMEOUT, recv_buffer, shutdown.clone())
+                    .with_context(|| format!("Failed to bind to {addr}"))?;
             let granted = socket.recv_buffer_size().unwrap_or(0);
             if granted < recv_buffer {
                 eprintln!(
@@ -123,52 +123,49 @@ fn open(input: &Input, recv_buffer: usize) -> Box<dyn Source + Send> {
             eprintln!(
                 "Listening for {} data on {} (receive buffer {} bytes)",
                 flow_type.name(),
-                socket.local_addr().unwrap(),
+                socket.local_addr()?,
                 granted
             );
-            Box::new(socket)
+            Ok(Box::new(socket))
         }
     }
 }
 
-fn load_ie_registry(path: Option<&Path>) -> IERegistry {
+fn load_ie_registry(path: Option<&Path>) -> Result<IERegistry> {
     let mut registry = IERegistry::new_with_iana_elements();
     if let Some(path) = path {
-        match registry.load_from_csv(path) {
-            Ok(count) => eprintln!(
-                "Loaded {} custom IE definitions from {}",
-                count,
-                path.display()
-            ),
-            Err(e) => {
-                eprintln!("Failed to load IE mappings from {}: {}", path.display(), e);
-                std::process::exit(1);
-            }
-        }
+        let count = registry
+            .load_from_csv(path)
+            .with_context(|| format!("Failed to load IE mappings from {}", path.display()))?;
+        eprintln!(
+            "Loaded {} custom IE definitions from {}",
+            count,
+            path.display()
+        );
     }
-    registry
+    Ok(registry)
 }
 
-fn load_enrichment(configs: &[EnrichmentConfig], metrics: &metrics::Metrics) -> EnrichmentEngine {
+fn load_enrichment(
+    configs: &[EnrichmentConfig],
+    metrics: &metrics::Metrics,
+) -> Result<EnrichmentEngine> {
     let mut engine = EnrichmentEngine::new(metrics.enrichment.clone());
     for config in configs {
         let source = config.source.source().display().to_string();
-        match engine.add(config.clone()) {
-            Ok(count) => eprintln!("Loaded {} rows from {}", count, source),
-            Err(e) => {
-                eprintln!("Failed to load enrichment from {}: {}", source, e);
-                std::process::exit(1);
-            }
-        }
+        let count = engine
+            .add(config.clone())
+            .with_context(|| format!("Failed to load enrichment from {source}"))?;
+        eprintln!("Loaded {} rows from {}", count, source);
     }
-    engine
+    Ok(engine)
 }
 
-/// Request socket shutdown on Ctrl-C or SIGTERM so the pipeline can drain
-/// and finalize output, including Parquet footers. A second signal forces exit.
-fn install_shutdown_handler() {
+/// Request shutdown on Ctrl-C or SIGTERM so the pipeline can drain and
+/// finalize output, including Parquet footers. A second signal forces exit.
+fn install_shutdown_handler(shutdown: Shutdown) {
     if let Err(e) = ctrlc::set_handler(move || {
-        if SHUTDOWN.swap(true, Ordering::SeqCst) {
+        if shutdown.request() {
             eprintln!("Forced exit");
             std::process::exit(1);
         }
@@ -178,22 +175,36 @@ fn install_shutdown_handler() {
     }
 }
 
-pub fn run(cli: CollectArgs) {
+pub fn run(cli: CollectArgs) -> Result<()> {
     let metrics = Arc::new(metrics::Metrics::new());
+    let shutdown = Shutdown::default();
 
-    let ie_registry = load_ie_registry(cli.ie_mapping.as_deref());
-    let enrichment = load_enrichment(&cli.enrich, &metrics);
+    let ie_registry = load_ie_registry(cli.ie_mapping.as_deref())?;
+    let enrichment = load_enrichment(&cli.enrich, &metrics)?;
+
+    // Everything that can fail opens before the sink, which creates its
+    // first output file right away.
+    let sources = cli
+        .input
+        .iter()
+        .map(|input| Ok((input.flow_type(), open(input, cli.recv_buffer, &shutdown)?)))
+        .collect::<Result<Vec<_>>>()?;
+    if cli
+        .input
+        .iter()
+        .any(|input| matches!(input, Input::Listen { .. }))
+    {
+        // Detached; it serves until the process exits.
+        metrics::start_metrics_server(Arc::clone(&metrics), cli.metrics_host, cli.metrics_port)
+            .context("Failed to start the metrics server")?;
+    }
 
     let sink = sink::build(
         cli.format,
         &cli.sink_config(),
         enrichment.output_fields().to_vec(),
         &metrics.output,
-    )
-    .unwrap_or_else(|e| {
-        eprintln!("Error: {}", e);
-        std::process::exit(1);
-    });
+    )?;
     let output = Pipeline::spawn(sink, enrichment, metrics.output.clone());
     let decoding = Decoding {
         format: cli.format,
@@ -201,38 +212,35 @@ pub fn run(cli: CollectArgs) {
         template_timeout: cli.template_timeout,
     };
 
-    install_shutdown_handler();
+    install_shutdown_handler(shutdown.clone());
 
-    let sources: Vec<_> = cli
-        .input
-        .iter()
-        .map(|input| (input.flow_type(), open(input, cli.recv_buffer)))
-        .collect();
-    if cli
-        .input
-        .iter()
-        .any(|input| matches!(input, Input::Listen { .. }))
-    {
-        // Detached; it serves until the process exits.
-        metrics::start_metrics_server(Arc::clone(&metrics), cli.metrics_host, cli.metrics_port);
-    }
     let threads: Vec<_> = sources
         .into_iter()
         .map(|(flow_type, mut source)| {
             let decoding = decoding.clone();
             let metrics = Arc::clone(&metrics);
             let producer = output.producer();
-            thread::spawn(move || ingest(flow_type, &mut *source, &decoding, metrics, producer))
+            let shutdown = shutdown.clone();
+            thread::spawn(move || {
+                ingest(
+                    flow_type,
+                    &mut *source,
+                    &decoding,
+                    metrics,
+                    producer,
+                    &shutdown,
+                )
+            })
         })
         .collect();
+    let mut panicked = false;
     for thread in threads {
-        if thread.join().is_err() {
-            eprintln!("An ingest thread panicked");
-        }
+        panicked |= thread.join().is_err();
     }
 
-    if let Err(e) = output.drain() {
-        eprintln!("Failed to finalize output: {}", e);
-        std::process::exit(1);
+    output.drain().context("Failed to finalize output")?;
+    if panicked {
+        bail!("An ingest thread panicked");
     }
+    Ok(())
 }

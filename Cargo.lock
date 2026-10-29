@@ -1649,6 +1649,7 @@ dependencies = [
 name = "rustflow_collect"
 version = "0.18.0"
 dependencies = [
+ "anyhow",
  "arrayvec",
  "arrow-array",
  "arrow-ipc",

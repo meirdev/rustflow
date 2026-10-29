@@ -27,10 +27,7 @@ fn main() -> Result<()> {
     env_logger::init();
 
     match Cli::parse().command {
-        Command::Collect(args) => {
-            rustflow_collect::run(*args);
-            Ok(())
-        }
+        Command::Collect(args) => rustflow_collect::run(*args),
         Command::Generate(args) => {
             rustflow_generate::run(*args)?;
             Ok(())

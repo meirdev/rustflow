@@ -1,7 +1,7 @@
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
-use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::{io, thread};
 
 use prometheus_client::encoding::{EncodeLabelSet, text};
 use prometheus_client::metrics::counter::Counter;
@@ -256,17 +256,17 @@ impl ExporterMetrics {
     }
 }
 
+/// Binds right away, so a taken port fails at startup.
 pub fn start_metrics_server(
     metrics: Arc<Metrics>,
     host: IpAddr,
     port: u16,
-) -> thread::JoinHandle<()> {
+) -> io::Result<thread::JoinHandle<()>> {
     let addr = SocketAddr::new(host, port);
+    let server = Server::http(addr).map_err(io::Error::other)?;
+    eprintln!("Metrics server listening on http://{}/metrics", addr);
 
-    thread::spawn(move || {
-        let server = Server::http(addr).expect("Failed to start metrics HTTP server");
-        eprintln!("Metrics server listening on http://{}/metrics", addr);
-
+    Ok(thread::spawn(move || {
         for request in server.incoming_requests() {
             let response = if request.url() == "/metrics" {
                 let body = metrics.encode();
@@ -280,5 +280,5 @@ pub fn start_metrics_server(
 
             let _ = request.respond(response);
         }
-    })
+    }))
 }

@@ -2,7 +2,8 @@ use std::fs::File;
 use std::io;
 use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::path::Path;
-use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use chrono::Utc;
@@ -10,7 +11,21 @@ use pcap_file::pcap::PcapReader;
 use rustflow_core::common::packet::parse_udp_packet;
 use socket2::SockRef;
 
-use crate::SHUTDOWN;
+/// Ends every source on its next read, so the pipeline can drain:
+/// requested on Ctrl-C or SIGTERM, or when the output is gone.
+#[derive(Clone, Default)]
+pub struct Shutdown(Arc<AtomicBool>);
+
+impl Shutdown {
+    /// Returns whether shutdown had already been requested.
+    pub fn request(&self) -> bool {
+        self.0.swap(true, Ordering::SeqCst)
+    }
+
+    fn requested(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+}
 
 pub enum Datagram<'a> {
     Packet {
@@ -42,6 +57,7 @@ fn is_retryable(e: &io::Error) -> bool {
 pub struct Socket {
     socket: UdpSocket,
     buf: Vec<u8>,
+    shutdown: Shutdown,
 }
 
 impl Socket {
@@ -51,6 +67,7 @@ impl Socket {
         addr: SocketAddr,
         read_timeout: Duration,
         recv_buffer_size: usize,
+        shutdown: Shutdown,
     ) -> io::Result<Self> {
         let socket = UdpSocket::bind(addr)?;
         socket.set_read_timeout(Some(read_timeout))?;
@@ -58,6 +75,7 @@ impl Socket {
         Ok(Self {
             socket,
             buf: vec![0; 65535],
+            shutdown,
         })
     }
 
@@ -72,7 +90,7 @@ impl Socket {
 
 impl Source for Socket {
     fn next(&mut self) -> Datagram<'_> {
-        if SHUTDOWN.load(Ordering::Relaxed) {
+        if self.shutdown.requested() {
             return Datagram::End;
         }
         match self.socket.recv_from(&mut self.buf) {
@@ -94,15 +112,17 @@ impl Source for Socket {
 pub struct Pcap {
     reader: PcapReader<File>,
     payload: Vec<u8>,
+    shutdown: Shutdown,
 }
 
 impl Pcap {
-    pub fn open(path: &Path) -> io::Result<Self> {
+    pub fn open(path: &Path, shutdown: Shutdown) -> io::Result<Self> {
         let reader = PcapReader::new(File::open(path)?)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
         Ok(Self {
             reader,
             payload: Vec::new(),
+            shutdown,
         })
     }
 }
@@ -110,7 +130,7 @@ impl Pcap {
 impl Source for Pcap {
     fn next(&mut self) -> Datagram<'_> {
         loop {
-            if SHUTDOWN.load(Ordering::Relaxed) {
+            if self.shutdown.requested() {
                 return Datagram::End;
             }
             let link_type = self.reader.header().datalink.into();
