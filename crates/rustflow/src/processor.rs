@@ -211,125 +211,9 @@ impl NetflowProcessor {
         payload: &[u8],
         time_received_ns: Option<i64>,
     ) -> Vec<CommonFlow> {
-        let mut flows = Vec::new();
-
-        if payload.len() < 2 {
-            return flows;
-        }
-
-        let version = u16::from_be_bytes([payload[0], payload[1]]);
-
-        match version {
-            NETFLOW_V5_VERSION => {
-                if let Ok((_, parsed)) = self.v5_parser.parse(payload) {
-                    flows.reserve(v5_record_count(&parsed));
-
-                    let ctx = NetFlowV5Context {
-                        header: &parsed.header,
-                        sampler_address: Some(src),
-                    };
-                    for record in parsed.flow_records.iter() {
-                        let mut flow = ctx.convert(record);
-                        flow.time_received_ns = time_received_ns;
-                        flows.push(flow);
-                    }
-                }
-            }
-            NETFLOW_V9_VERSION => {
-                let parser = self.v9_parsers.entry(src).or_insert_with(|| {
-                    NetflowV9Parser::new(self.ie_registry.clone(), self.template_timeout)
-                });
-
-                if let Ok((_, parsed)) = parser.parse(payload) {
-                    flows.reserve(v9_record_count(&parsed));
-
-                    let cache_key = (src, parsed.header.source_id);
-                    let mut sampling_rate = self.sampling_cache.get(&cache_key);
-
-                    for flow_set in parsed.flow_sets.iter() {
-                        for record in flow_set.records.iter() {
-                            match record {
-                                V9Record::OptionsData(data_record) => {
-                                    if let Some(rate) = extract_v9_sampling_rate(data_record) {
-                                        self.sampling_cache.set(cache_key, rate);
-                                        sampling_rate = Some(rate);
-                                    }
-                                }
-                                V9Record::Data(data_record) => {
-                                    if let Some(rate) = extract_v9_sampling_rate(data_record) {
-                                        self.sampling_cache.set(cache_key, rate);
-                                        sampling_rate = Some(rate);
-                                    }
-
-                                    let ctx = NetFlowV9Context {
-                                        header: &parsed.header,
-                                        sampler_address: Some(src),
-                                        sampling_rate,
-                                    };
-                                    let mut flow = ctx.convert(data_record, flow_set.id);
-                                    flow.time_received_ns = time_received_ns;
-                                    flows.push(flow);
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-            }
-            IPFIX_VERSION => {
-                let parser = self.ipfix_parsers.entry(src).or_insert_with(|| {
-                    IpfixParser::new(self.ie_registry.clone(), self.template_timeout)
-                });
-
-                if let Ok((_, parsed)) = parser.parse(payload) {
-                    flows.reserve(ipfix_record_count(&parsed));
-
-                    let cache_key = (src, parsed.header.observation_domain_id);
-                    let mut sampling_rate = self.sampling_cache.get(&cache_key);
-                    let mut system_init_time_ms = self.boot_times.get(&cache_key).copied();
-
-                    for set in parsed.sets.iter() {
-                        for record in set.records.iter() {
-                            match record {
-                                IpfixRecord::OptionsData(data_record) => {
-                                    if let Some(rate) = extract_ipfix_sampling_rate(data_record) {
-                                        self.sampling_cache.set(cache_key, rate);
-                                        sampling_rate = Some(rate);
-                                    }
-                                    if let Some(boot) = extract_ipfix_system_init_time(data_record)
-                                    {
-                                        self.boot_times.insert(cache_key, boot);
-                                        system_init_time_ms = Some(boot);
-                                    }
-                                }
-                                IpfixRecord::Data(data_record) => {
-                                    if let Some(rate) = extract_ipfix_sampling_rate(data_record) {
-                                        self.sampling_cache.set(cache_key, rate);
-                                        sampling_rate = Some(rate);
-                                    }
-
-                                    let ctx = IpfixContext {
-                                        header: &parsed.header,
-                                        sampler_address: Some(src),
-                                        sampling_rate,
-                                        system_init_time_ms,
-                                    };
-                                    let mut flow = ctx.convert(data_record, set.id);
-                                    flow.time_received_ns = time_received_ns;
-                                    flows.push(flow);
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-            }
-            _ => {
-                log::warn!("Unknown NetFlow version: {}", version);
-            }
-        }
-
-        flows
+        self.parse_raw(src, payload)
+            .map(|packet| self.convert_to_flows(src, &packet, time_received_ns))
+            .unwrap_or_default()
     }
 }
 
@@ -405,39 +289,9 @@ impl SflowProcessor {
     /// Process an sFlow packet and return flows.
     /// Returns flows in packet order.
     pub fn process(&mut self, payload: &[u8], time_received_ns: Option<i64>) -> Vec<CommonFlow> {
-        let mut flows = Vec::new();
-
-        if payload.len() < 4 {
-            return flows;
-        }
-
-        let version = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
-
-        if version == SFLOW_V5_VERSION {
-            if let Ok((_, parsed)) = self.parser.parse(payload) {
-                let ctx = SFlowV5Context { header: &parsed };
-
-                for sample in parsed.samples.iter() {
-                    match sample {
-                        Sample::Flow(flow_sample) => {
-                            let mut flow = ctx.convert_flow_sample(flow_sample);
-                            flow.time_received_ns = time_received_ns;
-                            flows.push(flow);
-                        }
-                        Sample::ExpandedFlow(expanded_sample) => {
-                            let mut flow = ctx.convert_expanded_flow_sample(expanded_sample);
-                            flow.time_received_ns = time_received_ns;
-                            flows.push(flow);
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        } else {
-            log::warn!("Unknown sFlow version: {}", version);
-        }
-
-        flows
+        self.parse_raw(payload)
+            .map(|packet| Self::convert_to_flows(&packet, time_received_ns))
+            .unwrap_or_default()
     }
 }
 
@@ -451,20 +305,8 @@ impl Default for SflowProcessor {
 /// vector up front.
 fn estimated_flow_count(packet: &NetflowPacket) -> usize {
     match packet {
-        NetflowPacket::V5(parsed) => v5_record_count(parsed),
-        NetflowPacket::V9(parsed) => v9_record_count(parsed),
-        NetflowPacket::Ipfix(parsed) => ipfix_record_count(parsed),
+        NetflowPacket::V5(parsed) => parsed.flow_records.len(),
+        NetflowPacket::V9(parsed) => parsed.flow_sets.iter().map(|s| s.records.len()).sum(),
+        NetflowPacket::Ipfix(parsed) => parsed.sets.iter().map(|s| s.records.len()).sum(),
     }
-}
-
-fn v5_record_count(parsed: &NetFlowV5Packet) -> usize {
-    parsed.flow_records.len()
-}
-
-fn v9_record_count(parsed: &NetFlowV9Packet) -> usize {
-    parsed.flow_sets.iter().map(|s| s.records.len()).sum()
-}
-
-fn ipfix_record_count(parsed: &IpfixPacket) -> usize {
-    parsed.sets.iter().map(|s| s.records.len()).sum()
 }

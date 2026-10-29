@@ -40,9 +40,7 @@ impl NetFlowV9Context<'_> {
         flow.observation_domain_id = Some(self.header.source_id);
         flow.template_id = Some(template_id);
 
-        if let Some(rate) = self.sampling_rate {
-            flow.sampling_rate = Some(rate);
-        }
+        let mut record_rate = None;
 
         for (field, _, value) in record.iter() {
             if let Some(ie) = InformationElement::from_id(field.r#type) {
@@ -123,9 +121,7 @@ impl NetFlowV9Context<'_> {
                     IcmpTypeIpv4 | IcmpTypeIpv6 => flow.icmp_type = extract_u8(value),
                     IcmpCodeIpv4 | IcmpCodeIpv6 => flow.icmp_code = extract_u8(value),
                     SamplingInterval | SamplingPacketInterval | SamplerRandomInterval => {
-                        if self.sampling_rate.is_none() {
-                            flow.sampling_rate = extract_u32(value);
-                        }
+                        record_rate = record_rate.or(extract_u32(value));
                     }
                     SrcVlan => flow.src_vlan = extract_u16(value),
                     DstVlan => flow.dst_vlan = extract_u16(value),
@@ -155,6 +151,8 @@ impl NetFlowV9Context<'_> {
                 }
             }
         }
+
+        flow.sampling_rate = record_rate.or(self.sampling_rate);
 
         flow
     }
