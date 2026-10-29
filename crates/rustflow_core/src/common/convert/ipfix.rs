@@ -39,10 +39,6 @@ impl IpfixContext<'_> {
         flow.observation_domain_id = Some(self.header.observation_domain_id);
         flow.template_id = Some(template_id);
 
-        if let Some(rate) = self.sampling_rate {
-            flow.sampling_rate = Some(rate);
-        }
-
         // RFC 7133 packet sections (Juniper inline monitoring exports one
         // record per sampled packet with `dataLinkFrameSection`). The
         // header goes in first so that the elements the record states
@@ -54,6 +50,7 @@ impl IpfixContext<'_> {
             None => {}
         }
         let mut frame_size: Option<u64> = None;
+        let mut sampling = SamplingFields::default();
 
         for (field, _, value) in record.iter() {
             let field_type = &field.information_element_identifier;
@@ -144,11 +141,10 @@ impl IpfixContext<'_> {
                     }
                     IcmpTypeIpv4 | IcmpTypeIpv6 => flow.icmp_type = ipfix_extract_u8(value),
                     IcmpCodeIpv4 | IcmpCodeIpv6 => flow.icmp_code = ipfix_extract_u8(value),
-                    SamplingInterval | SamplingPacketInterval | SamplerRandomInterval => {
-                        if self.sampling_rate.is_none() {
-                            flow.sampling_rate = ipfix_extract_u32(value);
-                        }
-                    }
+                    SamplingInterval
+                    | SamplerRandomInterval
+                    | SamplingPacketInterval
+                    | SamplingPacketSpace => sampling.observe(ie, value),
                     SrcVlan => flow.src_vlan = ipfix_extract_u16(value),
                     DstVlan => flow.dst_vlan = ipfix_extract_u16(value),
                     IpNextHopIpv6Address => {
@@ -177,6 +173,8 @@ impl IpfixContext<'_> {
                 }
             }
         }
+
+        flow.sampling_rate = sampling.rate().or(self.sampling_rate);
 
         // A record without counters is one packet of `dataLinkFrameSize`
         // bytes, or of the section's length when the size is absent.
@@ -288,35 +286,59 @@ pub fn extract_ipfix_system_init_time(record: &IpfixDataRecord) -> Option<i64> {
     })
 }
 
-/// The 1-in-N rate an options record describes: `samplingInterval` and
-/// `samplerRandomInterval` state it directly; the PSAMP count-based pair
-/// selects `samplingPacketInterval` packets out of every
-/// `samplingPacketInterval + samplingPacketSpace`, which is only reported
-/// when that is a whole 1-in-N. A `samplingPacketInterval` on its own is
-/// read as the rate, which is how many exporters use it.
-pub fn extract_ipfix_sampling_rate(record: &IpfixDataRecord) -> Option<u32> {
-    use InformationElement::*;
+#[derive(Default)]
+struct SamplingFields {
+    rate: Option<u32>,
+    packet_interval: Option<u32>,
+    packet_space: Option<u32>,
+}
 
-    let mut interval = None;
-    let mut space = None;
-    for (field, _, value) in record.iter() {
-        match InformationElement::from_id(field.information_element_identifier) {
-            Some(SamplingInterval | SamplerRandomInterval) => return ipfix_extract_u32(value),
-            Some(SamplingPacketInterval) => interval = ipfix_extract_u32(value),
-            Some(SamplingPacketSpace) => space = ipfix_extract_u32(value),
+impl SamplingFields {
+    fn observe(&mut self, ie: InformationElement, value: &IpfixFieldValue) {
+        use InformationElement::*;
+
+        match ie {
+            SamplingInterval | SamplerRandomInterval => {
+                self.rate = self.rate.or(ipfix_extract_u32(value));
+            }
+            SamplingPacketInterval => self.packet_interval = ipfix_extract_u32(value),
+            SamplingPacketSpace => self.packet_space = ipfix_extract_u32(value),
             _ => {}
         }
     }
-    match (interval, space) {
-        (Some(interval), Some(space)) if interval > 0 => {
-            let (interval, population) =
-                (u64::from(interval), u64::from(interval) + u64::from(space));
-            (population % interval == 0)
-                .then(|| u32::try_from(population / interval).ok())
-                .flatten()
+
+    /// The 1-in-N rate: `samplingInterval` and `samplerRandomInterval` state
+    /// it directly; the PSAMP count-based pair selects
+    /// `samplingPacketInterval` packets out of every
+    /// `samplingPacketInterval + samplingPacketSpace`, which is only reported
+    /// when that is a whole 1-in-N. A `samplingPacketInterval` on its own is
+    /// read as the rate, which is how many exporters use it.
+    fn rate(&self) -> Option<u32> {
+        if self.rate.is_some() {
+            return self.rate;
         }
-        (interval, _) => interval,
+        match (self.packet_interval, self.packet_space) {
+            (Some(interval), Some(space)) if interval > 0 => {
+                let (interval, population) =
+                    (u64::from(interval), u64::from(interval) + u64::from(space));
+                (population % interval == 0)
+                    .then(|| u32::try_from(population / interval).ok())
+                    .flatten()
+            }
+            (interval, _) => interval,
+        }
     }
+}
+
+/// The 1-in-N rate an options record describes, see [`SamplingFields::rate`].
+pub fn extract_ipfix_sampling_rate(record: &IpfixDataRecord) -> Option<u32> {
+    let mut sampling = SamplingFields::default();
+    for (field, _, value) in record.iter() {
+        if let Some(ie) = InformationElement::from_id(field.information_element_identifier) {
+            sampling.observe(ie, value);
+        }
+    }
+    sampling.rate()
 }
 
 #[cfg(test)]
