@@ -176,6 +176,7 @@ fn install_shutdown_handler(shutdown: Shutdown) {
 }
 
 pub fn run(cli: CollectArgs) -> Result<()> {
+    let sink_config = cli.sink_config()?;
     let metrics = Arc::new(metrics::Metrics::new());
     let shutdown = Shutdown::default();
 
@@ -200,8 +201,7 @@ pub fn run(cli: CollectArgs) -> Result<()> {
     }
 
     let sink = sink::build(
-        cli.format,
-        &cli.sink_config(),
+        &sink_config,
         enrichment.output_fields().to_vec(),
         &metrics.output,
     )?;

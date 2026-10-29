@@ -3,10 +3,13 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
 
+use anyhow::{Result, bail};
 use clap::{Args as ClapArgs, ValueEnum};
 
 use crate::enrich::{EnrichmentConfig, parse_enrich_arg};
-use crate::sink::{MAX_PARTITION_LEVEL, OutputFormat, Partitioning, Serialization, SinkConfig};
+use crate::sink::{
+    LEVEL_3_MINUTES, MAX_PARTITION_LEVEL, OutputFormat, Partitioning, Serialization, SinkConfig,
+};
 
 /// Arguments for the `collect` subcommand.
 #[derive(ClapArgs)]
@@ -49,22 +52,21 @@ pub struct CollectArgs {
     )]
     pub(crate) interval: Option<Duration>,
 
-    /// Directory partitioning of the output tree: 0 = flat, 1 = `%Y/%m/%d`,
-    /// 2 = `%Y/%m/%d/%H`, 3 = `%Y/%m/%d/%H` plus a 5 minute bucket.
-    /// Requires `--interval`.
+    /// Directory partitioning of the output tree: 1 = `%Y/%m/%d`,
+    /// 2 = `%Y/%m/%d/%H`, 3 = `%Y/%m/%d/%H` plus a 5 minute bucket. Without
+    /// it, files sit directly in the output directory. Requires `--interval`.
     #[arg(
         short = 'l',
         long,
-        default_value = "0",
-        value_parser = clap::value_parser!(u8).range(0..=MAX_PARTITION_LEVEL as i64),
+        value_parser = clap::value_parser!(u8).range(1..=MAX_PARTITION_LEVEL as i64),
         requires = "interval"
     )]
-    pub(crate) level: u8,
+    pub(crate) level: Option<u8>,
 
     /// Name partition directories the Hive way,
     /// `date=2026-08-27/hour=12/minute=00`, which query engines read as
     /// columns and prune by. Requires `--level`.
-    #[arg(long, requires = "interval")]
+    #[arg(long, requires = "level")]
     pub(crate) hive: bool,
 
     /// File name prefix inside the output tree, e.g. `flows` produces
@@ -213,12 +215,25 @@ impl FromStr for Input {
 }
 
 impl CollectArgs {
-    pub(crate) fn sink_config(&self) -> SinkConfig {
-        SinkConfig {
+    pub(crate) fn sink_config(&self) -> Result<SinkConfig> {
+        let serialization = self.serialization;
+        if self.format == OutputFormat::Raw && !serialization.takes_raw() {
+            bail!("--serialization {serialization} requires --format common");
+        }
+        if let Some(interval) = self.interval {
+            check_interval(interval, self.level)?;
+        }
+        if let (Some(expire), Some(interval)) = (self.expire, self.interval)
+            && expire < interval
+        {
+            bail!("--expire must be at least as long as --interval");
+        }
+
+        Ok(SinkConfig {
             path: self.output.clone(),
             serialization: self.serialization,
             interval: self.interval,
-            level: self.level,
+            level: self.level.unwrap_or(0),
             partitioning: if self.hive {
                 Partitioning::Hive
             } else {
@@ -228,8 +243,52 @@ impl CollectArgs {
             exec: self.exec.clone(),
             expire: self.expire,
             expire_exec: self.expire_exec.clone(),
-        }
+        })
     }
+}
+
+/// A window must be whole seconds and sit inside one partition directory,
+/// so the directory means what it says: every file under hour 13 holds
+/// flows received in hour 13. That takes an interval dividing the
+/// directory's period.
+fn check_interval(interval: Duration, level: Option<u8>) -> Result<()> {
+    if interval.is_zero() || interval.subsec_nanos() != 0 {
+        bail!("--interval must be whole seconds");
+    }
+    let Some(level) = level else {
+        return Ok(());
+    };
+    let (period, name) = match level {
+        1 => (86400, "a day"),
+        2 => (3600, "an hour"),
+        _ => (u64::from(LEVEL_3_MINUTES) * 60, "5 minutes"),
+    };
+    if !period.is_multiple_of(interval.as_secs()) {
+        bail!(
+            "--interval must divide {name} at --level {level}, e.g. {}",
+            examples(period)
+        );
+    }
+    Ok(())
+}
+
+/// A few intervals dividing `period`, largest first.
+fn examples(period: u64) -> String {
+    [3600, 1800, 600, 300, 60, 30, 10]
+        .into_iter()
+        .filter(|candidate| period.is_multiple_of(*candidate) && *candidate <= period)
+        .take(3)
+        .map(|secs| {
+            if secs >= 3600 {
+                format!("{}h", secs / 3600)
+            } else if secs >= 60 {
+                format!("{}m", secs / 60)
+            } else {
+                format!("{secs}s")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 #[cfg(test)]
@@ -287,6 +346,77 @@ mod tests {
                 pcap(FlowType::Sflow, "/var/tmp/flows.pcap"),
                 pcap(FlowType::Netflow, "flows.pcap"),
             ]
+        );
+    }
+
+    #[test]
+    fn intervals_must_fit_their_partition() {
+        let s = Duration::from_secs;
+        let ok = |interval, level| check_interval(interval, level).is_ok();
+
+        assert!(ok(s(7 * 60), None));
+        assert!(ok(s(7 * 3600), None));
+        assert!(ok(s(8 * 3600), Some(1)));
+        assert!(!ok(s(7 * 3600), Some(1)));
+        assert!(ok(s(5 * 60), Some(2)));
+        assert!(ok(s(3600), Some(2)));
+        assert!(!ok(s(7 * 60), Some(2)));
+        assert!(!ok(s(2 * 3600), Some(2)));
+        assert!(ok(s(60), Some(3)));
+        assert!(ok(s(300), Some(3)));
+        assert!(!ok(s(120), Some(3)));
+        assert!(!ok(s(600), Some(3)));
+        assert!(!ok(Duration::from_millis(1500), None));
+        assert!(!ok(Duration::ZERO, None));
+
+        let error = check_interval(s(7 * 60), Some(2)).unwrap_err().to_string();
+        assert_eq!(
+            error,
+            "--interval must divide an hour at --level 2, e.g. 1h, 30m, 10m"
+        );
+        let error = check_interval(s(600), Some(3)).unwrap_err().to_string();
+        assert_eq!(
+            error,
+            "--interval must divide 5 minutes at --level 3, e.g. 5m, 1m, 30s"
+        );
+    }
+
+    #[test]
+    fn hive_needs_a_partition_level() {
+        let base = ["-I", "netflow://:9995", "-o", "out", "-i", "1m"];
+        let parse_with = |extra: &[&str]| {
+            let args: Vec<_> = base.iter().chain(extra).copied().collect();
+            parse(&args)
+        };
+        assert!(parse_with(&["--hive"]).is_err());
+        assert_eq!(parse_with(&["--hive", "-l", "1"]).unwrap().level, Some(1));
+        assert_eq!(parse_with(&[]).unwrap().level, None);
+    }
+
+    #[test]
+    fn output_flags_are_checked_against_each_other() {
+        let error = |args: &[&str]| {
+            let base = ["-I", "netflow://:9995", "-o", "out"];
+            let args: Vec<_> = base.iter().chain(args).copied().collect();
+            parse(&args)
+                .unwrap()
+                .sink_config()
+                .err()
+                .map(|e| e.to_string())
+        };
+
+        assert_eq!(
+            error(&["-s", "parquet"]).as_deref(),
+            Some("--serialization parquet requires --format common")
+        );
+        assert_eq!(error(&["-s", "ndjson"]), None);
+        assert_eq!(
+            error(&["-i", "1m", "--expire", "30s"]).as_deref(),
+            Some("--expire must be at least as long as --interval")
+        );
+        assert_eq!(
+            error(&["-i", "1m", "-l", "3", "--hive", "--expire", "1h"]),
+            None
         );
     }
 
