@@ -138,17 +138,11 @@ mod tests {
     use std::fs::File;
 
     use super::*;
-    use crate::sink::destination::{Partitioning, partition_path};
-    use crate::sink::layout::tests::stamp;
+    use crate::sink::layout::tests::{plain, stamp};
 
     fn expiry(root: &Path, max_age: Duration) -> Expiry {
         Expiry {
-            layout: Layout {
-                root: root.to_path_buf(),
-                prefix: "flows".into(),
-                extension: "parquet".into(),
-                partitioning: Partitioning::Plain,
-            },
+            layout: plain(root),
             max_age,
             hook: None,
         }
@@ -200,14 +194,11 @@ mod tests {
             path
         };
         let own = |level: u8, s: &str| {
-            partition_path(
-                root,
+            Layout {
                 level,
-                Partitioning::Plain,
-                "flows",
-                "parquet",
-                stamp(s),
-            )
+                ..plain(root)
+            }
+            .path_for(stamp(s))
         };
 
         let old = [

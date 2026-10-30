@@ -1,22 +1,54 @@
-//! Reading a rotated output tree: which files are the collector's own, and
-//! which of them fall in a time range.
+//! How a rotated output tree is laid out: where the file of a window goes,
+//! which files are the collector's own, and which of them fall in a time
+//! range.
 
 use std::fs;
 use std::ops::{Bound, RangeBounds};
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, Datelike, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, Datelike, NaiveDateTime, TimeZone, Timelike, Utc};
 
-use super::destination::{LEVEL_3_MINUTES, Partitioning, STAMP_FORMAT, STAMP_LEN};
+pub const MAX_PARTITION_LEVEL: u8 = 3;
 
-/// One output tree, as `--output`, `--prefix`, `--serialization` and
-/// `--hive` describe it. Files are recognised by name alone: see
-/// [`Layout::name`].
+/// How partition directories are named.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Partitioning {
+    /// `2026/08/27/12/00`: one directory per date part.
+    #[default]
+    Plain,
+    /// `date=2026-08-27/hour=12/minute=00`: the Hive convention, which
+    /// query engines read as columns and prune by.
+    Hive,
+}
+
+impl Partitioning {
+    /// Directories below the root at [`MAX_PARTITION_LEVEL`].
+    pub fn max_depth(self) -> usize {
+        match self {
+            Self::Plain => 5,
+            Self::Hive => 3,
+        }
+    }
+}
+
+/// Directory resolution, in minutes, of the deepest partitioning level.
+pub const LEVEL_3_MINUTES: u32 = 5;
+
+/// The window start as it appears in a rotated file's name.
+pub const STAMP_FORMAT: &str = "%Y%m%dT%H%M%SZ";
+
+/// Length of a stamp in [`STAMP_FORMAT`], `20260820T120000Z`.
+pub const STAMP_LEN: usize = 16;
+
+/// One output tree, as `--output`, `--prefix`, `--serialization`,
+/// `--level` and `--hive` describe it. Files are recognised by name alone:
+/// see [`Layout::name`].
 #[derive(Clone, Debug)]
 pub struct Layout {
     pub root: PathBuf,
     pub prefix: String,
     pub extension: String,
+    pub level: u8,
     pub partitioning: Partitioning,
 }
 
@@ -67,6 +99,51 @@ impl Period {
 }
 
 impl Layout {
+    /// The file holding the interval window starting at `stamp`:
+    /// `<prefix>-<window start>.<extension>` under the level's directory,
+    /// `root/`, `root/%Y/%m/%d/`, `root/%Y/%m/%d/%H/`, or
+    /// `root/%Y/%m/%d/%H/%M/` in 5 minute steps; with Hive partitioning
+    /// `root/date=%Y-%m-%d/hour=%H/minute=%M/`.
+    pub fn path_for(&self, stamp: DateTime<Utc>) -> PathBuf {
+        let mut path = self.root.clone();
+        let bucket = stamp.minute() / LEVEL_3_MINUTES * LEVEL_3_MINUTES;
+
+        match self.partitioning {
+            Partitioning::Plain => {
+                if self.level >= 1 {
+                    path.push(stamp.format("%Y").to_string());
+                    path.push(stamp.format("%m").to_string());
+                    path.push(stamp.format("%d").to_string());
+                }
+                if self.level >= 2 {
+                    path.push(stamp.format("%H").to_string());
+                }
+                if self.level >= 3 {
+                    path.push(format!("{bucket:02}"));
+                }
+            }
+            Partitioning::Hive => {
+                if self.level >= 1 {
+                    path.push(stamp.format("date=%Y-%m-%d").to_string());
+                }
+                if self.level >= 2 {
+                    path.push(stamp.format("hour=%H").to_string());
+                }
+                if self.level >= 3 {
+                    path.push(format!("minute={bucket:02}"));
+                }
+            }
+        }
+
+        path.push(format!(
+            "{}-{}.{}",
+            self.prefix,
+            stamp.format(STAMP_FORMAT),
+            self.extension
+        ));
+        path
+    }
+
     /// Every file of this tree whose window starts inside `range`,
     /// temporary files included. Partition directories outside the range
     /// are not even listed; directories that cannot be read are skipped.
@@ -283,7 +360,6 @@ pub(crate) mod tests {
     use std::fs::File;
 
     use super::*;
-    use crate::sink::destination::partition_path;
 
     pub(crate) fn stamp(s: &str) -> DateTime<Utc> {
         NaiveDateTime::parse_from_str(s, STAMP_FORMAT)
@@ -291,11 +367,12 @@ pub(crate) mod tests {
             .and_utc()
     }
 
-    fn layout(root: &Path) -> Layout {
+    pub(crate) fn plain(root: &Path) -> Layout {
         Layout {
             root: root.to_path_buf(),
             prefix: "flows".into(),
             extension: "parquet".into(),
+            level: MAX_PARTITION_LEVEL,
             partitioning: Partitioning::Plain,
         }
     }
@@ -303,13 +380,56 @@ pub(crate) mod tests {
     fn hive(root: &Path) -> Layout {
         Layout {
             partitioning: Partitioning::Hive,
-            ..layout(root)
+            ..plain(root)
         }
     }
 
     #[test]
+    fn paths_follow_the_level_and_the_partitioning() {
+        let stamp = stamp("20260827T120000Z");
+        assert_eq!(stamp.format(STAMP_FORMAT).to_string().len(), STAMP_LEN);
+
+        for (partitioning, expected) in [
+            (
+                Partitioning::Plain,
+                "root/2026/08/27/12/00/flows-20260827T120000Z.parquet",
+            ),
+            (
+                Partitioning::Hive,
+                "root/date=2026-08-27/hour=12/minute=00/flows-20260827T120000Z.parquet",
+            ),
+        ] {
+            let layout = Layout {
+                partitioning,
+                ..plain(Path::new("root"))
+            };
+            let path = layout.path_for(stamp);
+            let depth = path.strip_prefix("root").unwrap().components().count() - 1;
+            assert_eq!(depth, partitioning.max_depth());
+            assert_eq!(path, Path::new(expected));
+        }
+        let flat = Layout {
+            level: 0,
+            extension: "csv".into(),
+            ..plain(Path::new("root"))
+        };
+        assert_eq!(
+            flat.path_for(stamp),
+            Path::new("root/flows-20260827T120000Z.csv")
+        );
+        let daily = Layout {
+            level: 1,
+            ..hive(Path::new("root"))
+        };
+        assert_eq!(
+            daily.path_for(stamp),
+            Path::new("root/date=2026-08-27/flows-20260827T120000Z.parquet")
+        );
+    }
+
+    #[test]
     fn names_of_own_files_carry_their_window() {
-        let layout = layout(Path::new("/out"));
+        let layout = plain(Path::new("/out"));
         let name = |name: &str| layout.name(name).map(|(w, tmp)| (w.timestamp(), tmp));
         let t = stamp("20260820T120000Z").timestamp();
 
@@ -339,7 +459,7 @@ pub(crate) mod tests {
     #[test]
     fn partition_periods_follow_the_layout() {
         let root = Path::new("/out");
-        let layout = layout(root);
+        let layout = plain(root);
         let period =
             |parent: &Path, name: &str| layout.period(parent, name).map(|p| (p.start, p.end));
         let at = |s: &str| stamp(s).timestamp();
@@ -411,14 +531,11 @@ pub(crate) mod tests {
         let dir = tempfile::tempdir().unwrap();
         let layout = hive(dir.path());
         let own = |level: u8, s: &str| {
-            partition_path(
-                dir.path(),
+            Layout {
                 level,
-                Partitioning::Hive,
-                "flows",
-                "parquet",
-                stamp(s),
-            )
+                ..hive(dir.path())
+            }
+            .path_for(stamp(s))
         };
         let touch = |path: PathBuf| {
             fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -441,21 +558,18 @@ pub(crate) mod tests {
     fn files_in_a_range_skip_partitions_outside_it() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        let layout = layout(root);
+        let layout = plain(root);
         let touch = |path: PathBuf| {
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             File::create(&path).unwrap();
             path
         };
         let own = |level: u8, s: &str| {
-            partition_path(
-                root,
+            Layout {
                 level,
-                Partitioning::Plain,
-                "flows",
-                "parquet",
-                stamp(s),
-            )
+                ..plain(root)
+            }
+            .path_for(stamp(s))
         };
 
         let before = touch(own(2, "20260820T115500Z"));
@@ -489,7 +603,7 @@ pub(crate) mod tests {
     fn dirs_in_a_range_come_deepest_first() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        let layout = layout(root);
+        let layout = plain(root);
         fs::create_dir_all(root.join("2026/08/19/23")).unwrap();
         fs::create_dir_all(root.join("2026/08/20/11")).unwrap();
         fs::create_dir_all(root.join("2026/08/20/12")).unwrap();

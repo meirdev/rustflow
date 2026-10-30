@@ -2,39 +2,9 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, Timelike, Utc};
+use chrono::{DateTime, Utc};
 
-pub const MAX_PARTITION_LEVEL: u8 = 3;
-
-/// How partition directories are named.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Partitioning {
-    /// `2026/08/27/12/00`: one directory per date part.
-    #[default]
-    Plain,
-    /// `date=2026-08-27/hour=12/minute=00`: the Hive convention, which
-    /// query engines read as columns and prune by.
-    Hive,
-}
-
-impl Partitioning {
-    /// Directories below the root at [`MAX_PARTITION_LEVEL`].
-    pub fn max_depth(self) -> usize {
-        match self {
-            Self::Plain => 5,
-            Self::Hive => 3,
-        }
-    }
-}
-
-/// Directory resolution, in minutes, of the deepest partitioning level.
-pub const LEVEL_3_MINUTES: u32 = 5;
-
-/// The window start as it appears in a rotated file's name.
-pub const STAMP_FORMAT: &str = "%Y%m%dT%H%M%SZ";
-
-/// Length of a stamp in [`STAMP_FORMAT`], `20260820T120000Z`.
-pub const STAMP_LEN: usize = 16;
+use super::layout::Layout;
 
 /// Where bytes go. Knows about paths, temporary names, and renames, and
 /// nothing about formats.
@@ -42,12 +12,9 @@ pub const STAMP_LEN: usize = 16;
 pub enum Destination {
     Stdout,
     File(PathBuf),
-    /// One file per interval window, see [`partition_path`].
+    /// One file per interval window, named by the layout.
     Partitioned {
-        root: PathBuf,
-        level: u8,
-        partitioning: Partitioning,
-        prefix: String,
+        layout: Layout,
         interval_secs: i64,
     },
     Null,
@@ -163,7 +130,7 @@ fn candidates(wanted: &Path) -> impl Iterator<Item = PathBuf> + '_ {
 
 impl Destination {
     /// Opens the stream for the window containing `now`.
-    pub fn open_for(&self, now: DateTime<Utc>, extension: &str) -> io::Result<Opened> {
+    pub fn open_for(&self, now: DateTime<Utc>) -> io::Result<Opened> {
         match self {
             Destination::Stdout => Ok(Opened {
                 writer: Box::new(io::stdout()),
@@ -181,18 +148,14 @@ impl Destination {
                 rotate_at: None,
             }),
             Destination::Partitioned {
-                root,
-                level,
-                partitioning,
-                prefix,
+                layout,
                 interval_secs,
             } => {
                 // Windows are aligned to the epoch so file names land on
                 // round boundaries, e.g. the top of every hour for `1h`.
                 let window_start = now.timestamp().div_euclid(*interval_secs) * interval_secs;
                 let stamp = DateTime::from_timestamp(window_start, 0).unwrap_or(now);
-                let final_path =
-                    partition_path(root, *level, *partitioning, prefix, extension, stamp);
+                let final_path = layout.path_for(stamp);
                 let tmp = temp_path(&final_path);
                 Ok(Opened {
                     writer: Box::new(create(&tmp)?),
@@ -231,101 +194,4 @@ fn temp_path(final_path: &Path) -> PathBuf {
         .unwrap_or_else(|| "output".to_string());
 
     final_path.with_file_name(format!(".{name}.{}.tmp", std::process::id()))
-}
-
-/// The file holding the interval window starting at `stamp`:
-/// `<prefix>-<window start>.<extension>` under the level's directory,
-/// `root/`, `root/%Y/%m/%d/`, `root/%Y/%m/%d/%H/`, or
-/// `root/%Y/%m/%d/%H/%M/` in 5 minute steps; with Hive partitioning
-/// `root/date=%Y-%m-%d/hour=%H/minute=%M/`.
-pub fn partition_path(
-    root: &Path,
-    level: u8,
-    partitioning: Partitioning,
-    prefix: &str,
-    extension: &str,
-    stamp: DateTime<Utc>,
-) -> PathBuf {
-    let mut path = root.to_path_buf();
-    let bucket = stamp.minute() / LEVEL_3_MINUTES * LEVEL_3_MINUTES;
-
-    match partitioning {
-        Partitioning::Plain => {
-            if level >= 1 {
-                path.push(stamp.format("%Y").to_string());
-                path.push(stamp.format("%m").to_string());
-                path.push(stamp.format("%d").to_string());
-            }
-            if level >= 2 {
-                path.push(stamp.format("%H").to_string());
-            }
-            if level >= 3 {
-                path.push(format!("{bucket:02}"));
-            }
-        }
-        Partitioning::Hive => {
-            if level >= 1 {
-                path.push(stamp.format("date=%Y-%m-%d").to_string());
-            }
-            if level >= 2 {
-                path.push(stamp.format("hour=%H").to_string());
-            }
-            if level >= 3 {
-                path.push(format!("minute={bucket:02}"));
-            }
-        }
-    }
-
-    path.push(format!(
-        "{}-{}.{}",
-        prefix,
-        stamp.format(STAMP_FORMAT),
-        extension
-    ));
-    path
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn layout_constants_match_the_layout() {
-        let stamp = DateTime::from_timestamp(1_787_832_000, 0).unwrap();
-        assert_eq!(stamp.format(STAMP_FORMAT).to_string().len(), STAMP_LEN);
-
-        for (partitioning, expected) in [
-            (
-                Partitioning::Plain,
-                "root/2026/08/27/12/00/flows-20260827T120000Z.parquet",
-            ),
-            (
-                Partitioning::Hive,
-                "root/date=2026-08-27/hour=12/minute=00/flows-20260827T120000Z.parquet",
-            ),
-        ] {
-            let path = partition_path(
-                Path::new("root"),
-                MAX_PARTITION_LEVEL,
-                partitioning,
-                "flows",
-                "parquet",
-                stamp,
-            );
-            let depth = path.strip_prefix("root").unwrap().components().count() - 1;
-            assert_eq!(depth, partitioning.max_depth());
-            assert_eq!(path, Path::new(expected));
-        }
-        assert_eq!(
-            partition_path(
-                Path::new("root"),
-                1,
-                Partitioning::Hive,
-                "flows",
-                "csv",
-                stamp
-            ),
-            Path::new("root/date=2026-08-27/flows-20260827T120000Z.csv")
-        );
-    }
 }

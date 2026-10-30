@@ -9,7 +9,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 
 use super::OutputMetrics;
-use super::destination::STAMP_FORMAT;
+use super::layout::STAMP_FORMAT;
 
 /// Commands running at once; the rest wait in order.
 const MAX_RUNNING: usize = 8;

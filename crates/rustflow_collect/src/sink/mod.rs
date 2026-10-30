@@ -11,11 +11,11 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub use destination::{Destination, LEVEL_3_MINUTES, MAX_PARTITION_LEVEL, Partitioning};
+pub use destination::Destination;
 pub use encoder::{ArrowIpc, Csv, Discard, Encoder, Ndjson, Parquet, Protobuf, Writer};
 pub use expire::{Expirer, Expiry};
 pub use hook::FileHook;
-pub use layout::Layout;
+pub use layout::{LEVEL_3_MINUTES, Layout, MAX_PARTITION_LEVEL, Partitioning};
 pub use metrics::OutputMetrics;
 pub use rotating::RotatingSink;
 
@@ -104,10 +104,13 @@ impl SinkConfig {
             (None, _) => Destination::Stdout,
             (Some(path), None) => Destination::File(path.clone()),
             (Some(root), Some(interval)) => Destination::Partitioned {
-                root: root.clone(),
-                level: self.level,
-                partitioning: self.partitioning,
-                prefix: self.prefix.clone(),
+                layout: Layout {
+                    root: root.clone(),
+                    prefix: self.prefix.clone(),
+                    extension: self.serialization.extension().into(),
+                    level: self.level,
+                    partitioning: self.partitioning,
+                },
                 interval_secs: interval.as_secs() as i64,
             },
         }
@@ -133,24 +136,16 @@ pub fn build(
         (serialization, _) => serialization,
     };
     let expiry = match (config.expire, &destination) {
-        (
-            Some(max_age),
-            Destination::Partitioned {
-                root,
-                prefix,
-                partitioning,
-                ..
-            },
-        ) => Some(Expiry {
-            layout: Layout {
-                root: root.clone(),
-                prefix: prefix.clone(),
-                extension: serialization.extension().into(),
-                partitioning: *partitioning,
-            },
+        (Some(max_age), Destination::Partitioned { layout, .. }) => Some(Expiry {
+            layout: layout.clone(),
             max_age,
             hook: match &config.expire_exec {
-                Some(command) => Some(FileHook::spawn("--expire-exec", command, root, metrics)?),
+                Some(command) => Some(FileHook::spawn(
+                    "--expire-exec",
+                    command,
+                    &layout.root,
+                    metrics,
+                )?),
                 None => None,
             },
         }),

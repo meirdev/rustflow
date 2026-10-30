@@ -105,9 +105,7 @@ impl RotatingSink {
             writer,
             pending,
             rotate_at,
-        } = self
-            .destination
-            .open_for(now, self.serialization.extension())?;
+        } = self.destination.open_for(now)?;
         let writer = Box::new(CountingWriter::new(writer, self.metrics.bytes.clone()));
         let encoder = self.serialization.open(writer, &self.enriched_fields)?;
         if pending.is_some() {
