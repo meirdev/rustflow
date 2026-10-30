@@ -14,7 +14,7 @@ use std::time::Duration;
 pub use destination::Destination;
 pub use encoder::{ArrowIpc, Csv, Discard, Encoder, Ndjson, Parquet, Protobuf, Writer};
 pub use expire::{Expirer, Expiry};
-pub use hook::FileHook;
+pub use hook::{FileHook, Hook};
 pub use layout::{LEVEL_3_MINUTES, Layout, MAX_PARTITION_LEVEL, Partitioning};
 use log::warn;
 pub use metrics::OutputMetrics;
@@ -142,7 +142,7 @@ pub fn build(
             max_age,
             hook: match &config.expire_exec {
                 Some(command) => Some(FileHook::spawn(
-                    "--expire-exec",
+                    Hook::ExpireExec,
                     command,
                     &layout.root,
                     metrics,
@@ -156,7 +156,7 @@ pub fn build(
         RotatingSink::open(serialization, destination, enriched_fields, metrics.clone())?;
     if let Some(command) = &config.exec {
         let root = config.path.as_deref().unwrap_or(Path::new(""));
-        sink = sink.with_hook(FileHook::spawn("-x", command, root, metrics)?);
+        sink = sink.with_hook(FileHook::spawn(Hook::Exec, command, root, metrics)?);
     }
     if let Some(expiry) = expiry {
         let every = sweep_every(expiry.max_age, config.interval.unwrap_or(expiry.max_age));

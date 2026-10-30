@@ -139,6 +139,7 @@ mod tests {
     use std::fs::File;
 
     use super::*;
+    use crate::sink::hook::Hook;
     use crate::sink::layout::tests::{plain, stamp};
 
     fn expiry(root: &Path, max_age: Duration) -> Expiry {
@@ -164,7 +165,7 @@ mod tests {
             File::create(root.join(name)).unwrap();
         }
         let hook = FileHook::spawn(
-            "--expire-exec",
+            Hook::ExpireExec,
             &format!("touch {}/%t", heard.display()),
             root,
             &OutputMetrics::new(),
