@@ -335,7 +335,7 @@ fn get_interface_index(socket: &OwnedFd, interface: &str) -> Result<libc::c_int>
     unsafe {
         ptr::copy_nonoverlapping(
             name_bytes.as_ptr(),
-            ifr.ifr_name.as_mut_ptr() as *mut u8,
+            ifr.ifr_name.as_mut_ptr().cast(),
             copy_len,
         );
     }
