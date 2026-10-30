@@ -16,19 +16,124 @@ use rustflow_core::netflow_v9::parser::{
     NETFLOW_V9_VERSION, NetFlowV9Packet, NetflowV9Parser, Record as V9Record,
 };
 use rustflow_core::sflow_v5::parser::{SFLOW_V5_VERSION, SFlowV5, Sample, SflowV5Parser};
+use serde::Serialize;
 
-/// Enum representing a parsed NetFlow/IPFIX packet.
-#[derive(Debug, Clone)]
+/// Decodes one family of flow protocols: parses datagrams, keeping the
+/// state the protocol needs between them, such as templates and sampling
+/// rates per exporter, and turns parsed packets into [`CommonFlow`]s.
+pub trait Processor: Default {
+    type Packet: Packet;
+
+    /// The family's name, `netflow` or `sflow`.
+    const NAME: &'static str;
+
+    /// Parses a datagram from exporter `src`, updating the state it
+    /// carries. `None` for an unknown version or a malformed packet.
+    fn parse(&mut self, src: IpAddr, payload: &[u8]) -> Option<Self::Packet>;
+
+    /// The packet's data records as normalized flows, in packet order.
+    fn convert(
+        &self,
+        src: IpAddr,
+        packet: &Self::Packet,
+        time_received_ns: Option<i64>,
+    ) -> Vec<CommonFlow>;
+
+    /// The version name in a datagram's header, such as `netflow_v9`;
+    /// `None` for an unknown version or a truncated header.
+    fn version_of(payload: &[u8]) -> Option<&'static str>;
+
+    /// Parses and converts in one step; a packet that fails to parse
+    /// yields no flows.
+    fn process(
+        &mut self,
+        src: IpAddr,
+        payload: &[u8],
+        time_received_ns: Option<i64>,
+    ) -> Vec<CommonFlow> {
+        self.parse(src, payload)
+            .map(|packet| self.convert(src, &packet, time_received_ns))
+            .unwrap_or_default()
+    }
+}
+
+/// A parsed packet of some protocol version, in its original structure.
+pub trait Packet: Serialize {
+    /// The version name, such as `netflow_v9`.
+    fn version(&self) -> &'static str;
+
+    /// The data records, or flow samples, the packet carries.
+    fn flow_count(&self) -> usize;
+}
+
+pub const NETFLOW: &str = "netflow";
+pub const NETFLOW_V5: &str = "netflow_v5";
+pub const NETFLOW_V9: &str = "netflow_v9";
+pub const IPFIX: &str = "ipfix";
+pub const SFLOW: &str = "sflow";
+pub const SFLOW_V5: &str = "sflow_v5";
+
+/// A parsed NetFlow v5, NetFlow v9 or IPFIX packet. Serializes as the
+/// packet itself, without a version wrapper.
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
 pub enum NetflowPacket {
     V5(NetFlowV5Packet),
     V9(NetFlowV9Packet),
     Ipfix(IpfixPacket),
 }
 
-/// Enum representing a parsed sFlow packet.
-#[derive(Debug, Clone)]
+impl Packet for NetflowPacket {
+    fn version(&self) -> &'static str {
+        match self {
+            Self::V5(_) => NETFLOW_V5,
+            Self::V9(_) => NETFLOW_V9,
+            Self::Ipfix(_) => IPFIX,
+        }
+    }
+
+    fn flow_count(&self) -> usize {
+        match self {
+            Self::V5(p) => p.flow_records.len(),
+            Self::V9(p) => p
+                .flow_sets
+                .iter()
+                .flat_map(|set| &set.records)
+                .filter(|record| matches!(record, V9Record::Data(_)))
+                .count(),
+            Self::Ipfix(p) => p
+                .sets
+                .iter()
+                .flat_map(|set| &set.records)
+                .filter(|record| matches!(record, IpfixRecord::Data(_)))
+                .count(),
+        }
+    }
+}
+
+/// A parsed sFlow v5 packet.
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
 pub enum SflowPacket {
     V5(SFlowV5),
+}
+
+impl Packet for SflowPacket {
+    fn version(&self) -> &'static str {
+        match self {
+            Self::V5(_) => SFLOW_V5,
+        }
+    }
+
+    fn flow_count(&self) -> usize {
+        match self {
+            Self::V5(p) => p
+                .samples
+                .iter()
+                .filter(|sample| matches!(sample, Sample::Flow(_) | Sample::ExpandedFlow(_)))
+                .count(),
+        }
+    }
 }
 
 /// How often exporters gone quiet are looked for.
@@ -128,15 +233,15 @@ impl NetflowProcessor {
         self.template_timeout = timeout;
         self
     }
+}
 
-    /// Parse a NetFlow/IPFIX packet and return the raw parsed packet.
-    /// This also updates the exporter's templates and options state.
-    pub fn parse_raw(&mut self, src: IpAddr, payload: &[u8]) -> Option<NetflowPacket> {
-        if payload.len() < 2 {
-            return None;
-        }
+impl Processor for NetflowProcessor {
+    type Packet = NetflowPacket;
 
-        let version = u16::from_be_bytes([payload[0], payload[1]]);
+    const NAME: &'static str = NETFLOW;
+
+    fn parse(&mut self, src: IpAddr, payload: &[u8]) -> Option<NetflowPacket> {
+        let version = u16::from_be_bytes(payload.get(..2)?.try_into().ok()?);
         let timeout = self.template_timeout;
 
         match version {
@@ -187,8 +292,7 @@ impl NetflowProcessor {
         }
     }
 
-    /// Convert a raw parsed packet to CommonFlow records.
-    pub fn convert_to_flows(
+    fn convert(
         &self,
         src: IpAddr,
         packet: &NetflowPacket,
@@ -253,17 +357,13 @@ impl NetflowProcessor {
         flows
     }
 
-    /// Process a NetFlow/IPFIX packet and return flows.
-    /// Returns flows in packet order.
-    pub fn process(
-        &mut self,
-        src: IpAddr,
-        payload: &[u8],
-        time_received_ns: Option<i64>,
-    ) -> Vec<CommonFlow> {
-        self.parse_raw(src, payload)
-            .map(|packet| self.convert_to_flows(src, &packet, time_received_ns))
-            .unwrap_or_default()
+    fn version_of(payload: &[u8]) -> Option<&'static str> {
+        match u16::from_be_bytes(payload.get(..2)?.try_into().ok()?) {
+            NETFLOW_V5_VERSION => Some(NETFLOW_V5),
+            NETFLOW_V9_VERSION => Some(NETFLOW_V9),
+            IPFIX_VERSION => Some(IPFIX),
+            _ => None,
+        }
     }
 }
 
@@ -284,29 +384,27 @@ impl SflowProcessor {
             parser: SflowV5Parser,
         }
     }
+}
 
-    /// Parse an sFlow packet and return the raw parsed packet.
-    pub fn parse_raw(&mut self, payload: &[u8]) -> Option<SflowPacket> {
-        if payload.len() < 4 {
+impl Processor for SflowProcessor {
+    type Packet = SflowPacket;
+
+    const NAME: &'static str = SFLOW;
+
+    fn parse(&mut self, _src: IpAddr, payload: &[u8]) -> Option<SflowPacket> {
+        let version = u32::from_be_bytes(payload.get(..4)?.try_into().ok()?);
+        if version != SFLOW_V5_VERSION {
+            log::warn!("Unknown sFlow version: {}", version);
             return None;
         }
-
-        let version = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
-
-        if version == SFLOW_V5_VERSION {
-            if let Ok((_, parsed)) = self.parser.parse(payload) {
-                Some(SflowPacket::V5(parsed))
-            } else {
-                None
-            }
-        } else {
-            log::warn!("Unknown sFlow version: {}", version);
-            None
-        }
+        let (_, parsed) = self.parser.parse(payload).ok()?;
+        Some(SflowPacket::V5(parsed))
     }
 
-    /// Convert a raw parsed packet to CommonFlow records.
-    pub fn convert_to_flows(
+    /// sFlow samples carry their exporter inside, so `src` is not needed.
+    fn convert(
+        &self,
+        _src: IpAddr,
         packet: &SflowPacket,
         time_received_ns: Option<i64>,
     ) -> Vec<CommonFlow> {
@@ -336,12 +434,11 @@ impl SflowProcessor {
         flows
     }
 
-    /// Process an sFlow packet and return flows.
-    /// Returns flows in packet order.
-    pub fn process(&mut self, payload: &[u8], time_received_ns: Option<i64>) -> Vec<CommonFlow> {
-        self.parse_raw(payload)
-            .map(|packet| Self::convert_to_flows(&packet, time_received_ns))
-            .unwrap_or_default()
+    fn version_of(payload: &[u8]) -> Option<&'static str> {
+        match u32::from_be_bytes(payload.get(..4)?.try_into().ok()?) {
+            SFLOW_V5_VERSION => Some(SFLOW_V5),
+            _ => None,
+        }
     }
 }
 

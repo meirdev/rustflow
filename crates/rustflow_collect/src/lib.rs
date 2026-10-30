@@ -1,7 +1,6 @@
 mod args;
 mod enrich;
 mod metrics;
-mod protocol;
 mod sink;
 mod source;
 
@@ -14,8 +13,7 @@ use anyhow::{Context, Result, bail};
 pub use args::CollectArgs;
 use args::{FlowType, Input};
 use enrich::{EnrichmentConfig, EnrichmentEngine};
-use protocol::Protocol;
-use rustflow::IERegistry;
+use rustflow::{IERegistry, NetflowProcessor, Packet, Processor, SflowProcessor};
 use sink::OutputFormat;
 use sink::pipeline::{CHUNK_FLUSH_TIMEOUT, EncoderGone, Pipeline, Producer};
 use source::{Datagram, Shutdown, Source};
@@ -38,13 +36,14 @@ fn ingest(
 ) {
     let result = match flow_type {
         FlowType::Netflow => {
-            let mut protocol =
-                protocol::Netflow::new(decoding.ie_registry.clone(), decoding.template_timeout);
-            collect(source, &mut protocol, decoding.format, metrics, output)
+            let mut processor = NetflowProcessor::new()
+                .with_ie_registry(decoding.ie_registry.clone())
+                .with_template_timeout(decoding.template_timeout);
+            collect(source, &mut processor, decoding.format, metrics, output)
         }
         FlowType::Sflow => {
-            let mut protocol = protocol::Sflow::new();
-            collect(source, &mut protocol, decoding.format, metrics, output)
+            let mut processor = SflowProcessor::new();
+            collect(source, &mut processor, decoding.format, metrics, output)
         }
     };
     // Without an encoder nothing more can be written; stop the other
@@ -54,14 +53,14 @@ fn ingest(
     }
 }
 
-fn collect<P: Protocol>(
+fn collect<P: Processor>(
     source: &mut dyn Source,
-    protocol: &mut P,
+    processor: &mut P,
     format: OutputFormat,
     metrics: Arc<metrics::Metrics>,
     mut output: Producer,
 ) -> Result<(), EncoderGone> {
-    let mut exporters = metrics::ExporterMetrics::new(metrics, P::FAMILY);
+    let mut exporters = metrics::ExporterMetrics::new(metrics, P::NAME);
 
     loop {
         let (src, payload, time_received_ns) = match source.next() {
@@ -78,25 +77,20 @@ fn collect<P: Protocol>(
         };
         exporters.heard_from(src, time_received_ns);
 
-        let Some(packet) = protocol.parse(src, payload) else {
-            match P::version_label_of(payload) {
-                Some(label) => exporters.record_parse_error(src, label, payload.len()),
+        let Some(packet) = processor.parse(src, payload) else {
+            match P::version_of(payload) {
+                Some(version) => exporters.record_parse_error(src, version, payload.len()),
                 None => exporters.record_unknown_version(src, payload.len()),
             }
             continue;
         };
 
-        exporters.record_packet(
-            src,
-            P::version_label(&packet),
-            payload.len(),
-            P::flow_count(&packet),
-        );
+        exporters.record_packet(src, packet.version(), payload.len(), packet.flow_count());
 
         match format {
-            OutputFormat::Raw => P::push_raw(&packet, &mut output)?,
+            OutputFormat::Raw => output.push_raw(&packet)?,
             OutputFormat::Common => {
-                output.push(protocol.convert(src, &packet, time_received_ns))?
+                output.push(processor.convert(src, &packet, time_received_ns))?
             }
         }
     }

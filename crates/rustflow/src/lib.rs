@@ -43,18 +43,22 @@ mod async_reader;
 
 mod pcap_reader;
 
-pub use processor::{NetflowPacket, NetflowProcessor, SflowPacket, SflowProcessor};
-pub use reader::{NetflowReadResult, NetflowReader, SflowReadResult, SflowReader};
+pub use processor::{
+    NetflowPacket, NetflowProcessor, Packet, Processor, SflowPacket, SflowProcessor,
+};
+pub use reader::{
+    NetflowReadResult, NetflowReader, ReadResult, Reader, SflowReadResult, SflowReader,
+};
 
 pub mod pcap {
     //! Readers for pcap files.
-    pub use crate::pcap_reader::{NetflowPcapReader, SflowPcapReader};
+    pub use crate::pcap_reader::{NetflowPcapReader, Reader, SflowPcapReader};
 }
 
 #[cfg(feature = "tokio")]
 pub mod tokio {
     //! Async readers using Tokio runtime.
-    pub use crate::async_reader::{NetflowReader, SflowReader};
+    pub use crate::async_reader::{NetflowReader, Reader, SflowReader};
 }
 
 pub use rustflow_core::common::common_flow::CommonFlow;

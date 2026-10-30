@@ -1732,6 +1732,7 @@ dependencies = [
  "pcap-file",
  "rustc-hash",
  "rustflow_core",
+ "serde",
  "socket2",
  "tokio",
 ]

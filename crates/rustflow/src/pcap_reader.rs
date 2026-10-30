@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io;
+use std::path::Path;
 use std::time::Duration;
 
 use pcap_file::pcap::PcapReader;
@@ -8,32 +9,69 @@ use rustflow_core::common::common_flow::CommonFlow;
 use rustflow_core::common::ie_registry::IERegistry;
 use rustflow_core::common::packet::parse_udp_packet;
 
-use crate::processor::{NetflowProcessor, SflowProcessor};
+use crate::processor::{NetflowProcessor, Processor, SflowProcessor};
 
-fn pcap_ts_to_nanos(ts: std::time::Duration) -> i64 {
-    ts.as_nanos() as i64
-}
-
-/// A reader for NetFlow (v5, v9) and IPFIX data from pcap files.
-pub struct NetflowPcapReader {
+/// Reads one protocol family from the UDP datagrams of a pcap file, with
+/// the capture time as the receive time.
+pub struct Reader<P: Processor> {
     reader: PcapReader<File>,
-    processor: NetflowProcessor,
+    processor: P,
     pending_flows: VecDeque<CommonFlow>,
 }
 
-impl NetflowPcapReader {
-    /// Open a pcap file and create a new NetFlow pcap reader.
-    pub fn open<P: AsRef<std::path::Path>>(path: P) -> io::Result<Self> {
-        let file = File::open(path)?;
-        let reader = PcapReader::new(file)
+/// A reader for NetFlow (v5, v9) and IPFIX data from pcap files.
+pub type NetflowPcapReader = Reader<NetflowProcessor>;
+
+/// A reader for sFlow v5 data from pcap files.
+pub type SflowPcapReader = Reader<SflowProcessor>;
+
+impl<P: Processor> Reader<P> {
+    /// Open a pcap file.
+    pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
+        let reader = PcapReader::new(File::open(path)?)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
         Ok(Self {
             reader,
-            processor: NetflowProcessor::new(),
+            processor: P::default(),
             pending_flows: VecDeque::new(),
         })
     }
 
+    /// Decode with a processor configured by hand.
+    pub fn with_processor(mut self, processor: P) -> Self {
+        self.processor = processor;
+        self
+    }
+
+    /// Read the next flow from the pcap file.
+    /// Returns `None` when the file is exhausted.
+    pub fn read(&mut self) -> io::Result<Option<CommonFlow>> {
+        loop {
+            if let Some(flow) = self.pending_flows.pop_front() {
+                return Ok(Some(flow));
+            }
+            let link_type = self.reader.header().datalink.into();
+            match self.reader.next_packet() {
+                Some(Ok(packet)) => {
+                    let time_received_ns = Some(packet.timestamp.as_nanos() as i64);
+                    if let Some((src, payload)) = parse_udp_packet(link_type, &packet.data) {
+                        self.pending_flows.extend(self.processor.process(
+                            src,
+                            &payload,
+                            time_received_ns,
+                        ));
+                    }
+                }
+                Some(Err(e)) => {
+                    return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string()));
+                }
+                None => return Ok(None),
+            }
+        }
+    }
+}
+
+impl Reader<NetflowProcessor> {
     /// Set a custom IE registry.
     pub fn with_ie_registry(mut self, registry: IERegistry) -> Self {
         self.processor = self.processor.with_ie_registry(registry);
@@ -45,118 +83,34 @@ impl NetflowPcapReader {
         self.processor = self.processor.with_template_timeout(timeout);
         self
     }
-
-    /// Read the next flow from the pcap file.
-    /// Returns `None` when the file is exhausted.
-    pub fn read(&mut self) -> io::Result<Option<CommonFlow>> {
-        // Return pending flows first
-        if let Some(flow) = self.pending_flows.pop_front() {
-            return Ok(Some(flow));
-        }
-
-        // Read next packet from pcap
-        loop {
-            let link_type = self.reader.header().datalink.into();
-            match self.reader.next_packet() {
-                Some(Ok(packet)) => {
-                    let time_received_ns = Some(pcap_ts_to_nanos(packet.timestamp));
-
-                    if let Some((src, payload)) = parse_udp_packet(link_type, &packet.data) {
-                        self.pending_flows.extend(self.processor.process(
-                            src,
-                            &payload,
-                            time_received_ns,
-                        ));
-
-                        // Return first pending flow if any
-                        if let Some(flow) = self.pending_flows.pop_front() {
-                            return Ok(Some(flow));
-                        }
-                    }
-                }
-                Some(Err(e)) => {
-                    return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string()));
-                }
-                None => return Ok(None), // End of file
-            }
-        }
-    }
 }
 
-impl Iterator for NetflowPcapReader {
+impl<P: Processor> Iterator for Reader<P> {
     type Item = io::Result<CommonFlow>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.read() {
-            Ok(Some(flow)) => Some(Ok(flow)),
-            Ok(None) => None, // End of file
-            Err(e) => Some(Err(e)),
-        }
+        self.read().transpose()
     }
 }
 
-/// A reader for sFlow v5 data from pcap files.
-pub struct SflowPcapReader {
-    reader: PcapReader<File>,
-    processor: SflowProcessor,
-    pending_flows: VecDeque<CommonFlow>,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl SflowPcapReader {
-    /// Open a pcap file and create a new sFlow pcap reader.
-    pub fn open<P: AsRef<std::path::Path>>(path: P) -> io::Result<Self> {
-        let file = File::open(path)?;
-        let reader = PcapReader::new(file)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-        Ok(Self {
-            reader,
-            processor: SflowProcessor::new(),
-            pending_flows: VecDeque::new(),
-        })
+    fn fixture(name: &str) -> String {
+        format!(
+            "{}/../../tests/fixtures/pcap/{name}_sanity.pcap",
+            env!("CARGO_MANIFEST_DIR")
+        )
     }
 
-    /// Read the next flow from the pcap file.
-    /// Returns `None` when the file is exhausted.
-    pub fn read(&mut self) -> io::Result<Option<CommonFlow>> {
-        // Return pending flows first
-        if let Some(flow) = self.pending_flows.pop_front() {
-            return Ok(Some(flow));
+    #[test]
+    fn pcap_readers_yield_every_flow_of_the_fixtures() {
+        for (name, flows) in [("netflow_v5", 10), ("netflow_v9", 10), ("ipfix", 10)] {
+            let reader = NetflowPcapReader::open(fixture(name)).unwrap();
+            assert_eq!(reader.map(Result::unwrap).count(), flows, "{name}");
         }
-
-        // Read next packet from pcap
-        loop {
-            let link_type = self.reader.header().datalink.into();
-            match self.reader.next_packet() {
-                Some(Ok(packet)) => {
-                    let time_received_ns = Some(pcap_ts_to_nanos(packet.timestamp));
-
-                    if let Some((_src, payload)) = parse_udp_packet(link_type, &packet.data) {
-                        self.pending_flows
-                            .extend(self.processor.process(&payload, time_received_ns));
-
-                        // Return first pending flow if any
-                        if let Some(flow) = self.pending_flows.pop_front() {
-                            return Ok(Some(flow));
-                        }
-                    }
-                }
-                Some(Err(e)) => {
-                    return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string()));
-                }
-                None => return Ok(None), // End of file
-            }
-        }
-    }
-}
-
-impl Iterator for SflowPcapReader {
-    type Item = io::Result<CommonFlow>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self.read() {
-            Ok(Some(flow)) => Some(Ok(flow)),
-            Ok(None) => None, // End of file
-            Err(e) => Some(Err(e)),
-        }
+        let reader = SflowPcapReader::open(fixture("sflow_v5")).unwrap();
+        assert_eq!(reader.map(Result::unwrap).count(), 12);
     }
 }
