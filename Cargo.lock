@@ -1667,6 +1667,7 @@ dependencies = [
  "serde",
  "serde_json",
  "socket2",
+ "strum",
  "tempfile",
  "thiserror 2.0.20",
  "tiny_http",

@@ -4,7 +4,9 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
+use clap::builder::PossibleValue;
 use clap::{Args as ClapArgs, ValueEnum};
+use strum::VariantArray;
 
 use crate::enrich::{EnrichmentConfig, parse_enrich_arg};
 use crate::sink::{
@@ -30,8 +32,8 @@ pub struct CollectArgs {
     #[arg(short, long, value_enum, default_value = "raw")]
     pub(crate) format: OutputFormat,
 
-    /// Serialization format for output (parquet is Snappy-compressed and
-    /// requires `--format common` and `--output`)
+    /// Serialization format for output; `parquet` requires `--format
+    /// common` and `--output`, `discard` writes nothing
     #[arg(short, long, value_enum, default_value = "ndjson")]
     pub(crate) serialization: Serialization,
 
@@ -121,7 +123,8 @@ pub struct CollectArgs {
     )]
     pub(crate) template_timeout: Duration,
 
-    /// Flow enrichment configuration
+    /// Flow enrichment configuration.
+    ///
     /// Format: `type=prefix_lookup|exact,source=file.csv,key_column=col,
     /// fields=<key>@col:output|col2:output2;<key2>@col:output3[,
     /// reload=30s|watch]`. key_column names the CSV column holding the
@@ -130,6 +133,26 @@ pub struct CollectArgs {
     /// fields=sampler_address+in_if@name:in_if_name
     #[arg(long = "enrich", value_parser = parse_enrich_arg)]
     pub(crate) enrich: Vec<EnrichmentConfig>,
+}
+
+impl ValueEnum for OutputFormat {
+    fn value_variants<'a>() -> &'a [Self] {
+        Self::VARIANTS
+    }
+
+    fn to_possible_value(&self) -> Option<PossibleValue> {
+        Some(PossibleValue::new(<&'static str>::from(*self)))
+    }
+}
+
+impl ValueEnum for Serialization {
+    fn value_variants<'a>() -> &'a [Self] {
+        Self::VARIANTS
+    }
+
+    fn to_possible_value(&self) -> Option<PossibleValue> {
+        Some(PossibleValue::new(<&'static str>::from(*self)))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

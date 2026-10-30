@@ -28,6 +28,7 @@ macaddr = "1.0.1"
 pcap-file = "2"
 rustc-hash = "2.1.1"
 serde = { version = "1.0.228", features = ["derive"] }
+strum = { version = "0.27.2", features = ["derive"] }
 socket2 = "0.6"
 
 [profile.release]

@@ -7,11 +7,10 @@ pub mod metrics;
 pub mod pipeline;
 pub mod rotating;
 
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use std::{fmt, io};
 
-use clap::ValueEnum;
 pub use destination::{Destination, LEVEL_3_MINUTES, MAX_PARTITION_LEVEL, Partitioning};
 pub use encoder::{ArrowIpc, Csv, Discard, Encoder, Ndjson, Parquet, Protobuf, Writer};
 pub use expire::{Expirer, Expiry};
@@ -20,26 +19,32 @@ pub use layout::Layout;
 pub use metrics::OutputMetrics;
 pub use rotating::RotatingSink;
 
-/// `--format`: the original packet structure, or the normalized flow.
-#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+/// The original packet structure, or the normalized flow.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, strum::Display, strum::IntoStaticStr, strum::VariantArray,
+)]
+#[strum(serialize_all = "kebab-case")]
 pub enum OutputFormat {
     Raw,
     Common,
 }
 
-/// `--serialization`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+/// How records are written. Displays as its name on the command line.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, strum::Display, strum::IntoStaticStr, strum::VariantArray,
+)]
+#[strum(serialize_all = "kebab-case")]
 pub enum Serialization {
-    /// Newline-delimited JSON, one object per line
+    /// Newline-delimited JSON, one object per line.
     Ndjson,
     Csv,
-    /// Snappy-compressed Apache Parquet; on stdout, an Arrow IPC stream
+    /// Snappy-compressed Apache Parquet; on stdout, an Arrow IPC stream.
     Parquet,
-    /// Apache Arrow IPC stream, a batch per flush
+    /// Apache Arrow IPC stream, a batch per flush.
     ArrowIpc,
-    /// Length-delimited protobuf, see `proto/rustflow.proto`
+    /// Length-delimited protobuf, see `proto/rustflow.proto`.
     Protobuf,
-    /// Decode and count flows but write no output (for load testing)
+    /// Decodes and counts flows but writes nothing, for load testing.
     Discard,
 }
 
@@ -71,17 +76,6 @@ impl Serialization {
             Self::Protobuf => Box::new(Protobuf::open(out, enriched_fields)?),
             Self::Discard => Box::new(Discard::open(out, enriched_fields)?),
         })
-    }
-}
-
-/// The name clap accepts on the command line.
-impl fmt::Display for Serialization {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(
-            self.to_possible_value()
-                .expect("no hidden variants")
-                .get_name(),
-        )
     }
 }
 

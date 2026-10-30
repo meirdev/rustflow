@@ -21,7 +21,7 @@ num_enum = "0.7.5"
 primitive-types = { version = "0.14.0", features = ["serde"] }
 rustc-hash.workspace = true
 serde = { workspace = true, features = ["rc"] }
-strum = { version = "0.27.2", features = ["derive"] }
+strum.workspace = true
 strum_macros = "0.27.2"
 
 [dev-dependencies]
