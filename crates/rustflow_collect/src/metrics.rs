@@ -28,30 +28,64 @@ pub struct TypeSourceLabel {
     pub source_ip: String,
 }
 
+/// What the ingest threads count per exporter.
+#[derive(Clone, Default)]
+pub struct InputMetrics {
+    /// Datagrams received, by protocol family and source.
+    pub packets_received: Family<TypeSourceLabel, Counter>,
+    /// Bytes received, by source.
+    pub bytes_received: Family<SourceLabel, Counter>,
+    /// Flows successfully parsed, by protocol version and source.
+    pub flows_processed: Family<TypeSourceLabel, Counter>,
+    /// Parse errors, by protocol version and source.
+    pub parse_errors: Family<TypeSourceLabel, Counter>,
+    /// Datagrams of an unknown protocol version, by source.
+    pub unknown_version: Family<SourceLabel, Counter>,
+    /// Unix time of the last datagram, by protocol family and source.
+    pub exporter_last_seen: Family<TypeSourceLabel, Gauge>,
+}
+
+impl InputMetrics {
+    pub fn register(&self, registry: &mut Registry) {
+        registry.register(
+            "packets_received",
+            "Total UDP packets received",
+            self.packets_received.clone(),
+        );
+        registry.register(
+            "bytes_received",
+            "Total bytes received",
+            self.bytes_received.clone(),
+        );
+        registry.register(
+            "flows_processed",
+            "Total flows successfully parsed",
+            self.flows_processed.clone(),
+        );
+        registry.register(
+            "parse_errors",
+            "Total parse errors",
+            self.parse_errors.clone(),
+        );
+        registry.register(
+            "unknown_version",
+            "Unknown protocol versions encountered",
+            self.unknown_version.clone(),
+        );
+        registry.register(
+            "exporter_last_seen_timestamp_seconds",
+            "Unix time of the last datagram from the exporter",
+            self.exporter_last_seen.clone(),
+        );
+    }
+}
+
 pub struct Metrics {
     pub registry: Registry,
-
-    /// Total UDP packets received, labeled by type, source_ip
-    pub packets_received_total: Family<TypeSourceLabel, Counter>,
-
-    /// Total bytes received, labeled by source_ip
-    pub bytes_received_total: Family<SourceLabel, Counter>,
-
-    /// Total flows successfully parsed, labeled by type, source_ip
-    pub flows_processed_total: Family<TypeSourceLabel, Counter>,
-
-    /// Total parse errors, labeled by type, source_ip
-    pub parse_errors_total: Family<TypeSourceLabel, Counter>,
-
-    /// Unknown protocol versions encountered, labeled by source_ip
-    pub unknown_version_total: Family<SourceLabel, Counter>,
-
-    /// Unix time of the last datagram, labeled by type, source_ip
-    pub exporter_last_seen: Family<TypeSourceLabel, Gauge>,
-
+    /// Datagrams and flows received, and parse failures, labeled by exporter
+    pub input: InputMetrics,
     /// Load statistics of the enrichment tables, labeled by source
     pub enrichment: TableMetrics,
-
     /// Flows, bytes and files written by the output sink, and its failures
     pub output: OutputMetrics,
 }
@@ -60,48 +94,8 @@ impl Metrics {
     pub fn new() -> Self {
         let mut registry = Registry::default();
 
-        // Counters are registered without `_total`; the encoder appends it.
-        let packets_received_total = Family::default();
-        registry.register(
-            "packets_received",
-            "Total UDP packets received",
-            packets_received_total.clone(),
-        );
-
-        let bytes_received_total = Family::default();
-        registry.register(
-            "bytes_received",
-            "Total bytes received",
-            bytes_received_total.clone(),
-        );
-
-        let flows_processed_total = Family::default();
-        registry.register(
-            "flows_processed",
-            "Total flows successfully parsed",
-            flows_processed_total.clone(),
-        );
-
-        let parse_errors_total = Family::default();
-        registry.register(
-            "parse_errors",
-            "Total parse errors",
-            parse_errors_total.clone(),
-        );
-
-        let unknown_version_total = Family::default();
-        registry.register(
-            "unknown_version",
-            "Unknown protocol versions encountered",
-            unknown_version_total.clone(),
-        );
-
-        let exporter_last_seen = Family::default();
-        registry.register(
-            "exporter_last_seen_timestamp_seconds",
-            "Unix time of the last datagram from the exporter",
-            exporter_last_seen.clone(),
-        );
+        let input = InputMetrics::default();
+        input.register(&mut registry);
 
         let enrichment = TableMetrics::new();
         enrichment.register(&mut registry);
@@ -111,14 +105,9 @@ impl Metrics {
 
         Metrics {
             registry,
+            input,
             enrichment,
             output,
-            packets_received_total,
-            bytes_received_total,
-            flows_processed_total,
-            parse_errors_total,
-            unknown_version_total,
-            exporter_last_seen,
         }
     }
 
@@ -162,9 +151,9 @@ impl ExporterMetrics {
     /// Any datagram counts, whether it parses or not. `time_received_ns`
     /// falls back to the current time.
     pub fn heard_from(&mut self, src: IpAddr, time_received_ns: Option<i64>) {
-        let (metrics, family) = (&self.metrics, self.family);
+        let (input, family) = (&self.metrics.input, self.family);
         let gauge = self.last_seen.entry(src).or_insert_with(|| {
-            metrics
+            input
                 .exporter_last_seen
                 .get_or_create_owned(&TypeSourceLabel {
                     r#type: family,
@@ -181,7 +170,7 @@ impl ExporterMetrics {
     }
 
     fn get_or_create(&mut self, src: IpAddr, version: &'static str) -> &ExporterCounters {
-        let (metrics, family) = (&self.metrics, self.family);
+        let (input, family) = (&self.metrics.input, self.family);
         self.counters.entry((src, version)).or_insert_with(|| {
             let source_ip = src.to_string();
             let by_source = SourceLabel {
@@ -196,14 +185,10 @@ impl ExporterMetrics {
                 source_ip,
             };
             ExporterCounters {
-                packets_received: metrics
-                    .packets_received_total
-                    .get_or_create_owned(&by_family),
-                bytes_received: metrics.bytes_received_total.get_or_create_owned(&by_source),
-                flows_processed: metrics
-                    .flows_processed_total
-                    .get_or_create_owned(&by_version),
-                parse_errors: metrics.parse_errors_total.get_or_create_owned(&by_version),
+                packets_received: input.packets_received.get_or_create_owned(&by_family),
+                bytes_received: input.bytes_received.get_or_create_owned(&by_source),
+                flows_processed: input.flows_processed.get_or_create_owned(&by_version),
+                parse_errors: input.parse_errors.get_or_create_owned(&by_version),
             }
         })
     }
@@ -230,21 +215,22 @@ impl ExporterMetrics {
 
     pub fn record_unknown_version(&mut self, src: IpAddr, bytes: usize) {
         let source_ip = src.to_string();
-        self.metrics
-            .packets_received_total
+        let input = &self.metrics.input;
+        input
+            .packets_received
             .get_or_create(&TypeSourceLabel {
                 r#type: self.family,
                 source_ip: source_ip.clone(),
             })
             .inc();
-        self.metrics
-            .bytes_received_total
+        input
+            .bytes_received
             .get_or_create(&SourceLabel {
                 source_ip: source_ip.clone(),
             })
             .inc_by(bytes as u64);
-        self.metrics
-            .unknown_version_total
+        input
+            .unknown_version
             .get_or_create(&SourceLabel { source_ip })
             .inc();
     }
