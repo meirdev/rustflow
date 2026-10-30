@@ -469,9 +469,9 @@ fn join<T: fmt::Display>(values: &[T]) -> String {
 pub fn run(args: GenerateArgs) -> anyhow::Result<()> {
     let mut generator = IpfixGenerator::new(&args)?;
 
-    eprintln!("IPFIX Generator");
-    eprintln!("  Target: {}:{}", args.host, args.port);
-    eprintln!(
+    println!("IPFIX Generator");
+    println!("  Target: {}:{}", args.host, args.port);
+    println!(
         "  Rate: {} packets/sec",
         if args.rate == 0 {
             "unlimited".to_string()
@@ -479,8 +479,8 @@ pub fn run(args: GenerateArgs) -> anyhow::Result<()> {
             args.rate.to_string()
         }
     );
-    eprintln!("  Flows per packet: {}", args.flows_per_packet);
-    eprintln!(
+    println!("  Flows per packet: {}", args.flows_per_packet);
+    println!(
         "  Total packets: {}",
         if args.count == 0 {
             "infinite".to_string()
@@ -488,19 +488,19 @@ pub fn run(args: GenerateArgs) -> anyhow::Result<()> {
             args.count.to_string()
         }
     );
-    eprintln!("  Source CIDR: {}", args.src_cidr);
-    eprintln!("  Destination CIDR: {}", args.dst_cidr);
-    eprintln!("  Protocols: {}", join(&args.protocols));
-    eprintln!("  Source port range: {}", args.src_port_range);
-    eprintln!("  Destination port range: {}", args.dst_port_range);
-    eprintln!("  TCP flag choices: {}", join(&args.tcp_flags));
-    eprintln!("  Octet range: {}", args.octet_range);
-    eprintln!("  Packet range: {}", args.packet_range);
-    eprintln!();
+    println!("  Source CIDR: {}", args.src_cidr);
+    println!("  Destination CIDR: {}", args.dst_cidr);
+    println!("  Protocols: {}", join(&args.protocols));
+    println!("  Source port range: {}", args.src_port_range);
+    println!("  Destination port range: {}", args.dst_port_range);
+    println!("  TCP flag choices: {}", join(&args.tcp_flags));
+    println!("  Octet range: {}", args.octet_range);
+    println!("  Packet range: {}", args.packet_range);
+    println!();
 
     generator.send_templates()?;
     generator.send_options()?;
-    eprintln!("Sent initial templates and options");
+    println!("Sent initial templates and options");
 
     let packet_interval = if args.rate > 0 {
         Duration::from_secs_f64(1.0 / args.rate as f64)
@@ -532,7 +532,7 @@ pub fn run(args: GenerateArgs) -> anyhow::Result<()> {
             let elapsed = start_time.elapsed().as_secs_f64();
             let actual_rate = packets_sent as f64 / elapsed;
             let flow_rate = total_flows as f64 / elapsed;
-            eprintln!(
+            println!(
                 "Sent {} packets ({} flows) | {:.0} pps | {:.0} flows/sec",
                 packets_sent, total_flows, actual_rate, flow_rate
             );
@@ -566,12 +566,12 @@ pub fn run(args: GenerateArgs) -> anyhow::Result<()> {
     }
 
     let elapsed = start_time.elapsed().as_secs_f64();
-    eprintln!();
-    eprintln!(
+    println!();
+    println!(
         "Done! Sent {} packets ({} flows) in {:.2}s",
         packets_sent, total_flows, elapsed
     );
-    eprintln!(
+    println!(
         "Average rate: {:.0} packets/sec, {:.0} flows/sec",
         packets_sent as f64 / elapsed,
         total_flows as f64 / elapsed

@@ -4,6 +4,7 @@ use std::ops::RangeInclusive;
 use std::sync::{Arc, LazyLock};
 
 use chrono::{DateTime, Utc};
+use log::{debug, warn};
 use macaddr::MacAddr6;
 use nom::bytes::complete::take;
 use nom::combinator::{cond, fail, map, map_parser};
@@ -78,19 +79,18 @@ impl IpfixParser {
         let key = (observation_domain_id, template_id);
 
         type Wrap = fn(DataRecord) -> Record;
-        let (fields, wrap): (&Arc<[ResolvedField]>, Wrap) =
-            if let Some(t) = self.templates.get(&key) {
-                (t, Record::Data)
-            } else if let Some(t) = self.options_templates.get(&key) {
-                (t, Record::OptionsData)
-            } else {
-                log::warn!(
-                    "Unknown template for observation_domain_id: {}, template_id: {}",
-                    observation_domain_id,
-                    template_id
-                );
-                return Ok((input, vec![]));
-            };
+        let (fields, wrap): (&Arc<[ResolvedField]>, Wrap) = if let Some(t) =
+            self.templates.get(&key)
+        {
+            (t, Record::Data)
+        } else if let Some(t) = self.options_templates.get(&key) {
+            (t, Record::OptionsData)
+        } else {
+            debug!(
+                "Unknown template for observation_domain_id: {observation_domain_id}, template_id: {template_id}"
+            );
+            return Ok((input, vec![]));
+        };
 
         // A record parser that consumes nothing makes `many0` fail, which
         // would discard every remaining set in the message.
@@ -102,10 +102,9 @@ impl IpfixParser {
             many0(|i| self.parse_record_from_fields(i, observation_domain_id, fields))
                 .parse(input)?;
         if records.is_empty() && !input.is_empty() {
-            log::warn!(
+            warn!(
                 "Malformed data record for observation_domain_id: {}, template_id: {}",
-                observation_domain_id,
-                template_id
+                observation_domain_id, template_id
             );
         }
         Ok((input, records.into_iter().map(wrap).collect()))
@@ -122,16 +121,15 @@ impl IpfixParser {
         all_id: u16,
     ) {
         if template_id == all_id {
-            log::debug!(
+            debug!(
                 "Withdrawing all templates for observation_domain_id: {}",
                 observation_domain_id
             );
             map.retain(|(odid, _), _| *odid != observation_domain_id);
         } else {
-            log::debug!(
+            debug!(
                 "Withdrawing template for observation_domain_id: {}, template_id: {}",
-                observation_domain_id,
-                template_id
+                observation_domain_id, template_id
             );
             map.remove(&(observation_domain_id, template_id));
         }
@@ -147,7 +145,7 @@ impl IpfixParser {
 
         // Without a sane length there is no telling where the next set starts.
         let Some(value_length) = (length as usize).checked_sub(SET_HEADER_SIZE) else {
-            log::warn!(
+            warn!(
                 "Set length {length} is shorter than its header. Discarding the rest of the message."
             );
             return fail().parse(input);
@@ -191,7 +189,7 @@ impl IpfixParser {
                             resolve_fields(&self.ie_registry, &template.fields),
                         );
                     } else {
-                        log::warn!(
+                        warn!(
                             "Template ID {} is reserved. Skipping.",
                             template.template_id
                         );
@@ -218,7 +216,7 @@ impl IpfixParser {
                             resolve_fields(&self.ie_registry, &template.fields),
                         );
                     } else {
-                        log::warn!(
+                        warn!(
                             "Template ID {} is reserved. Skipping.",
                             template.template_id
                         );
@@ -237,7 +235,7 @@ impl IpfixParser {
                 self.parse_templated_records(input, observation_domain_id, template_id)
             }
             _ => {
-                log::warn!("Invalid set ID: {}. Skipping.", set_id);
+                warn!("Invalid set ID: {}. Skipping.", set_id);
 
                 Ok((input, vec![]))
             }
@@ -389,10 +387,9 @@ impl IpfixParser {
             self.parse_templated_records(data, observation_domain_id, template_id)?;
 
         if records.is_empty() && !data.is_empty() {
-            log::warn!(
+            warn!(
                 "SubTemplateList references unknown template_id: {} for observation_domain_id: {}",
-                template_id,
-                observation_domain_id
+                template_id, observation_domain_id
             );
         }
 
@@ -441,10 +438,9 @@ impl IpfixParser {
                 self.parse_templated_records(item_data, observation_domain_id, template_id)?;
 
             if records.is_empty() && !item_data.is_empty() {
-                log::warn!(
+                warn!(
                     "SubTemplateMultiList item references unknown template_id: {} for observation_domain_id: {}",
-                    template_id,
-                    observation_domain_id
+                    template_id, observation_domain_id
                 );
             }
 

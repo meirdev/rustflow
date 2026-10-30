@@ -1,6 +1,7 @@
 use std::net::IpAddr;
 use std::time::{Duration, Instant};
 
+use log::warn;
 use rustc_hash::FxHashMap;
 use rustflow_core::common::common_flow::CommonFlow;
 use rustflow_core::common::convert::{
@@ -286,7 +287,7 @@ impl Processor for NetflowProcessor {
                 Some(NetflowPacket::Ipfix(parsed))
             }
             _ => {
-                log::warn!("Unknown NetFlow version: {}", version);
+                warn!("Unknown NetFlow version: {}", version);
                 None
             }
         }
@@ -394,7 +395,7 @@ impl Processor for SflowProcessor {
     fn parse(&mut self, _src: IpAddr, payload: &[u8]) -> Option<SflowPacket> {
         let version = u32::from_be_bytes(payload.get(..4)?.try_into().ok()?);
         if version != SFLOW_V5_VERSION {
-            log::warn!("Unknown sFlow version: {}", version);
+            warn!("Unknown sFlow version: {}", version);
             return None;
         }
         let (_, parsed) = self.parser.parse(payload).ok()?;

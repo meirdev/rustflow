@@ -1,3 +1,5 @@
+use std::io::Write;
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use rustflow_collect::CollectArgs;
@@ -24,7 +26,18 @@ enum Command {
 }
 
 fn main() -> Result<()> {
-    env_logger::init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format(|buf, record| {
+            let style = buf.default_level_style(record.level());
+            writeln!(
+                buf,
+                "{} {style}{:<5}{style:#} {}",
+                buf.timestamp(),
+                record.level(),
+                record.args()
+            )
+        })
+        .init();
 
     match Cli::parse().command {
         Command::Collect(args) => rustflow_collect::run(*args),

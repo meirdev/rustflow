@@ -1652,6 +1652,7 @@ dependencies = [
  "ctrlc",
  "duration-str",
  "ipnet",
+ "log",
  "macaddr",
  "maxminddb",
  "notify-debouncer-full",

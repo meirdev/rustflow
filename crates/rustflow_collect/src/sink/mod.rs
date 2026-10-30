@@ -16,6 +16,7 @@ pub use encoder::{ArrowIpc, Csv, Discard, Encoder, Ndjson, Parquet, Protobuf, Wr
 pub use expire::{Expirer, Expiry};
 pub use hook::FileHook;
 pub use layout::{LEVEL_3_MINUTES, Layout, MAX_PARTITION_LEVEL, Partitioning};
+use log::warn;
 pub use metrics::OutputMetrics;
 pub use rotating::RotatingSink;
 
@@ -130,7 +131,7 @@ pub fn build(
     };
     let serialization = match (serialization, &destination) {
         (Serialization::Parquet, Destination::Stdout) => {
-            eprintln!("Parquet cannot stream to stdout; writing an Arrow IPC stream instead");
+            warn!("Parquet cannot stream to stdout; writing an Arrow IPC stream instead");
             Serialization::ArrowIpc
         }
         (serialization, _) => serialization,

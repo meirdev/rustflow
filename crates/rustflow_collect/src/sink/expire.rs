@@ -7,6 +7,7 @@ use std::time::Duration;
 use std::{fs, io};
 
 use chrono::{DateTime, Utc};
+use log::{error, info};
 
 use super::OutputMetrics;
 use super::hook::{FileHook, Job};
@@ -110,14 +111,14 @@ fn run(expiry: Expiry, every: Duration, metrics: &OutputMetrics, rx: Receiver<()
         metrics.expired_files.inc_by(outcome.removed);
         metrics.expire_errors.inc_by(outcome.failures);
         if outcome.removed > 0 {
-            eprintln!(
+            info!(
                 "Removed {} expired files under {}",
                 outcome.removed,
                 expiry.layout.root.display()
             );
         }
         if let Some((path, error)) = &outcome.first_failure {
-            eprintln!(
+            error!(
                 "Could not remove {} expired files under {}; first: {}: {error}",
                 outcome.failures,
                 expiry.layout.root.display(),

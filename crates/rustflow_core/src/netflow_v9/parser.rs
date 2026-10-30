@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, Utc};
+use log::{debug, warn};
 use macaddr::MacAddr6;
 use nom::bytes::complete::take;
 use nom::combinator::{fail, map, map_parser};
@@ -65,7 +66,7 @@ impl NetflowV9Parser {
         let (input, id) = be_u16(input)?;
         let (input, length) = be_u16(input)?;
         let Some(value_length) = length.to_usize().checked_sub(FLOW_SET_HEADER_SIZE) else {
-            log::warn!(
+            warn!(
                 "FlowSet length {length} is shorter than its header. Discarding the rest of the packet."
             );
             return fail().parse(input);
@@ -130,16 +131,15 @@ impl NetflowV9Parser {
         let key = (source_id, template_id);
 
         type Wrap = fn(DataRecord) -> Record;
-        let (fields, wrap): (&Arc<[ResolvedField]>, Wrap) = if let Some(t) =
-            self.templates.get(&key)
-        {
-            (t, Record::Data)
-        } else if let Some(t) = self.options_templates.get(&key) {
-            (t, Record::OptionsData)
-        } else {
-            log::debug!("Unknown template for source_id: {source_id}, template_id: {template_id}");
-            return Ok((input, vec![]));
-        };
+        let (fields, wrap): (&Arc<[ResolvedField]>, Wrap) =
+            if let Some(t) = self.templates.get(&key) {
+                (t, Record::Data)
+            } else if let Some(t) = self.options_templates.get(&key) {
+                (t, Record::OptionsData)
+            } else {
+                debug!("Unknown template for source_id: {source_id}, template_id: {template_id}");
+                return Ok((input, vec![]));
+            };
 
         if fields.is_empty() {
             return Ok((input, vec![]));

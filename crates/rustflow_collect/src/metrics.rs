@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{io, thread};
 
+use log::info;
 use prometheus_client::encoding::{EncodeLabelSet, text};
 use prometheus_client::metrics::counter::Counter;
 use prometheus_client::metrics::family::Family;
@@ -257,7 +258,7 @@ pub fn start_metrics_server(
 ) -> io::Result<thread::JoinHandle<()>> {
     let addr = SocketAddr::new(host, port);
     let server = Server::http(addr).map_err(io::Error::other)?;
-    eprintln!("Metrics server listening on http://{}/metrics", addr);
+    info!("Metrics server listening on http://{}/metrics", addr);
 
     Ok(thread::spawn(move || {
         for request in server.incoming_requests() {

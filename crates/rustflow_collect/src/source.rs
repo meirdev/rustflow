@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use chrono::Utc;
+use log::error;
 use pcap_file::pcap::PcapReader;
 use rustflow_core::common::packet::parse_udp_packet;
 use socket2::SockRef;
@@ -101,7 +102,7 @@ impl Source for Socket {
             },
             Err(e) if is_retryable(&e) => Datagram::Idle,
             Err(e) => {
-                eprintln!("Error receiving data: {:#?}", e);
+                error!("Failed to receive: {e}");
                 Datagram::Idle
             }
         }
@@ -148,7 +149,7 @@ impl Source for Pcap {
                     };
                 }
                 Some(Err(e)) => {
-                    eprintln!("Error reading pcap: {}", e);
+                    error!("Failed to read the pcap: {e}");
                     return Datagram::End;
                 }
                 None => return Datagram::End,

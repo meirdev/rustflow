@@ -2,6 +2,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use log::error;
+
 pub mod metrics;
 pub mod reload;
 
@@ -44,7 +46,7 @@ impl Shared {
             }
             Err(error) => {
                 self.metrics.reload_failures_total.inc();
-                eprintln!("{error}");
+                error!("{error}");
                 Err(error)
             }
         }
@@ -87,7 +89,7 @@ impl Table {
             }
             ReloadEvent::WatcherError(message) => {
                 worker_shared.metrics.watcher_failures_total.inc();
-                eprintln!(
+                error!(
                     "Watcher error on {}: {message}",
                     worker_shared.config.source().display()
                 );

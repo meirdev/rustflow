@@ -1,5 +1,6 @@
 use std::io;
 
+use log::{error, info};
 use prometheus_client::metrics::counter::Counter;
 
 use crate::sink::OutputMetrics;
@@ -17,13 +18,13 @@ pub struct SinkErrors {
 fn observe(what: &str, failing: &mut bool, counter: &Counter, result: io::Result<()>) {
     match result {
         Ok(()) if *failing => {
-            eprintln!("{what} recovered");
+            info!("{what} recovered");
             *failing = false;
         }
         Ok(()) => {}
         Err(e) => {
             if !*failing {
-                eprintln!("{what} failed: {e}");
+                error!("{what} failed: {e}");
                 *failing = true;
             }
             counter.inc();

@@ -13,6 +13,7 @@ use anyhow::{Context, Result, bail};
 pub use args::CollectArgs;
 use args::{FlowType, Input};
 use enrich::{EnrichmentConfig, EnrichmentEngine};
+use log::{error, info, warn};
 use rustflow::{IERegistry, NetflowProcessor, Packet, Processor, SflowProcessor};
 use sink::OutputFormat;
 use sink::pipeline::{CHUNK_FLUSH_TIMEOUT, EncoderGone, Pipeline, Producer};
@@ -109,12 +110,11 @@ fn open(input: &Input, recv_buffer: usize, shutdown: &Shutdown) -> Result<Box<dy
                     .with_context(|| format!("Failed to bind to {addr}"))?;
             let granted = socket.recv_buffer_size().unwrap_or(0);
             if granted < recv_buffer {
-                eprintln!(
-                    "Warning: receive buffer limited to {} bytes by the system; raise its limit (net.core.rmem_max on Linux) to get {}",
-                    granted, recv_buffer
+                warn!(
+                    "Receive buffer limited to {granted} bytes by the system; raise its limit (net.core.rmem_max on Linux) to get {recv_buffer}"
                 );
             }
-            eprintln!(
+            info!(
                 "Listening for {} data on {} (receive buffer {} bytes)",
                 flow_type.name(),
                 socket.local_addr()?,
@@ -131,7 +131,7 @@ fn load_ie_registry(path: Option<&Path>) -> Result<IERegistry> {
         let count = registry
             .load_from_csv(path)
             .with_context(|| format!("Failed to load IE mappings from {}", path.display()))?;
-        eprintln!(
+        info!(
             "Loaded {} custom IE definitions from {}",
             count,
             path.display()
@@ -150,7 +150,7 @@ fn load_enrichment(
         let count = engine
             .add(config.clone())
             .with_context(|| format!("Failed to load enrichment from {source}"))?;
-        eprintln!("Loaded {} rows from {}", count, source);
+        info!("Loaded {count} rows from {source}");
     }
     Ok(engine)
 }
@@ -160,12 +160,12 @@ fn load_enrichment(
 fn install_shutdown_handler(shutdown: Shutdown) {
     if let Err(e) = ctrlc::set_handler(move || {
         if shutdown.request() {
-            eprintln!("Forced exit");
+            warn!("Forced exit");
             std::process::exit(1);
         }
-        eprintln!("Shutting down, draining output...");
+        info!("Shutting down, draining output");
     }) {
-        eprintln!("Failed to install shutdown handler: {}", e);
+        error!("Failed to install the shutdown handler: {e}");
     }
 }
 

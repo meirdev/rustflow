@@ -7,6 +7,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
+use log::error;
 
 use super::OutputMetrics;
 use super::layout::STAMP_FORMAT;
@@ -135,7 +136,7 @@ impl Launcher {
                     self.running.push((child, job.path));
                 }
                 Err(e) => {
-                    eprintln!(
+                    error!(
                         "{} {} could not run for {}: {e}",
                         self.flag,
                         args[0],
@@ -159,14 +160,14 @@ impl Launcher {
                     if status.success() {
                         metrics.hook_completed.inc();
                     } else {
-                        eprintln!("{flag} failed for {}: {status}", path.display());
+                        error!("{flag} failed for {}: {status}", path.display());
                         metrics.hook_errors.inc();
                     }
                     false
                 }
                 Err(e) => {
                     metrics.hook_running.dec();
-                    eprintln!("{flag} lost for {}: {e}", path.display());
+                    error!("{flag} lost for {}: {e}", path.display());
                     metrics.hook_errors.inc();
                     false
                 }
