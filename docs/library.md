@@ -204,7 +204,7 @@ fn main() -> std::io::Result<()> {
                     src, p.sets.len()),
             },
             NetflowReadResult::ParseError { src, version, .. } => {
-                eprintln!("undecodable packet from {} (version {:?})", src, version);
+                eprintln!("undecodable packet from {} ({})", src, version.unwrap_or("unknown version"));
             }
             NetflowReadResult::Timeout => {}
         }
@@ -212,7 +212,8 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-`SflowReadResult` is the sFlow counterpart, carrying `SflowPacket::V5`.
+`SflowReadResult` is the sFlow counterpart, carrying `SflowPacket::V5`. `version` is the
+name of the version in the packet header, `netflow_v9` for instance, when it is a known one.
 
 The protocol types are re-exported per protocol: `rustflow_lib::ipfix`,
 `rustflow_lib::netflow_v5`, `rustflow_lib::netflow_v9`, and `rustflow_lib::sflow`.
@@ -252,8 +253,7 @@ The processor is stateful: it holds the template cache and the sampling-rate cac
 one per collector rather than creating one per packet. Key it by exporter address, which is
 what `process` uses to scope templates.
 
-`SflowProcessor` is the sFlow equivalent; because sFlow carries no templates, its `process`
-takes only the payload and the receive time.
+`SflowProcessor` is the sFlow equivalent.
 
 ## Flow Fields
 
