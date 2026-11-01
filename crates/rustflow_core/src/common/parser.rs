@@ -36,7 +36,12 @@ pub fn timestamp_secs(input: &[u8]) -> IResult<&[u8], DateTime<Utc>> {
 /// `None` for a value no date can represent; the field is still consumed, so
 /// the rest of the record parses.
 pub fn timestamp_millis(input: &[u8]) -> IResult<&[u8], Option<DateTime<Utc>>> {
-    map(be_u64, |v| DateTime::<Utc>::from_timestamp_millis(v as i64)).parse(input)
+    map(be_u64, |v| {
+        i64::try_from(v)
+            .ok()
+            .and_then(DateTime::<Utc>::from_timestamp_millis)
+    })
+    .parse(input)
 }
 
 pub fn timestamp_micros(input: &[u8]) -> IResult<&[u8], DateTime<Utc>> {
@@ -104,4 +109,21 @@ pub fn vector(length: usize) -> impl Fn(&[u8]) -> IResult<&[u8], Vec<u8>> {
 
 pub fn verify_version(input: &[u8], expected_version: u16) -> IResult<&[u8], u16> {
     verify(be_u16, |v| *v == expected_version).parse(input)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn millisecond_timestamps_out_of_range_are_none() {
+        let millis = |v: u64| timestamp_millis(&v.to_be_bytes()).unwrap().1;
+        assert_eq!(
+            millis(1_700_000_000_000),
+            DateTime::from_timestamp_millis(1_700_000_000_000)
+        );
+        assert_eq!(millis(u64::MAX >> 1), None);
+        assert_eq!(millis(u64::MAX), None);
+        assert_eq!(millis(1 << 63), None);
+    }
 }
