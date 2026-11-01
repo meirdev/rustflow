@@ -231,33 +231,15 @@ fn packet_section(record: &IpfixDataRecord) -> Option<PacketSection<'_>> {
 }
 
 fn ipfix_extract_u8(value: &IpfixFieldValue) -> Option<u8> {
-    match value {
-        IpfixFieldValue::Unsigned8(v) => Some(*v),
-        IpfixFieldValue::Unsigned16(v) => Some(*v as u8),
-        IpfixFieldValue::Unsigned32(v) => Some(*v as u8),
-        IpfixFieldValue::Unsigned64(v) => Some(*v as u8),
-        _ => None,
-    }
+    ipfix_extract_u64(value)?.try_into().ok()
 }
 
 fn ipfix_extract_u16(value: &IpfixFieldValue) -> Option<u16> {
-    match value {
-        IpfixFieldValue::Unsigned8(v) => Some(*v as u16),
-        IpfixFieldValue::Unsigned16(v) => Some(*v),
-        IpfixFieldValue::Unsigned32(v) => Some(*v as u16),
-        IpfixFieldValue::Unsigned64(v) => Some(*v as u16),
-        _ => None,
-    }
+    ipfix_extract_u64(value)?.try_into().ok()
 }
 
 fn ipfix_extract_u32(value: &IpfixFieldValue) -> Option<u32> {
-    match value {
-        IpfixFieldValue::Unsigned8(v) => Some(*v as u32),
-        IpfixFieldValue::Unsigned16(v) => Some(*v as u32),
-        IpfixFieldValue::Unsigned32(v) => Some(*v),
-        IpfixFieldValue::Unsigned64(v) => Some(*v as u32),
-        _ => None,
-    }
+    ipfix_extract_u64(value)?.try_into().ok()
 }
 
 fn ipfix_extract_u64(value: &IpfixFieldValue) -> Option<u64> {
@@ -513,6 +495,28 @@ mod sampling_tests {
         );
         assert_eq!(
             extract_ipfix_system_init_time(&record(&[(InformationElement::OctetDeltaCount, 1)])),
+            None
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn values_too_wide_for_the_field_are_unset_not_truncated() {
+        assert_eq!(
+            ipfix_extract_u16(&IpfixFieldValue::Unsigned32(443)),
+            Some(443)
+        );
+        assert_eq!(
+            ipfix_extract_u16(&IpfixFieldValue::Unsigned32(70_000)),
+            None
+        );
+        assert_eq!(ipfix_extract_u8(&IpfixFieldValue::Unsigned16(262)), None);
+        assert_eq!(
+            ipfix_extract_u32(&IpfixFieldValue::Unsigned64(1 << 32)),
             None
         );
     }

@@ -175,33 +175,15 @@ pub fn extract_v9_sampler_id(record: &V9DataRecord) -> Option<u64> {
 }
 
 fn extract_u8(value: &V9FieldValue) -> Option<u8> {
-    match value {
-        V9FieldValue::Unsigned8(v) => Some(*v),
-        V9FieldValue::Unsigned16(v) => Some(*v as u8),
-        V9FieldValue::Unsigned32(v) => Some(*v as u8),
-        V9FieldValue::Unsigned64(v) => Some(*v as u8),
-        _ => None,
-    }
+    extract_u64(value)?.try_into().ok()
 }
 
 fn extract_u16(value: &V9FieldValue) -> Option<u16> {
-    match value {
-        V9FieldValue::Unsigned8(v) => Some(*v as u16),
-        V9FieldValue::Unsigned16(v) => Some(*v),
-        V9FieldValue::Unsigned32(v) => Some(*v as u16),
-        V9FieldValue::Unsigned64(v) => Some(*v as u16),
-        _ => None,
-    }
+    extract_u64(value)?.try_into().ok()
 }
 
 fn extract_u32(value: &V9FieldValue) -> Option<u32> {
-    match value {
-        V9FieldValue::Unsigned8(v) => Some(*v as u32),
-        V9FieldValue::Unsigned16(v) => Some(*v as u32),
-        V9FieldValue::Unsigned32(v) => Some(*v),
-        V9FieldValue::Unsigned64(v) => Some(*v as u32),
-        _ => None,
-    }
+    extract_u64(value)?.try_into().ok()
 }
 
 fn extract_u64(value: &V9FieldValue) -> Option<u64> {
@@ -221,5 +203,18 @@ fn extract_datetime_ns(value: &V9FieldValue) -> Option<i64> {
         | V9FieldValue::DateTimeMicroseconds(dt)
         | V9FieldValue::DateTimeNanoseconds(dt) => dt.timestamp_nanos_opt(),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn values_too_wide_for_the_field_are_unset_not_truncated() {
+        assert_eq!(extract_u16(&V9FieldValue::Unsigned32(443)), Some(443));
+        assert_eq!(extract_u16(&V9FieldValue::Unsigned32(70_000)), None);
+        assert_eq!(extract_u8(&V9FieldValue::Unsigned16(262)), None);
+        assert_eq!(extract_u32(&V9FieldValue::Unsigned64(1 << 32)), None);
     }
 }
