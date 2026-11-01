@@ -34,14 +34,19 @@ pub struct Exporter {
 impl Exporter {
     pub fn new(args: ExportArgs) -> Result<Self> {
         let collector_addr = args.collector_addr()?;
-        info!("Connecting to collector at {}", collector_addr);
+        info!("Exporting to collector at {}", collector_addr);
 
-        let socket = UdpSocket::bind(if collector_addr.is_ipv6() {
+        // The socket stays unconnected: a connected one fails its next send
+        // after any ICMP port unreachable, as while the collector is down. A
+        // connected probe still learns the source address the route uses,
+        // which the meter needs to recognise the exporter's own datagrams.
+        let probe = UdpSocket::bind(if collector_addr.is_ipv6() {
             "[::]:0"
         } else {
             "0.0.0.0:0"
         })?;
-        socket.connect(collector_addr)?;
+        probe.connect(collector_addr)?;
+        let socket = UdpSocket::bind((probe.local_addr()?.ip(), 0))?;
 
         Ok(Self {
             socket,
@@ -80,7 +85,7 @@ impl Exporter {
 
         let mut encoded = Vec::new();
         packet.encode(&mut encoded);
-        self.socket.send(&encoded)?;
+        self.socket.send_to(&encoded, self.collector_addr)?;
 
         Ok(encoded.len())
     }
@@ -181,7 +186,11 @@ impl Exporter {
 
     /// Sends each record with its template ID, filling every message by
     /// bytes up to [`MAX_MESSAGE_SIZE`]; a new template starts a new message.
+    ///
+    /// Every message is tried, so a failed send costs only its own records;
+    /// the first error is returned.
     fn send_records(&mut self, records: impl IntoIterator<Item = (u16, DataRecord)>) -> Result<()> {
+        let mut result = Ok(());
         let mut pending = Vec::new();
         let mut template_id = 0;
         let mut size = 0;
@@ -192,7 +201,7 @@ impl Exporter {
             record.encode(&mut scratch);
             let len = scratch.len();
             if !pending.is_empty() && (size + len > MAX_SET_BODY || id != template_id) {
-                self.send_data(template_id, std::mem::take(&mut pending))?;
+                result = result.and(self.send_data(template_id, std::mem::take(&mut pending)));
                 size = 0;
             }
             template_id = id;
@@ -200,10 +209,10 @@ impl Exporter {
             pending.push(Record::Data(record));
         }
         if !pending.is_empty() {
-            self.send_data(template_id, pending)?;
+            result = result.and(self.send_data(template_id, pending));
         }
 
-        Ok(())
+        result
     }
 }
 
@@ -271,6 +280,36 @@ mod tests {
         );
         flow.update(100, 0, Seen::now());
         flow
+    }
+
+    #[test]
+    fn a_collector_that_is_not_listening_does_not_stop_the_exporter() {
+        // Nothing listens on the port, so every datagram draws an ICMP port
+        // unreachable.
+        let port = UdpSocket::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let cli = Cli::parse_from(["export", "-H", "127.0.0.1", "-p", &port.to_string()]);
+        let mut exporter = Exporter::new(cli.args).unwrap();
+
+        for _ in 0..3 {
+            exporter.send_templates().unwrap();
+            exporter.send_options_data().unwrap();
+            exporter.send(Records::Flows(vec![flow()])).unwrap();
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    fn the_exporter_sends_from_the_address_the_route_picks() {
+        let receiver = receiver();
+        let exporter = exporter(&receiver, &[]);
+        assert_eq!(
+            exporter.local_addr().unwrap().ip(),
+            std::net::Ipv4Addr::LOCALHOST
+        );
     }
 
     #[test]
