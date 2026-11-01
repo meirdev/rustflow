@@ -63,9 +63,9 @@ impl IpfixContext<'_> {
         for (field, _, value) in record.iter() {
             if let Some(ie) = iana_element(field) {
                 match ie {
-                    OctetDeltaCount => flow.bytes = ipfix_extract_u64(value),
-                    PacketDeltaCount => flow.packets = ipfix_extract_u64(value),
-                    DataLinkFrameSize => frame_size = Some(ipfix_extract_u64(value)),
+                    OctetDeltaCount => flow.bytes = ipfix_extract_u64(value).unwrap_or(0),
+                    PacketDeltaCount => flow.packets = ipfix_extract_u64(value).unwrap_or(0),
+                    DataLinkFrameSize => frame_size = ipfix_extract_u64(value),
                     DataLinkFrameSection | IpHeaderPacketSection => {}
                     ProtocolIdentifier => flow.proto = ipfix_extract_u8(value),
                     IpClassOfService => flow.ip_tos = ipfix_extract_u8(value),
@@ -260,13 +260,13 @@ fn ipfix_extract_u32(value: &IpfixFieldValue) -> Option<u32> {
     }
 }
 
-fn ipfix_extract_u64(value: &IpfixFieldValue) -> u64 {
+fn ipfix_extract_u64(value: &IpfixFieldValue) -> Option<u64> {
     match value {
-        IpfixFieldValue::Unsigned8(v) => *v as u64,
-        IpfixFieldValue::Unsigned16(v) => *v as u64,
-        IpfixFieldValue::Unsigned32(v) => *v as u64,
-        IpfixFieldValue::Unsigned64(v) => *v,
-        _ => 0,
+        IpfixFieldValue::Unsigned8(v) => Some(*v as u64),
+        IpfixFieldValue::Unsigned16(v) => Some(*v as u64),
+        IpfixFieldValue::Unsigned32(v) => Some(*v as u64),
+        IpfixFieldValue::Unsigned64(v) => Some(*v),
+        _ => None,
     }
 }
 
@@ -334,6 +334,20 @@ impl SamplingFields {
             (interval, _) => interval,
         }
     }
+}
+
+/// The sampler or selector a record names, which keys the sampling rate of
+/// its options records.
+pub fn extract_ipfix_sampler_id(record: &IpfixDataRecord) -> Option<u64> {
+    record
+        .iter()
+        .find(|(field, _, _)| {
+            matches!(
+                iana_element(field),
+                Some(InformationElement::SamplerId | InformationElement::SelectorId)
+            )
+        })
+        .and_then(|(_, _, value)| ipfix_extract_u64(value))
 }
 
 /// The 1-in-N rate an options record describes, see [`SamplingFields::rate`].

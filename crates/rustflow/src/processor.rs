@@ -5,8 +5,9 @@ use log::warn;
 use rustc_hash::FxHashMap;
 use rustflow_core::common::common_flow::CommonFlow;
 use rustflow_core::common::convert::{
-    IpfixContext, NetFlowV5Context, NetFlowV9Context, SFlowV5Context, extract_ipfix_sampling_rate,
-    extract_ipfix_system_init_time, extract_v9_sampling_rate,
+    IpfixContext, NetFlowV5Context, NetFlowV9Context, SFlowV5Context, extract_ipfix_sampler_id,
+    extract_ipfix_sampling_rate, extract_ipfix_system_init_time, extract_v9_sampler_id,
+    extract_v9_sampling_rate,
 };
 use rustflow_core::common::ie_registry::IERegistry;
 use rustflow_core::ipfix::parser::{
@@ -140,12 +141,47 @@ impl Packet for SflowPacket {
 /// How often exporters gone quiet are looked for.
 const SWEEP_INTERVAL: Duration = Duration::from_secs(10);
 
+/// Samplers one domain may have rates for; the sender decides how many it
+/// names.
+const MAX_SAMPLERS: usize = 1024;
+
 /// What the options records of one observation domain (source ID in v9)
 /// said.
-#[derive(Clone, Copy, Default)]
+#[derive(Default)]
 struct Domain {
+    /// From options records that name no sampler.
     sampling_rate: Option<u32>,
+    /// From options records that name a sampler (`samplerId` or
+    /// `selectorId`), for the data records that name the same one.
+    sampler_rates: FxHashMap<u64, u32>,
     system_init_time_ms: Option<i64>,
+}
+
+impl Domain {
+    fn set_sampling_rate(&mut self, sampler_id: Option<u64>, rate: u32) {
+        match sampler_id {
+            None => self.sampling_rate = Some(rate),
+            Some(id) if self.sampler_rates.len() < MAX_SAMPLERS => {
+                self.sampler_rates.insert(id, rate);
+            }
+            Some(id) => {
+                if let Some(known) = self.sampler_rates.get_mut(&id) {
+                    *known = rate;
+                }
+            }
+        }
+    }
+
+    /// The rate of a data record: its sampler's, or else the domain's.
+    /// `sampler_id` is only read when some sampler has a rate of its own.
+    fn sampling_rate(&self, sampler_id: impl FnOnce() -> Option<u64>) -> Option<u32> {
+        if self.sampler_rates.is_empty() {
+            return self.sampling_rate;
+        }
+        sampler_id()
+            .and_then(|id| self.sampler_rates.get(&id).copied())
+            .or(self.sampling_rate)
+    }
 }
 
 /// One exporter address: its template cache and its domains.
@@ -194,12 +230,8 @@ impl<P> Exporters<P> {
         exporter
     }
 
-    fn domain(&self, src: IpAddr, id: u32) -> Domain {
-        self.map
-            .get(&src)
-            .and_then(|exporter| exporter.domains.get(&id))
-            .copied()
-            .unwrap_or_default()
+    fn domain(&self, src: IpAddr, id: u32) -> Option<&Domain> {
+        self.map.get(&src)?.domains.get(&id)
     }
 }
 
@@ -260,7 +292,7 @@ impl Processor for NetflowProcessor {
                     if let V9Record::OptionsData(data_record) = record
                         && let Some(rate) = extract_v9_sampling_rate(data_record)
                     {
-                        domain.sampling_rate = Some(rate);
+                        domain.set_sampling_rate(extract_v9_sampler_id(data_record), rate);
                     }
                 }
                 Some(NetflowPacket::V9(parsed))
@@ -277,7 +309,7 @@ impl Processor for NetflowProcessor {
                 for record in parsed.sets.iter().flat_map(|set| &set.records) {
                     if let IpfixRecord::OptionsData(data_record) = record {
                         if let Some(rate) = extract_ipfix_sampling_rate(data_record) {
-                            domain.sampling_rate = Some(rate);
+                            domain.set_sampling_rate(extract_ipfix_sampler_id(data_record), rate);
                         }
                         if let Some(boot) = extract_ipfix_system_init_time(data_record) {
                             domain.system_init_time_ms = Some(boot);
@@ -314,7 +346,7 @@ impl Processor for NetflowProcessor {
                 }
             }
             NetflowPacket::V9(parsed) => {
-                let sampling_rate = self.v9.domain(src, parsed.header.source_id).sampling_rate;
+                let domain = self.v9.domain(src, parsed.header.source_id);
 
                 for flow_set in parsed.flow_sets.iter() {
                     for record in flow_set.records.iter() {
@@ -322,7 +354,9 @@ impl Processor for NetflowProcessor {
                             let ctx = NetFlowV9Context {
                                 header: &parsed.header,
                                 sampler_address: Some(src),
-                                sampling_rate,
+                                sampling_rate: domain.and_then(|domain| {
+                                    domain.sampling_rate(|| extract_v9_sampler_id(data_record))
+                                }),
                             };
                             let mut flow = ctx.convert(data_record, flow_set.id);
                             flow.time_received_ns = time_received_ns;
@@ -332,10 +366,8 @@ impl Processor for NetflowProcessor {
                 }
             }
             NetflowPacket::Ipfix(parsed) => {
-                let Domain {
-                    sampling_rate,
-                    system_init_time_ms,
-                } = self.ipfix.domain(src, parsed.header.observation_domain_id);
+                let domain = self.ipfix.domain(src, parsed.header.observation_domain_id);
+                let system_init_time_ms = domain.and_then(|domain| domain.system_init_time_ms);
 
                 for set in parsed.sets.iter() {
                     for record in set.records.iter() {
@@ -343,7 +375,9 @@ impl Processor for NetflowProcessor {
                             let ctx = IpfixContext {
                                 header: &parsed.header,
                                 sampler_address: Some(src),
-                                sampling_rate,
+                                sampling_rate: domain.and_then(|domain| {
+                                    domain.sampling_rate(|| extract_ipfix_sampler_id(data_record))
+                                }),
                                 system_init_time_ms,
                             };
                             let mut flow = ctx.convert(data_record, set.id);
@@ -475,7 +509,7 @@ mod tests {
             1,
             Domain {
                 sampling_rate: Some(100),
-                system_init_time_ms: None,
+                ..Domain::default()
             },
         );
         exporters.entry(b, t0, timeout, || ());
@@ -487,7 +521,66 @@ mod tests {
 
         exporters.entry(a, t0 + timeout, timeout, || ());
         assert_eq!(exporters.map.len(), 1);
-        assert_eq!(exporters.domain(a, 1).sampling_rate, Some(100));
-        assert_eq!(exporters.domain(b, 1).sampling_rate, None);
+        assert_eq!(
+            exporters
+                .domain(a, 1)
+                .and_then(|domain| domain.sampling_rate),
+            Some(100)
+        );
+        assert!(exporters.domain(b, 1).is_none());
+    }
+
+    fn words(values: &[u16]) -> Vec<u8> {
+        values.iter().flat_map(|v| v.to_be_bytes()).collect()
+    }
+
+    fn ipfix_set(id: u16, body: &[u8]) -> Vec<u8> {
+        [words(&[id, 4 + body.len() as u16]), body.to_vec()].concat()
+    }
+
+    /// One byte of selector ID followed by a four-byte value.
+    fn selector_record(selector: u8, value: u32) -> Vec<u8> {
+        [&[selector][..], &value.to_be_bytes()].concat()
+    }
+
+    #[test]
+    fn each_sampler_has_its_own_rate() {
+        // Data template 256: selectorId and octetDeltaCount. Options
+        // template 257: scoped by selectorId, with samplingInterval. Options
+        // template 258: scoped by observationDomainId, with samplingInterval.
+        let sets = [
+            ipfix_set(2, &words(&[256, 2, 302, 1, 1, 4])),
+            ipfix_set(3, &words(&[257, 2, 1, 302, 1, 34, 4])),
+            ipfix_set(3, &words(&[258, 2, 1, 149, 4, 34, 4])),
+            ipfix_set(
+                257,
+                &[selector_record(1, 100), selector_record(2, 1000)].concat(),
+            ),
+            ipfix_set(258, &[1u32.to_be_bytes(), 10u32.to_be_bytes()].concat()),
+            ipfix_set(
+                256,
+                &[1, 2, 3]
+                    .map(|selector| selector_record(selector, 500))
+                    .concat(),
+            ),
+        ]
+        .concat();
+        let message = [
+            words(&[10, 16 + sets.len() as u16]),
+            vec![0; 8],
+            1u32.to_be_bytes().to_vec(),
+            sets,
+        ]
+        .concat();
+
+        let src: IpAddr = [192, 0, 2, 1].into();
+        let mut processor = NetflowProcessor::new();
+        let packet = processor.parse(src, &message).unwrap();
+        let rates: Vec<_> = processor
+            .convert(src, &packet, None)
+            .iter()
+            .map(|flow| flow.sampling_rate)
+            .collect();
+        assert_eq!(rates, [Some(100), Some(1000), Some(10)]);
     }
 }

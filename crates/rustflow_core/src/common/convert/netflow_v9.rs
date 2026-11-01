@@ -45,8 +45,8 @@ impl NetFlowV9Context<'_> {
         for (field, _, value) in record.iter() {
             if let Some(ie) = InformationElement::from_id(field.r#type) {
                 match ie {
-                    OctetDeltaCount => flow.bytes = extract_u64(value),
-                    PacketDeltaCount => flow.packets = extract_u64(value),
+                    OctetDeltaCount => flow.bytes = extract_u64(value).unwrap_or(0),
+                    PacketDeltaCount => flow.packets = extract_u64(value).unwrap_or(0),
                     ProtocolIdentifier => flow.proto = extract_u8(value),
                     IpClassOfService => flow.ip_tos = extract_u8(value),
                     TcpControlBits => flow.tcp_flags = extract_u16(value),
@@ -173,6 +173,16 @@ pub fn extract_v9_sampling_rate(record: &V9DataRecord) -> Option<u32> {
     None
 }
 
+/// The sampler a record names (`FLOW_SAMPLER_ID`), which keys the sampling
+/// rate of its options records.
+pub fn extract_v9_sampler_id(record: &V9DataRecord) -> Option<u64> {
+    let sampler_id: u16 = InformationElement::SamplerId.into();
+    record
+        .iter()
+        .find(|(field, _, _)| field.r#type == sampler_id)
+        .and_then(|(_, _, value)| extract_u64(value))
+}
+
 fn extract_u8(value: &V9FieldValue) -> Option<u8> {
     match value {
         V9FieldValue::Unsigned8(v) => Some(*v),
@@ -203,13 +213,13 @@ fn extract_u32(value: &V9FieldValue) -> Option<u32> {
     }
 }
 
-fn extract_u64(value: &V9FieldValue) -> u64 {
+fn extract_u64(value: &V9FieldValue) -> Option<u64> {
     match value {
-        V9FieldValue::Unsigned8(v) => *v as u64,
-        V9FieldValue::Unsigned16(v) => *v as u64,
-        V9FieldValue::Unsigned32(v) => *v as u64,
-        V9FieldValue::Unsigned64(v) => *v,
-        _ => 0,
+        V9FieldValue::Unsigned8(v) => Some(*v as u64),
+        V9FieldValue::Unsigned16(v) => Some(*v as u64),
+        V9FieldValue::Unsigned32(v) => Some(*v as u64),
+        V9FieldValue::Unsigned64(v) => Some(*v),
+        _ => None,
     }
 }
 
