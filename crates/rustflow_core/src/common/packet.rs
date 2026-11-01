@@ -333,7 +333,7 @@ const LINUX_SLL2_HEADER_LEN: usize = 20;
 /// (Ethernet, Linux cooked v1 and v2, and raw IP are read; frames of any
 /// other type are `None`). Only a whole datagram is returned: a truncated
 /// or fragmented one is `None`.
-pub fn parse_udp_packet(link_type: u32, frame: &[u8]) -> Option<(IpAddr, Vec<u8>)> {
+pub fn parse_udp_packet(link_type: u32, frame: &[u8]) -> Option<(IpAddr, &[u8])> {
     let sliced = match LinkType::from_pcap(link_type)? {
         LinkType::Ethernet => LaxSlicedPacket::from_ethernet(frame).ok()?,
         // Both cooked headers carry the protocol as an ethertype: v1 in
@@ -362,5 +362,5 @@ pub fn parse_udp_packet(link_type: u32, frame: &[u8]) -> Option<(IpAddr, Vec<u8>
     let Some(TransportSlice::Udp(udp)) = &packet.transport else {
         return None;
     };
-    Some((source_ip, udp.payload().to_vec()))
+    Some((source_ip, udp.payload()))
 }

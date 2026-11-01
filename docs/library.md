@@ -253,6 +253,10 @@ The processor is stateful: it holds the template cache and the sampling-rate cac
 one per collector rather than creating one per packet. Key it by exporter address, which is
 what `process` uses to scope templates.
 
+`process` returns a new `Vec` for every packet. To add the flows to a collection you keep
+instead, such as a queue, use `process_into`; `convert_into` does the same for a packet
+already parsed with `parse`.
+
 `SflowProcessor` is the sFlow equivalent.
 
 ## Flow Fields

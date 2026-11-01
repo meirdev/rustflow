@@ -33,13 +33,27 @@ pub trait Processor: Default {
     /// carries. `None` for an unknown version or a malformed packet.
     fn parse(&mut self, src: IpAddr, payload: &[u8]) -> Option<Self::Packet>;
 
+    /// Adds the packet's data records to `flows` as normalized flows, in
+    /// packet order.
+    fn convert_into(
+        &self,
+        src: IpAddr,
+        packet: &Self::Packet,
+        time_received_ns: Option<i64>,
+        flows: &mut impl Extend<CommonFlow>,
+    );
+
     /// The packet's data records as normalized flows, in packet order.
     fn convert(
         &self,
         src: IpAddr,
         packet: &Self::Packet,
         time_received_ns: Option<i64>,
-    ) -> Vec<CommonFlow>;
+    ) -> Vec<CommonFlow> {
+        let mut flows = Vec::with_capacity(packet.flow_count());
+        self.convert_into(src, packet, time_received_ns, &mut flows);
+        flows
+    }
 
     /// The version name in a datagram's header, such as `netflow_v9`;
     /// `None` for an unknown version or a truncated header.
@@ -56,6 +70,19 @@ pub trait Processor: Default {
         self.parse(src, payload)
             .map(|packet| self.convert(src, &packet, time_received_ns))
             .unwrap_or_default()
+    }
+
+    /// [`Processor::process`], adding the flows to `flows`.
+    fn process_into(
+        &mut self,
+        src: IpAddr,
+        payload: &[u8],
+        time_received_ns: Option<i64>,
+        flows: &mut impl Extend<CommonFlow>,
+    ) {
+        if let Some(packet) = self.parse(src, payload) {
+            self.convert_into(src, &packet, time_received_ns, flows);
+        }
     }
 }
 
@@ -325,14 +352,13 @@ impl Processor for NetflowProcessor {
         }
     }
 
-    fn convert(
+    fn convert_into(
         &self,
         src: IpAddr,
         packet: &NetflowPacket,
         time_received_ns: Option<i64>,
-    ) -> Vec<CommonFlow> {
-        let mut flows = Vec::with_capacity(estimated_flow_count(packet));
-
+        flows: &mut impl Extend<CommonFlow>,
+    ) {
         match packet {
             NetflowPacket::V5(parsed) => {
                 let ctx = NetFlowV5Context {
@@ -342,7 +368,7 @@ impl Processor for NetflowProcessor {
                 for record in parsed.flow_records.iter() {
                     let mut flow = ctx.convert(record);
                     flow.time_received_ns = time_received_ns;
-                    flows.push(flow);
+                    flows.extend([flow]);
                 }
             }
             NetflowPacket::V9(parsed) => {
@@ -360,7 +386,7 @@ impl Processor for NetflowProcessor {
                             };
                             let mut flow = ctx.convert(data_record, flow_set.id);
                             flow.time_received_ns = time_received_ns;
-                            flows.push(flow);
+                            flows.extend([flow]);
                         }
                     }
                 }
@@ -382,14 +408,12 @@ impl Processor for NetflowProcessor {
                             };
                             let mut flow = ctx.convert(data_record, set.id);
                             flow.time_received_ns = time_received_ns;
-                            flows.push(flow);
+                            flows.extend([flow]);
                         }
                     }
                 }
             }
         }
-
-        flows
     }
 
     fn version_of(payload: &[u8]) -> Option<&'static str> {
@@ -437,14 +461,13 @@ impl Processor for SflowProcessor {
     }
 
     /// sFlow samples carry their exporter inside, so `src` is not needed.
-    fn convert(
+    fn convert_into(
         &self,
         _src: IpAddr,
         packet: &SflowPacket,
         time_received_ns: Option<i64>,
-    ) -> Vec<CommonFlow> {
-        let mut flows = Vec::new();
-
+        flows: &mut impl Extend<CommonFlow>,
+    ) {
         match packet {
             SflowPacket::V5(parsed) => {
                 let ctx = SFlowV5Context { header: parsed };
@@ -453,20 +476,18 @@ impl Processor for SflowProcessor {
                         Sample::Flow(flow_sample) => {
                             let mut flow = ctx.convert_flow_sample(flow_sample);
                             flow.time_received_ns = time_received_ns;
-                            flows.push(flow);
+                            flows.extend([flow]);
                         }
                         Sample::ExpandedFlow(expanded_sample) => {
                             let mut flow = ctx.convert_expanded_flow_sample(expanded_sample);
                             flow.time_received_ns = time_received_ns;
-                            flows.push(flow);
+                            flows.extend([flow]);
                         }
                         _ => {}
                     }
                 }
             }
         }
-
-        flows
     }
 
     fn version_of(payload: &[u8]) -> Option<&'static str> {
@@ -480,16 +501,6 @@ impl Processor for SflowProcessor {
 impl Default for SflowProcessor {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-/// Upper bound on the flows a parsed packet yields, used to size the output
-/// vector up front.
-fn estimated_flow_count(packet: &NetflowPacket) -> usize {
-    match packet {
-        NetflowPacket::V5(parsed) => parsed.flow_records.len(),
-        NetflowPacket::V9(parsed) => parsed.flow_sets.iter().map(|s| s.records.len()).sum(),
-        NetflowPacket::Ipfix(parsed) => parsed.sets.iter().map(|s| s.records.len()).sum(),
     }
 }
 

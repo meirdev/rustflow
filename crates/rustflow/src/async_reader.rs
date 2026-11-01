@@ -93,11 +93,12 @@ impl<P: Processor> Reader<P> {
             let payload = &self.buf[..len];
             let time_received_ns = chrono::Utc::now().timestamp_nanos_opt();
 
-            self.pending_flows.extend(self.processor.process(
+            self.processor.process_into(
                 src_addr.ip(),
                 payload,
                 time_received_ns,
-            ));
+                &mut self.pending_flows,
+            );
         }
     }
 }

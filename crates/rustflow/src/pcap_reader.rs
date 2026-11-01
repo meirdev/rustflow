@@ -55,11 +55,12 @@ impl<P: Processor> Reader<P> {
                 Some(Ok(packet)) => {
                     let time_received_ns = Some(packet.timestamp.as_nanos() as i64);
                     if let Some((src, payload)) = parse_udp_packet(link_type, &packet.data) {
-                        self.pending_flows.extend(self.processor.process(
+                        self.processor.process_into(
                             src,
-                            &payload,
+                            payload,
                             time_received_ns,
-                        ));
+                            &mut self.pending_flows,
+                        );
                     }
                 }
                 Some(Err(e)) => {
