@@ -24,7 +24,7 @@ use crate::common::parser::{
     timestamp_millis, timestamp_nanos, timestamp_secs, vector, verify_version,
 };
 use crate::common::serializer::{serialize_as_hex, serialize_mac};
-use crate::common::timeout_map::TimeoutHashMap;
+use crate::common::template_cache::TemplateCache;
 use crate::common::{InformationElement, data_record};
 
 pub const IPFIX_VERSION: u16 = 10;
@@ -46,20 +46,20 @@ const MAX_LIST_DEPTH: usize = 8;
 
 // (observation_domain_id, template_id)
 type TemplateKey = (u32, u16);
-type TemplateCache = TimeoutHashMap<TemplateKey, Arc<[ResolvedField]>>;
+type Templates = TemplateCache<TemplateKey, ResolvedField>;
 
 pub struct IpfixParser {
     pub ie_registry: IERegistry,
-    pub templates: TemplateCache,
-    pub options_templates: TemplateCache,
+    pub templates: Templates,
+    pub options_templates: Templates,
 }
 
 impl IpfixParser {
     pub fn new(ie_registry: IERegistry, timeout: std::time::Duration) -> Self {
         Self {
             ie_registry,
-            templates: TimeoutHashMap::new(timeout),
-            options_templates: TimeoutHashMap::new(timeout),
+            templates: TemplateCache::new(timeout),
+            options_templates: TemplateCache::new(timeout),
         }
     }
 
@@ -119,8 +119,8 @@ impl IpfixParser {
     /// with a field count of zero withdraws that template, and one carrying
     /// the set ID itself (2 or 3) withdraws every template of that kind for
     /// the observation domain.
-    fn withdraw_templates<V>(
-        map: &mut TimeoutHashMap<TemplateKey, V>,
+    fn withdraw_templates(
+        map: &mut Templates,
         observation_domain_id: u32,
         template_id: u16,
         all_id: u16,
@@ -130,7 +130,7 @@ impl IpfixParser {
                 "Withdrawing all templates for observation_domain_id: {}",
                 observation_domain_id
             );
-            map.retain(|(odid, _), _| *odid != observation_domain_id);
+            map.retain(|(odid, _)| *odid != observation_domain_id);
         } else {
             debug!(
                 "Withdrawing template for observation_domain_id: {}, template_id: {}",
@@ -497,8 +497,8 @@ impl Default for IpfixParser {
 
         Self {
             ie_registry,
-            templates: TimeoutHashMap::new(timeout),
-            options_templates: TimeoutHashMap::new(timeout),
+            templates: TemplateCache::new(timeout),
+            options_templates: TemplateCache::new(timeout),
         }
     }
 }

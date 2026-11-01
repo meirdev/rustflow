@@ -22,7 +22,7 @@ use crate::common::parser::{
     timestamp_nanos, timestamp_secs, vector, verify_version,
 };
 use crate::common::serializer::{serialize_as_hex, serialize_duration_millis, serialize_mac};
-use crate::common::timeout_map::TimeoutHashMap;
+use crate::common::template_cache::TemplateCache;
 
 pub const NETFLOW_V9_VERSION: u16 = 9;
 pub const NETFLOW_V9_TEMPLATE_FLOW_SET_ID: u16 = 0;
@@ -33,20 +33,20 @@ const FLOW_SET_HEADER_SIZE: usize = 4;
 
 // (source_id, template_id)
 type TemplateKey = (u32, u16);
-type TemplateCache = TimeoutHashMap<TemplateKey, Arc<[ResolvedField]>>;
+type Templates = TemplateCache<TemplateKey, ResolvedField>;
 
 pub struct NetflowV9Parser {
     pub ie_registry: IERegistry,
-    pub templates: TemplateCache,
-    pub options_templates: TemplateCache,
+    pub templates: Templates,
+    pub options_templates: Templates,
 }
 
 impl NetflowV9Parser {
     pub fn new(ie_registry: IERegistry, timeout: Duration) -> Self {
         Self {
             ie_registry,
-            templates: TimeoutHashMap::new(timeout),
-            options_templates: TimeoutHashMap::new(timeout),
+            templates: TemplateCache::new(timeout),
+            options_templates: TemplateCache::new(timeout),
         }
     }
 

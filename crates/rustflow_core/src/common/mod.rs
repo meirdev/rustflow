@@ -8,6 +8,6 @@ pub mod information_element;
 pub mod packet;
 pub mod parser;
 pub mod serializer;
-pub mod timeout_map;
+pub mod template_cache;
 
 pub use information_element::InformationElement;
