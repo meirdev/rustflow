@@ -7,8 +7,8 @@ use chrono::Utc;
 use log::{debug, info};
 use rustflow_core::common::encoder::Encode;
 use rustflow_core::ipfix::parser::{
-    Header, IPFIX_HEADER_SIZE, IPFIX_OPTIONS_TEMPLATE_SET_ID, IPFIX_TEMPLATE_SET_ID, IPFIX_VERSION,
-    IpfixPacket, Record, SET_HEADER_SIZE, Set,
+    DataRecord, Header, IPFIX_HEADER_SIZE, IPFIX_OPTIONS_TEMPLATE_SET_ID, IPFIX_TEMPLATE_SET_ID,
+    IPFIX_VERSION, IpfixPacket, Record, SET_HEADER_SIZE, Set,
 };
 
 use crate::ExportArgs;
@@ -17,10 +17,8 @@ use crate::ipfix::data::{OptionsData, PacketData};
 use crate::ipfix::template::{OPTIONS_TEMPLATE_ID, create_options_template, create_templates};
 use crate::meter::Records;
 
-// Maximum data records per set
-const MAX_RECORDS_PER_SET: usize = 30;
-
-/// Keeps a message of packet records within one Ethernet MTU.
+/// Keeps a message within one Ethernet MTU, with
+/// room for IPv6 and UDP headers.
 const MAX_MESSAGE_SIZE: usize = 1400;
 const MAX_SET_BODY: usize = MAX_MESSAGE_SIZE - IPFIX_HEADER_SIZE - SET_HEADER_SIZE;
 
@@ -159,51 +157,50 @@ impl Exporter {
 
         info!("Exporting {} flows", flows.len());
 
-        // A set holds records of one template, so IPv4 and IPv6 flows go
-        // in separate sets.
+        // A set holds records of one template, so IPv4 and IPv6 flows are
+        // sent apart rather than interleaved.
         let (ipv4, ipv6): (Vec<_>, Vec<_>) = flows
             .iter()
             .map(Flow::to_flow_data)
             .partition(|data| data.source_ip.is_ipv4());
 
-        for chunk in ipv4
-            .chunks(MAX_RECORDS_PER_SET)
-            .chain(ipv6.chunks(MAX_RECORDS_PER_SET))
-        {
-            let records = chunk
-                .iter()
-                .map(|data| Record::Data(data.to_data_record()))
-                .collect();
-            self.send_data(chunk[0].template_id(), records)?;
-        }
-
-        Ok(())
+        self.send_records(
+            ipv4.iter()
+                .chain(&ipv6)
+                .map(|data| (data.template_id(), data.to_data_record())),
+        )
     }
 
-    /// Packet records vary in size, so a message is filled by bytes.
     fn send_packets(&mut self, packets: Vec<PacketData>) -> Result<()> {
-        let mut records = Vec::new();
+        self.send_records(
+            packets
+                .iter()
+                .map(|packet| (packet.template_id(), packet.to_data_record())),
+        )
+    }
+
+    /// Sends each record with its template ID, filling every message by
+    /// bytes up to [`MAX_MESSAGE_SIZE`]; a new template starts a new message.
+    fn send_records(&mut self, records: impl IntoIterator<Item = (u16, DataRecord)>) -> Result<()> {
+        let mut pending = Vec::new();
         let mut template_id = 0;
         let mut size = 0;
         let mut scratch = Vec::new();
 
-        for packet in &packets {
-            let record = packet.to_data_record();
+        for (id, record) in records {
             scratch.clear();
             record.encode(&mut scratch);
             let len = scratch.len();
-            if !records.is_empty()
-                && (size + len > MAX_SET_BODY || packet.template_id() != template_id)
-            {
-                self.send_data(template_id, std::mem::take(&mut records))?;
+            if !pending.is_empty() && (size + len > MAX_SET_BODY || id != template_id) {
+                self.send_data(template_id, std::mem::take(&mut pending))?;
                 size = 0;
             }
-            template_id = packet.template_id();
+            template_id = id;
             size += len;
-            records.push(Record::Data(record));
+            pending.push(Record::Data(record));
         }
-        if !records.is_empty() {
-            self.send_data(template_id, records)?;
+        if !pending.is_empty() {
+            self.send_data(template_id, pending)?;
         }
 
         Ok(())
@@ -295,6 +292,44 @@ mod tests {
         // options record, one flow.
         assert_eq!(sequence, [0, 0, 1, 4, 5]);
         assert_eq!(exporter.sequence_number.load(Ordering::SeqCst), 6);
+    }
+
+    #[test]
+    fn flow_messages_are_filled_by_bytes_within_the_mtu() {
+        let receiver = receiver();
+        let mut exporter = exporter(&receiver, &[]);
+        exporter.send_templates().unwrap();
+
+        let ipv6 = |port| {
+            let mut flow = Flow::new(FlowKey {
+                source_ip: "2001:db8::1".parse().unwrap(),
+                destination_ip: "2001:db8::2".parse().unwrap(),
+                protocol: 17,
+                source_port: port,
+                destination_port: 53,
+            });
+            flow.update(100, 0);
+            flow
+        };
+        let flows = (0..100).map(|_| flow()).chain((0..50).map(ipv6)).collect();
+        exporter.send(Records::Flows(flows)).unwrap();
+
+        let messages = datagrams(&receiver);
+        let mut parser = IpfixParser::default();
+        let mut records = 0;
+        for message in &messages {
+            let (_, parsed) = parser.parse(message).unwrap();
+            records += parsed
+                .sets
+                .iter()
+                .flat_map(|set| &set.records)
+                .filter(|record| matches!(record, Parsed::Data(_)))
+                .count();
+            assert!(message.len() <= MAX_MESSAGE_SIZE, "{}", message.len());
+        }
+        assert_eq!(records, 150);
+        // 49-byte IPv4 records: 28 per message; 73-byte IPv6 records: 18.
+        assert_eq!(messages.len(), 1 + 4 + 3);
     }
 
     #[test]
