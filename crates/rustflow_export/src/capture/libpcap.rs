@@ -5,7 +5,7 @@ use anyhow::{Context, Result, bail};
 use log::{info, warn};
 use pcap::{Active, Linktype};
 
-use super::{Capture, Frame, Link};
+use super::{Capture, Frame, Link, capture_time};
 
 /// Enough for link, network and transport headers.
 const SNAPLEN: i32 = 2048;
@@ -120,9 +120,11 @@ impl Capture for Libpcap {
             LinkLayer::Ethernet | LinkLayer::RawIp => 0,
         };
 
+        let ts = packet.header.ts;
         Some(Frame {
             data: packet.data.get(skip..)?,
             length: packet.header.len.saturating_sub(skip as u32),
+            time: capture_time(ts.tv_sec as i64, ts.tv_usec as u32 * 1000),
         })
     }
 }

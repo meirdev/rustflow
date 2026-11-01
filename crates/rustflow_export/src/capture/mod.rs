@@ -1,4 +1,5 @@
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 
 #[cfg(target_os = "linux")]
 mod af_packet;
@@ -19,6 +20,13 @@ pub struct Frame<'a> {
     pub data: &'a [u8],
     /// The length of the frame on the wire.
     pub length: u32,
+    /// When the kernel captured the frame.
+    pub time: DateTime<Utc>,
+}
+
+/// A capture timestamp, which a kernel never gives out of range.
+fn capture_time(secs: i64, nanos: u32) -> DateTime<Utc> {
+    DateTime::from_timestamp(secs, nanos).unwrap_or_else(Utc::now)
 }
 
 pub trait Capture {

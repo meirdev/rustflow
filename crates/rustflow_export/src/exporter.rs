@@ -217,7 +217,7 @@ mod tests {
 
     use super::*;
     use crate::capture::Link;
-    use crate::flow::FlowKey;
+    use crate::flow::{FlowKey, Seen};
 
     #[derive(Parser)]
     struct Cli {
@@ -259,14 +259,17 @@ mod tests {
     }
 
     fn flow() -> Flow {
-        let mut flow = Flow::new(FlowKey {
-            source_ip: "10.0.0.1".parse().unwrap(),
-            destination_ip: "10.0.0.2".parse().unwrap(),
-            protocol: 6,
-            source_port: 1,
-            destination_port: 2,
-        });
-        flow.update(100, 0);
+        let mut flow = Flow::new(
+            FlowKey {
+                source_ip: "10.0.0.1".parse().unwrap(),
+                destination_ip: "10.0.0.2".parse().unwrap(),
+                protocol: 6,
+                source_port: 1,
+                destination_port: 2,
+            },
+            Seen::now(),
+        );
+        flow.update(100, 0, Seen::now());
         flow
     }
 
@@ -301,14 +304,17 @@ mod tests {
         exporter.send_templates().unwrap();
 
         let ipv6 = |port| {
-            let mut flow = Flow::new(FlowKey {
-                source_ip: "2001:db8::1".parse().unwrap(),
-                destination_ip: "2001:db8::2".parse().unwrap(),
-                protocol: 17,
-                source_port: port,
-                destination_port: 53,
-            });
-            flow.update(100, 0);
+            let mut flow = Flow::new(
+                FlowKey {
+                    source_ip: "2001:db8::1".parse().unwrap(),
+                    destination_ip: "2001:db8::2".parse().unwrap(),
+                    protocol: 17,
+                    source_port: port,
+                    destination_port: 53,
+                },
+                Seen::now(),
+            );
+            flow.update(100, 0, Seen::now());
             flow
         };
         let flows = (0..100).map(|_| flow()).chain((0..50).map(ipv6)).collect();

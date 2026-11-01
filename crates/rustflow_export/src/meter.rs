@@ -1,9 +1,10 @@
 use std::net::SocketAddr;
+use std::time::Instant;
 
 use crate::ExportArgs;
 use crate::capture::{Frame, Link};
 use crate::flow::parse::{PacketInfo, parse};
-use crate::flow::{Flow, FlowCache};
+use crate::flow::{Flow, FlowCache, Seen};
 use crate::ipfix::data::PacketData;
 use crate::sampler::Sampler;
 
@@ -85,7 +86,11 @@ impl Meter {
         match &mut self.output {
             Output::Flows(cache) => {
                 if let Some(packet) = packet {
-                    cache.update_flow(packet.flow_key, packet.packet_size, packet.tcp_flags);
+                    let seen = Seen {
+                        time: frame.time,
+                        instant: Instant::now(),
+                    };
+                    cache.update_flow(packet.flow_key, packet.packet_size, packet.tcp_flags, seen);
                 }
             }
             Output::Packets {
@@ -111,7 +116,7 @@ impl Meter {
     /// pending packet.
     pub fn take_due(&mut self) -> Records {
         match &mut self.output {
-            Output::Flows(cache) => Records::Flows(cache.check_expired_flows()),
+            Output::Flows(cache) => Records::Flows(cache.check_expired_flows(Instant::now())),
             Output::Packets { pending, .. } => Records::Packets(std::mem::take(pending)),
         }
     }
@@ -175,7 +180,11 @@ mod tests {
 
     fn observe(meter: &mut Meter, data: &[u8], times: usize) {
         for _ in 0..times {
-            meter.observe(&Frame { data, length: 1500 });
+            meter.observe(&Frame {
+                data,
+                length: 1500,
+                time: chrono::Utc::now(),
+            });
         }
     }
 

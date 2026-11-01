@@ -14,7 +14,7 @@ use std::{io, mem, ptr, slice};
 use anyhow::{Result, anyhow};
 use log::{info, warn};
 
-use super::{Capture, Frame, Link};
+use super::{Capture, Frame, Link, capture_time};
 
 const TPACKET_V3: libc::c_int = 2;
 
@@ -321,6 +321,7 @@ impl Capture for AfPacket {
             return Some(Frame {
                 data,
                 length: hdr.tp_len,
+                time: capture_time(i64::from(hdr.tp_sec), hdr.tp_nsec),
             });
         }
     }
