@@ -45,6 +45,9 @@ fn apply_link(flow: &mut CommonFlow, sliced: &LaxSlicedPacket) {
     }
 }
 
+/// The IP header and what follows. `etype` is the network layer's, as that
+/// is the one giving the addresses, though a tunnel such as GRE or MPLS sat
+/// under it in the frame.
 fn apply_net_transport(flow: &mut CommonFlow, sliced: &LaxSlicedPacket) {
     match &sliced.net {
         Some(LaxNetSlice::Ipv4(ipv4_slice)) => {
@@ -56,9 +59,7 @@ fn apply_net_transport(flow: &mut CommonFlow, sliced: &LaxSlicedPacket) {
             flow.ip_ttl = Some(ipv4_header.ttl());
             flow.fragment_id = Some(ipv4_header.identification() as u32);
             flow.fragment_offset = Some(ipv4_header.fragments_offset().value());
-            if flow.etype.is_none() {
-                flow.etype = Some(EtherType::IPV4.0);
-            }
+            flow.etype = Some(EtherType::IPV4.0);
         }
         Some(LaxNetSlice::Ipv6(ipv6_slice)) => {
             let ipv6_header = ipv6_slice.header();
@@ -68,9 +69,7 @@ fn apply_net_transport(flow: &mut CommonFlow, sliced: &LaxSlicedPacket) {
             flow.ip_tos = Some(ipv6_header.traffic_class());
             flow.ip_ttl = Some(ipv6_header.hop_limit());
             flow.ipv6_flow_label = Some(ipv6_header.flow_label().value());
-            if flow.etype.is_none() {
-                flow.etype = Some(EtherType::IPV6.0);
-            }
+            flow.etype = Some(EtherType::IPV6.0);
         }
         Some(LaxNetSlice::Arp(_)) | None => {}
     }
@@ -128,5 +127,92 @@ fn apply_net_transport(flow: &mut CommonFlow, sliced: &LaxSlicedPacket) {
             flow.icmp_code = Some(icmp_slice.code_u8());
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use etherparse::{IpNumber, PacketBuilder, VlanId};
+
+    use super::*;
+    use crate::common::common_flow::FlowType;
+
+    const MAC: [u8; 6] = [2, 0, 0, 0, 0, 1];
+    const V4_SRC: [u8; 4] = [192, 0, 2, 1];
+    const V4_DST: [u8; 4] = [198, 51, 100, 1];
+    const V6_SRC: [u8; 16] = [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+
+    fn flow_of(frame: &[u8]) -> CommonFlow {
+        let mut flow = CommonFlow::new(FlowType::SflowV5);
+        apply_ethernet_frame(&mut flow, frame);
+        flow
+    }
+
+    fn ipv4_udp() -> Vec<u8> {
+        let mut packet = Vec::new();
+        PacketBuilder::ipv4(V4_SRC, V4_DST, 64)
+            .udp(1000, 53)
+            .write(&mut packet, &[0; 8])
+            .unwrap();
+        packet
+    }
+
+    #[test]
+    fn a_gre_tunnel_reports_the_inner_ethertype() {
+        let mut inner = Vec::new();
+        PacketBuilder::ipv6(V6_SRC, V6_SRC, 64)
+            .udp(1000, 53)
+            .write(&mut inner, &[0; 8])
+            .unwrap();
+        // GRE without options, carrying IPv6.
+        let gre = [&[0, 0, 0x86, 0xdd][..], &inner].concat();
+        let mut frame = Vec::new();
+        PacketBuilder::ethernet2(MAC, MAC)
+            .ipv4(V4_SRC, V4_DST, 64)
+            .write(&mut frame, IpNumber::GRE, &gre)
+            .unwrap();
+
+        let flow = flow_of(&frame);
+        assert_eq!(flow.src_addr, Some(IpAddr::from(V6_SRC)));
+        assert_eq!(flow.etype, Some(EtherType::IPV6.0));
+    }
+
+    #[test]
+    fn an_mpls_frame_reports_the_inner_ethertype() {
+        // Label 100, bottom of stack, TTL 64.
+        let label = (100u32 << 12 | 1 << 8 | 64).to_be_bytes();
+        let frame = [&MAC[..], &MAC, &[0x88, 0x47], &label, &ipv4_udp()].concat();
+
+        let flow = flow_of(&frame);
+        assert_eq!(flow.src_addr, Some(IpAddr::from(V4_SRC)));
+        assert_eq!(flow.etype, Some(EtherType::IPV4.0));
+    }
+
+    #[test]
+    fn vlan_and_arp_frames_keep_their_ethertype() {
+        let mut frame = Vec::new();
+        PacketBuilder::ethernet2(MAC, MAC)
+            .single_vlan(VlanId::try_new(10).unwrap())
+            .ipv4(V4_SRC, V4_DST, 64)
+            .udp(1000, 53)
+            .write(&mut frame, &[0; 8])
+            .unwrap();
+        let flow = flow_of(&frame);
+        assert_eq!(flow.etype, Some(EtherType::IPV4.0));
+        assert_eq!(flow.src_vlan, Some(10));
+
+        // A request from 192.0.2.1 for 198.51.100.1.
+        let arp = [
+            &[0, 1, 0x08, 0x00, 6, 4, 0, 1][..],
+            &MAC,
+            &V4_SRC,
+            &[0; 6],
+            &V4_DST,
+        ]
+        .concat();
+        let frame = [&MAC[..], &MAC, &[0x08, 0x06], &arp].concat();
+        let flow = flow_of(&frame);
+        assert_eq!(flow.etype, Some(EtherType::ARP.0));
+        assert_eq!(flow.src_addr, None);
     }
 }

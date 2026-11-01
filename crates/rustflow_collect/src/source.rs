@@ -141,11 +141,11 @@ impl Source for Pcap {
                         continue;
                     };
                     let time_received_ns = Some(packet.timestamp.as_nanos() as i64);
-                    
+
                     // Copied out, as the borrow of the frame cannot leave the loop.
                     self.payload.clear();
                     self.payload.extend_from_slice(payload);
-                    
+
                     return Datagram::Packet {
                         src,
                         payload: &self.payload,
