@@ -47,9 +47,9 @@ const MAX_LIST_DEPTH: usize = 8;
 type Templates = TemplateCache<ResolvedField>;
 
 pub struct IpfixParser {
-    pub ie_registry: IERegistry,
-    pub templates: Templates,
-    pub options_templates: Templates,
+    ie_registry: IERegistry,
+    templates: Templates,
+    options_templates: Templates,
 }
 
 impl IpfixParser {

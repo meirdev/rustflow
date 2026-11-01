@@ -34,9 +34,9 @@ const FLOW_SET_HEADER_SIZE: usize = 4;
 type Templates = TemplateCache<ResolvedField>;
 
 pub struct NetflowV9Parser {
-    pub ie_registry: IERegistry,
-    pub templates: Templates,
-    pub options_templates: Templates,
+    ie_registry: IERegistry,
+    templates: Templates,
+    options_templates: Templates,
 }
 
 impl NetflowV9Parser {
