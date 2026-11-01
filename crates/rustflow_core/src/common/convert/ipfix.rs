@@ -4,8 +4,16 @@ use crate::common::InformationElement;
 use crate::common::common_flow::{CommonFlow, FlowType};
 use crate::common::convert::packet::{apply_ethernet_frame, apply_ip_packet};
 use crate::ipfix::parser::{
-    DataRecord as IpfixDataRecord, FieldValue as IpfixFieldValue, Header as IpfixHeader,
+    DataRecord as IpfixDataRecord, FieldSpecifier, FieldValue as IpfixFieldValue,
+    Header as IpfixHeader,
 };
+
+fn iana_element(field: &FieldSpecifier) -> Option<InformationElement> {
+    match field.enterprise_number {
+        None => InformationElement::from_id(field.information_element_identifier),
+        Some(_) => None,
+    }
+}
 
 pub struct IpfixContext<'a> {
     pub header: &'a IpfixHeader,
@@ -53,8 +61,7 @@ impl IpfixContext<'_> {
         let mut sampling = SamplingFields::default();
 
         for (field, _, value) in record.iter() {
-            let field_type = &field.information_element_identifier;
-            if let Some(ie) = InformationElement::from_id(*field_type) {
+            if let Some(ie) = iana_element(field) {
                 match ie {
                     OctetDeltaCount => flow.bytes = ipfix_extract_u64(value),
                     PacketDeltaCount => flow.packets = ipfix_extract_u64(value),
@@ -212,7 +219,7 @@ fn packet_section(record: &IpfixDataRecord) -> Option<PacketSection<'_>> {
         let IpfixFieldValue::OctetArray(bytes) = value else {
             continue;
         };
-        match InformationElement::from_id(field.information_element_identifier) {
+        match iana_element(field) {
             Some(InformationElement::DataLinkFrameSection) => {
                 return Some(PacketSection::Frame(bytes.as_slice()));
             }
@@ -275,8 +282,7 @@ fn ipfix_extract_datetime_ns(value: &IpfixFieldValue) -> Option<i64> {
 
 pub fn extract_ipfix_system_init_time(record: &IpfixDataRecord) -> Option<i64> {
     record.iter().find_map(|(field, _, value)| {
-        let element = InformationElement::from_id(field.information_element_identifier);
-        if element != Some(InformationElement::SystemInitTimeMilliseconds) {
+        if iana_element(field) != Some(InformationElement::SystemInitTimeMilliseconds) {
             return None;
         }
         match value {
@@ -334,7 +340,7 @@ impl SamplingFields {
 pub fn extract_ipfix_sampling_rate(record: &IpfixDataRecord) -> Option<u32> {
     let mut sampling = SamplingFields::default();
     for (field, _, value) in record.iter() {
-        if let Some(ie) = InformationElement::from_id(field.information_element_identifier) {
+        if let Some(ie) = iana_element(field) {
             sampling.observe(ie, value);
         }
     }
@@ -398,6 +404,44 @@ mod sampling_tests {
             ])),
             Some(20)
         );
+    }
+
+    #[test]
+    fn enterprise_fields_are_not_the_iana_element_of_the_same_number() {
+        use crate::common::ie_registry::DataType;
+
+        let field = |spec| crate::ipfix::parser::ResolvedField {
+            spec,
+            data_type: DataType::Unsigned,
+            name: Arc::from(""),
+        };
+        let record = IpfixDataRecord::from_template(
+            vec![
+                field(FieldSpecifier::from_ie(
+                    InformationElement::OctetDeltaCount,
+                    4,
+                )),
+                // reverseOctetDeltaCount (RFC 5103)
+                field(FieldSpecifier::enterprise(1, 4, 29305)),
+                field(FieldSpecifier::enterprise(
+                    InformationElement::SamplingInterval.into(),
+                    4,
+                    9,
+                )),
+            ]
+            .into(),
+            vec![
+                IpfixFieldValue::Unsigned32(1000),
+                IpfixFieldValue::Unsigned32(55),
+                IpfixFieldValue::Unsigned32(100),
+            ],
+        );
+
+        let header = IpfixHeader::new(chrono::Utc::now(), 1, 1);
+        let flow = context(&header, None).convert(&record, 256);
+        assert_eq!(flow.bytes, 1000);
+        assert_eq!(flow.sampling_rate, None);
+        assert_eq!(extract_ipfix_sampling_rate(&record), None);
     }
 
     fn context(header: &IpfixHeader, boot_ms: Option<i64>) -> IpfixContext<'_> {
