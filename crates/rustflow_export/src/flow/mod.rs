@@ -13,6 +13,7 @@ pub enum FlowEndReason {
     IdleTimeout = 1,
     ActiveTimeout = 2,
     ForcedEnd = 4,
+    LackOfResources = 5,
 }
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
@@ -80,31 +81,69 @@ impl Flow {
     }
 }
 
+/// The share of a full cache ended at once to make room: one scan of the
+/// cache per batch, not per packet, when new flows keep arriving.
+const EVICTION_FRACTION: usize = 8;
+
 pub struct FlowCache {
     flows: HashMap<FlowKey, Flow>,
     active_timeout: TimeDelta,
     inactive_timeout: TimeDelta,
+    max_flows: usize,
+    /// Flows ended to make room, waiting to be exported.
+    evicted: Vec<Flow>,
 }
 
 impl FlowCache {
-    pub fn new(active_timeout: u64, inactive_timeout: u64) -> Self {
+    pub fn new(active_timeout: u64, inactive_timeout: u64, max_flows: usize) -> Self {
         Self {
             flows: HashMap::new(),
             active_timeout: TimeDelta::seconds(active_timeout as i64),
             inactive_timeout: TimeDelta::seconds(inactive_timeout as i64),
+            max_flows,
+            evicted: Vec::new(),
         }
     }
 
     pub fn update_flow(&mut self, key: FlowKey, packet_size: u64, tcp_flags: u16) {
-        self.flows
-            .entry(key.clone())
-            .or_insert_with(|| Flow::new(key))
-            .update(packet_size, tcp_flags);
+        if let Some(flow) = self.flows.get_mut(&key) {
+            flow.update(packet_size, tcp_flags);
+            return;
+        }
+        if self.flows.len() >= self.max_flows {
+            self.evict_idle_longest();
+        }
+        let mut flow = Flow::new(key.clone());
+        flow.update(packet_size, tcp_flags);
+        self.flows.insert(key, flow);
     }
 
+    /// Ends the flows idle longest, a batch of [`EVICTION_FRACTION`] of the
+    /// cache, as lacking resources (RFC 5102).
+    fn evict_idle_longest(&mut self) {
+        let count = (self.max_flows / EVICTION_FRACTION).max(1);
+        let mut ends: Vec<_> = self.flows.values().map(|flow| flow.flow_end).collect();
+        let cutoff = *ends.select_nth_unstable(count - 1).1;
+
+        let evicted = &mut self.evicted;
+        self.flows.retain(|_, flow| {
+            if flow.flow_end > cutoff {
+                return true;
+            }
+            evicted.push(flow.ended(FlowEndReason::LackOfResources));
+            false
+        });
+    }
+
+    /// Whether flows were ended to make room and wait to be exported.
+    pub fn has_evicted(&self) -> bool {
+        !self.evicted.is_empty()
+    }
+
+    /// The flows that timed out, and those ended to make room.
     pub fn check_expired_flows(&mut self) -> Vec<Flow> {
         let now = Utc::now();
-        let mut expired = Vec::new();
+        let mut expired = std::mem::take(&mut self.evicted);
 
         let active_timeout = self.active_timeout;
         let inactive_timeout = self.inactive_timeout;
@@ -124,18 +163,99 @@ impl FlowCache {
             false
         });
 
+        // A burst of flows leaves the table at its peak size otherwise.
+        if self.flows.capacity() > 4 * self.flows.len().max(1024) {
+            self.flows.shrink_to(2 * self.flows.len());
+        }
+
         expired
     }
 
-    /// Every flow, ended by force (shutdown).
+    /// Every flow, ended by force (shutdown), and those ended to make room.
     pub fn export_all(&mut self) -> Vec<Flow> {
-        self.flows
-            .drain()
-            .map(|(_, flow)| flow.ended(FlowEndReason::ForcedEnd))
-            .collect()
+        let mut flows = std::mem::take(&mut self.evicted);
+        flows.extend(
+            self.flows
+                .drain()
+                .map(|(_, flow)| flow.ended(FlowEndReason::ForcedEnd)),
+        );
+        flows
     }
 
     pub fn len(&self) -> usize {
         self.flows.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key(source_port: u16) -> FlowKey {
+        FlowKey {
+            source_ip: [10, 0, 0, 1].into(),
+            destination_ip: [10, 0, 0, 2].into(),
+            protocol: 6,
+            source_port,
+            destination_port: 80,
+        }
+    }
+
+    /// A cache of `ports` flows, last seen in port order.
+    fn full_cache(ports: u16) -> FlowCache {
+        let mut cache = FlowCache::new(60, 15, usize::from(ports));
+        let now = Utc::now();
+        for port in 0..ports {
+            cache.update_flow(key(port), 100, 0);
+            cache.flows.get_mut(&key(port)).unwrap().flow_end =
+                now + TimeDelta::seconds(i64::from(port));
+        }
+        cache
+    }
+
+    #[test]
+    fn a_full_cache_ends_the_flows_idle_longest() {
+        let mut cache = full_cache(16);
+        cache.update_flow(key(16), 100, 0);
+
+        assert_eq!(cache.len(), 15);
+        assert!(cache.has_evicted());
+        let mut ended: Vec<_> = cache
+            .check_expired_flows()
+            .into_iter()
+            .map(|flow| (flow.key.source_port, flow.flow_end_reason))
+            .collect();
+        ended.sort_by_key(|(port, _)| *port);
+        let lack = Some(FlowEndReason::LackOfResources);
+        assert_eq!(ended, [(0, lack), (1, lack)]);
+        assert!(!cache.has_evicted());
+    }
+
+    #[test]
+    fn flows_ended_to_make_room_are_exported_at_shutdown_too() {
+        let mut cache = full_cache(8);
+        cache.update_flow(key(8), 100, 0);
+
+        let flows = cache.export_all();
+        assert_eq!(flows.len(), 9);
+        assert_eq!(
+            flows
+                .iter()
+                .filter(|flow| flow.flow_end_reason == Some(FlowEndReason::LackOfResources))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn the_table_shrinks_once_a_burst_has_expired() {
+        let mut cache = FlowCache::new(60, 0, 1 << 20);
+        for port in 0..50_000 {
+            cache.update_flow(key(port), 100, 0);
+        }
+        assert!(cache.flows.capacity() >= 50_000);
+
+        assert_eq!(cache.check_expired_flows().len(), 50_000);
+        assert!(cache.flows.capacity() < 1024);
     }
 }

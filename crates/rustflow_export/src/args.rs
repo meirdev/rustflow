@@ -51,6 +51,11 @@ pub struct ExportArgs {
     #[arg(long, default_value = "15")]
     pub inactive_timeout: u64,
 
+    /// Most flows kept at once; when the cache is full, the flows idle
+    /// longest are exported early to make room
+    #[arg(long, default_value = "262144", value_parser = clap::value_parser!(u64).range(1..))]
+    pub max_flows: u64,
+
     /// Template refresh rate in seconds
     #[arg(long, default_value = "300")]
     pub template_refresh_rate: u64,

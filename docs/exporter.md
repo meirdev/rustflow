@@ -65,6 +65,14 @@ rustflow export \
   --inactive-timeout 30
 ```
 
+### Flow Table Size
+
+`--max-flows` limits how many flows the flow table holds at once, so a scan or flood of new
+flows cannot use unbounded memory. When the table is full, the flows idle longest are exported
+early, an eighth of the table at a time, with the flow end reason `lackOfResources` (5).
+
+The default is `262144` flows.
+
 ## Template Refresh
 
 IPFIX templates are periodically re-exported using `--template-refresh-rate`.

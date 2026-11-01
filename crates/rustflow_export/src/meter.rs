@@ -46,7 +46,11 @@ pub struct Meter {
 impl Meter {
     pub fn new(args: &ExportArgs, link: Link, source: SocketAddr, collector: SocketAddr) -> Self {
         let output = match args.mode {
-            Mode::Flow => Output::Flows(FlowCache::new(args.active_timeout, args.inactive_timeout)),
+            Mode::Flow => Output::Flows(FlowCache::new(
+                args.active_timeout,
+                args.inactive_timeout,
+                args.max_flows as usize,
+            )),
             Mode::Packet => Output::Packets {
                 clip_length: usize::from(args.clip_length),
                 pending: Vec::with_capacity(PACKET_BATCH),
@@ -98,7 +102,7 @@ impl Meter {
     /// Whether records should be exported before the next timer tick.
     pub fn is_full(&self) -> bool {
         match &self.output {
-            Output::Flows(_) => false,
+            Output::Flows(cache) => cache.has_evicted(),
             Output::Packets { pending, .. } => pending.len() >= PACKET_BATCH,
         }
     }
