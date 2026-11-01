@@ -44,9 +44,7 @@ pub const IPFIX_HEADER_SIZE: usize = 16;
 /// The sender controls the nesting, and each level costs stack.
 const MAX_LIST_DEPTH: usize = 8;
 
-// (observation_domain_id, template_id)
-type TemplateKey = (u32, u16);
-type Templates = TemplateCache<TemplateKey, ResolvedField>;
+type Templates = TemplateCache<ResolvedField>;
 
 pub struct IpfixParser {
     pub ie_registry: IERegistry,
@@ -130,7 +128,7 @@ impl IpfixParser {
                 "Withdrawing all templates for observation_domain_id: {}",
                 observation_domain_id
             );
-            map.retain(|(odid, _)| *odid != observation_domain_id);
+            map.remove_domain(observation_domain_id);
         } else {
             debug!(
                 "Withdrawing template for observation_domain_id: {}, template_id: {}",

@@ -31,9 +31,7 @@ pub const NETFLOW_V9_OPTIONS_TEMPLATE_FLOW_SET_ID: u16 = 1;
 // 2 (id) + 2 (length)
 const FLOW_SET_HEADER_SIZE: usize = 4;
 
-// (source_id, template_id)
-type TemplateKey = (u32, u16);
-type Templates = TemplateCache<TemplateKey, ResolvedField>;
+type Templates = TemplateCache<ResolvedField>;
 
 pub struct NetflowV9Parser {
     pub ie_registry: IERegistry,
