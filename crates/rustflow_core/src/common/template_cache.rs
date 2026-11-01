@@ -48,15 +48,18 @@ impl<K: Eq + Hash + Debug, F> TemplateCache<K, F> {
     }
 
     /// Stores or refreshes a template, unless that would take the cache past
-    /// [`MAX_TEMPLATE_FIELDS`]; a template already stored is never pushed out.
+    /// [`MAX_TEMPLATE_FIELDS`]. Other templates are never pushed out, but one
+    /// the exporter has just redefined is dropped: its data would otherwise
+    /// be read with the old layout.
     pub fn insert(&mut self, key: K, fields: Arc<[F]>) {
         let now = Instant::now();
         if now >= self.next_sweep || !self.fits(&key, &fields) {
             self.remove_expired(now);
             if !self.fits(&key, &fields) {
                 warn!(
-                    "Template {key:?} not stored: the exporter's templates would exceed {MAX_TEMPLATE_FIELDS} fields"
+                    "Template {key:?} not stored, and any earlier one dropped: the exporter's templates would exceed {MAX_TEMPLATE_FIELDS} fields"
                 );
+                self.remove(&key);
                 return;
             }
         }
@@ -132,6 +135,21 @@ mod tests {
         assert!(cache.contains_key(&1));
 
         cache.remove(&2);
+        cache.insert(3, fields(10));
+        assert!(cache.contains_key(&3));
+    }
+
+    #[test]
+    fn a_redefinition_past_the_budget_drops_the_old_template() {
+        let mut cache = TemplateCache::new(Duration::from_mins(10));
+        cache.insert(1, fields(MAX_TEMPLATE_FIELDS - 10));
+        cache.insert(2, fields(10));
+
+        cache.insert(2, fields(11));
+        assert!(cache.contains_key(&1));
+        assert!(!cache.contains_key(&2));
+
+        // Dropping it freed its share of the budget.
         cache.insert(3, fields(10));
         assert!(cache.contains_key(&3));
     }
