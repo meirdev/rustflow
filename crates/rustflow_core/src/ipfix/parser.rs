@@ -315,9 +315,10 @@ impl IpfixParser {
             (DataType::DateTimeSeconds, 4) => {
                 map(timestamp_secs, FieldValue::DateTimeSeconds).parse(input)
             }
-            (DataType::DateTimeMilliseconds, 8) => {
-                map(timestamp_millis, FieldValue::DateTimeMilliseconds).parse(input)
-            }
+            (DataType::DateTimeMilliseconds, 8) => map(timestamp_millis, |v| {
+                v.map_or(FieldValue::Null, FieldValue::DateTimeMilliseconds)
+            })
+            .parse(input),
             (DataType::DateTimeMicroseconds, 8) => {
                 map(timestamp_micros, FieldValue::DateTimeMicroseconds).parse(input)
             }
@@ -1301,6 +1302,43 @@ mod tests {
             value = &list.content[0];
         }
         assert!(matches!(value, FieldValue::OctetArray(_)));
+    }
+
+    #[test]
+    fn unrepresentable_timestamps_become_null_and_keep_the_set() {
+        // flowStartMilliseconds and octetDeltaCount
+        let mut parser = IpfixParser::default();
+        let template = template(256, &[(152, 8), (1, 4)]);
+        let record =
+            |millis: u64, octets: u32| [&millis.to_be_bytes()[..], &octets.to_be_bytes()].concat();
+        let data = [
+            record(u64::MAX >> 1, 1),
+            record(1_700_000_000_000, 2),
+            record(1_700_000_000_000, 3),
+        ]
+        .concat();
+
+        let msg = message(&[set(IPFIX_TEMPLATE_SET_ID, &template), set(256, &data)]);
+        let (_, packet) = parser.parse(&msg).unwrap();
+        let records = &packet.sets[1].records;
+        assert_eq!(records.len(), 3);
+        let Record::Data(first) = &records[0] else {
+            panic!("expected data record");
+        };
+        assert!(matches!(
+            first.values(),
+            [FieldValue::Null, FieldValue::Unsigned32(1)]
+        ));
+        let Record::Data(second) = &records[1] else {
+            panic!("expected data record");
+        };
+        assert!(matches!(
+            second.values(),
+            [
+                FieldValue::DateTimeMilliseconds(_),
+                FieldValue::Unsigned32(2)
+            ]
+        ));
     }
 
     #[test]

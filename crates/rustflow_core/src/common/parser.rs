@@ -33,8 +33,10 @@ pub fn timestamp_secs(input: &[u8]) -> IResult<&[u8], DateTime<Utc>> {
     map_opt(be_u32, |v| DateTime::<Utc>::from_timestamp_secs(v as i64)).parse(input)
 }
 
-pub fn timestamp_millis(input: &[u8]) -> IResult<&[u8], DateTime<Utc>> {
-    map_opt(be_u64, |v| DateTime::<Utc>::from_timestamp_millis(v as i64)).parse(input)
+/// `None` for a value no date can represent; the field is still consumed, so
+/// the rest of the record parses.
+pub fn timestamp_millis(input: &[u8]) -> IResult<&[u8], Option<DateTime<Utc>>> {
+    map(be_u64, |v| DateTime::<Utc>::from_timestamp_millis(v as i64)).parse(input)
 }
 
 pub fn timestamp_micros(input: &[u8]) -> IResult<&[u8], DateTime<Utc>> {

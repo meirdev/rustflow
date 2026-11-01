@@ -434,9 +434,10 @@ fn parse_field_value(
         (DataType::DateTimeSeconds, 4) => {
             map(timestamp_secs, FieldValue::DateTimeSeconds).parse(input)
         }
-        (DataType::DateTimeMilliseconds, 8) => {
-            map(timestamp_millis, FieldValue::DateTimeMilliseconds).parse(input)
-        }
+        (DataType::DateTimeMilliseconds, 8) => map(timestamp_millis, |v| {
+            v.map_or(FieldValue::Null, FieldValue::DateTimeMilliseconds)
+        })
+        .parse(input),
         (DataType::DateTimeMicroseconds, 8) => {
             map(timestamp_micros, FieldValue::DateTimeMicroseconds).parse(input)
         }
@@ -482,6 +483,43 @@ mod tests {
             assert_eq!(header.source_id, 7);
             assert_eq!(remaining, &[0xff]);
         }
+    }
+
+    #[test]
+    fn unrepresentable_timestamps_become_null_and_keep_the_flow_set() {
+        // Template 256: flowStartMilliseconds(152) and octetDeltaCount(1).
+        let template = hex!("0000 0010 0100 0002 0098 0008 0001 0004");
+        let data = [
+            &256u16.to_be_bytes()[..],
+            &28u16.to_be_bytes(),
+            &(u64::MAX >> 1).to_be_bytes(),
+            &1u32.to_be_bytes(),
+            &1_700_000_000_000u64.to_be_bytes(),
+            &2u32.to_be_bytes(),
+        ]
+        .concat();
+
+        let mut parser = NetflowV9Parser::default();
+        let (_, packet) = parser.parse(&packet(7, 3, &[&template, &data])).unwrap();
+        let records = &packet.flow_sets[1].records;
+        assert_eq!(records.len(), 2);
+        let Record::Data(first) = &records[0] else {
+            panic!("expected data record");
+        };
+        assert!(matches!(
+            first.values(),
+            [FieldValue::Null, FieldValue::Unsigned32(1)]
+        ));
+        let Record::Data(second) = &records[1] else {
+            panic!("expected data record");
+        };
+        assert!(matches!(
+            second.values(),
+            [
+                FieldValue::DateTimeMilliseconds(_),
+                FieldValue::Unsigned32(2)
+            ]
+        ));
     }
 
     #[test]
