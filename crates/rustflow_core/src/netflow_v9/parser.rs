@@ -2,7 +2,7 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::{DateTime, TimeDelta, Utc};
+use chrono::{DateTime, Utc};
 use log::{debug, warn};
 use macaddr::MacAddr6;
 use nom::bytes::complete::take;
@@ -21,7 +21,7 @@ use crate::common::parser::{
     be_int, be_uint, ipv4_addr, ipv6_addr, macaddr6, string, timestamp_micros, timestamp_millis,
     timestamp_nanos, timestamp_secs, vector, verify_version,
 };
-use crate::common::serializer::{serialize_as_hex, serialize_duration_millis, serialize_mac};
+use crate::common::serializer::{serialize_as_hex, serialize_mac};
 use crate::common::template_cache::TemplateCache;
 
 pub const NETFLOW_V9_VERSION: u16 = 9;
@@ -187,8 +187,7 @@ pub struct NetFlowV9Packet {
 pub struct Header {
     pub version: u16,
     pub count: u16,
-    #[serde(serialize_with = "serialize_duration_millis")]
-    pub system_uptime: TimeDelta,
+    pub system_uptime: u32,
     pub unix_seconds: DateTime<Utc>,
     pub sequence_number: u32,
     pub source_id: u32,
@@ -197,8 +196,7 @@ pub struct Header {
 fn parse_header(input: &[u8]) -> IResult<&[u8], Header> {
     let (input, version) = verify_version(input, NETFLOW_V9_VERSION)?;
     let (input, count) = be_u16(input)?;
-    let (input, system_uptime) =
-        map(be_u32, |ms| TimeDelta::milliseconds(i64::from(ms))).parse(input)?;
+    let (input, system_uptime) = be_u32(input)?;
     let (input, unix_seconds) = timestamp_secs(input)?;
     let (input, sequence_number) = be_u32(input)?;
     let (input, source_id) = be_u32(input)?;
@@ -477,7 +475,7 @@ mod tests {
 
             let (remaining, header) = parse_header(&bytes).unwrap();
 
-            assert_eq!(header.system_uptime.num_milliseconds(), i64::from(millis));
+            assert_eq!(header.system_uptime, millis);
             assert_eq!(header.source_id, 7);
             assert_eq!(remaining, &[0xff]);
         }

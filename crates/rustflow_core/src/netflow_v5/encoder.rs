@@ -1,5 +1,4 @@
 use bytes::BufMut;
-use chrono::{DateTime, Utc};
 
 use super::parser::{FlowRecord, Header, NetFlowV5Packet};
 use crate::common::encoder::Encode;
@@ -22,7 +21,7 @@ impl Encode for Header {
     fn encode<B: BufMut>(&self, buf: &mut B) {
         buf.put_u16(self.version);
         buf.put_u16(self.count);
-        put_millis(&self.sys_uptime, buf);
+        buf.put_u32(self.sys_uptime);
         buf.put_u32(self.unix_secs);
         buf.put_u32(self.unix_nsecs);
         buf.put_u32(self.flow_sequence);
@@ -41,8 +40,8 @@ impl Encode for FlowRecord {
         buf.put_u16(self.output);
         buf.put_u32(self.d_pkts);
         buf.put_u32(self.d_ockts);
-        put_millis(&self.first, buf);
-        put_millis(&self.last, buf);
+        buf.put_u32(self.first);
+        buf.put_u32(self.last);
         buf.put_u16(self.srcport);
         buf.put_u16(self.dstport);
         buf.put_u8(0);
@@ -55,8 +54,4 @@ impl Encode for FlowRecord {
         buf.put_u8(self.dst_mask);
         buf.put_u16(0);
     }
-}
-
-fn put_millis<B: BufMut>(dt: &DateTime<Utc>, buf: &mut B) {
-    buf.put_u32(dt.timestamp_millis() as u32);
 }
