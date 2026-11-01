@@ -46,13 +46,13 @@ pub struct IEDefinition {
 
 #[derive(Clone)]
 pub struct IERegistry {
-    elements: FxHashMap<(u16, Option<u32>), IEDefinition>,
+    elements: Arc<FxHashMap<(u16, Option<u32>), IEDefinition>>,
 }
 
 impl IERegistry {
     pub fn new() -> Self {
         IERegistry {
-            elements: FxHashMap::default(),
+            elements: Arc::default(),
         }
     }
 
@@ -75,7 +75,7 @@ impl IERegistry {
             name: name.into(),
             data_type,
         };
-        self.elements.insert((id, enterprise_number), def);
+        Arc::make_mut(&mut self.elements).insert((id, enterprise_number), def);
     }
 
     pub fn lookup(&self, id: u16, enterprise_number: Option<u32>) -> Option<&IEDefinition> {
@@ -89,11 +89,12 @@ impl IERegistry {
 
     pub fn load_from_csv<P: AsRef<Path>>(&mut self, path: P) -> Result<usize, csv::Error> {
         let mut reader = csv::Reader::from_path(path)?;
+        let elements = Arc::make_mut(&mut self.elements);
         let mut count = 0;
 
         for result in reader.deserialize() {
             let def: IEDefinition = result?;
-            self.elements.insert((def.id, def.enterprise_number), def);
+            elements.insert((def.id, def.enterprise_number), def);
             count += 1;
         }
 
@@ -614,5 +615,22 @@ impl IERegistry {
 impl Default for IERegistry {
     fn default() -> Self {
         Self::new_with_iana_elements()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clones_share_the_table_until_one_is_changed() {
+        let registry = IERegistry::new_with_iana_elements();
+        let mut custom = registry.clone();
+        assert!(Arc::ptr_eq(&registry.elements, &custom.elements));
+
+        custom.add_element(40000, Some(1), "custom", DataType::Unsigned);
+        assert!(registry.lookup(40000, Some(1)).is_none());
+        assert!(custom.lookup(40000, Some(1)).is_some());
+        assert!(custom.lookup(1, None).is_some());
     }
 }
