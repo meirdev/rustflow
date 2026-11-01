@@ -181,6 +181,8 @@ struct Domain {
     /// From options records that name a sampler (`samplerId` or
     /// `selectorId`), for the data records that name the same one.
     sampler_rates: FxHashMap<u64, u32>,
+    /// The rate all of `sampler_rates` share, if they agree.
+    shared_sampler_rate: Option<u32>,
     system_init_time_ms: Option<i64>,
 }
 
@@ -197,9 +199,17 @@ impl Domain {
                 }
             }
         }
+        let mut rates = self.sampler_rates.values();
+        self.shared_sampler_rate = rates
+            .next()
+            .copied()
+            .filter(|first| rates.all(|rate| rate == first));
     }
 
-    /// The rate of a data record: its sampler's, or else the domain's.
+    /// The rate of a data record: its sampler's, or else the domain's. A
+    /// record that names no known sampler, in a domain without a rate of its
+    /// own, takes the samplers' rate when they agree: many exporters name the
+    /// sampler only in the options record.
     /// `sampler_id` is only read when some sampler has a rate of its own.
     fn sampling_rate(&self, sampler_id: impl FnOnce() -> Option<u64>) -> Option<u32> {
         if self.sampler_rates.is_empty() {
@@ -208,6 +218,7 @@ impl Domain {
         sampler_id()
             .and_then(|id| self.sampler_rates.get(&id).copied())
             .or(self.sampling_rate)
+            .or(self.shared_sampler_rate)
     }
 }
 
@@ -593,5 +604,41 @@ mod tests {
             .map(|flow| flow.sampling_rate)
             .collect();
         assert_eq!(rates, [Some(100), Some(1000), Some(10)]);
+    }
+
+    #[test]
+    fn records_naming_no_sampler_take_the_rate_their_samplers_agree_on() {
+        // Data template 256 names no sampler. Options template 257: scoped by
+        // selectorId, with samplingInterval.
+        let templates = [
+            ipfix_set(2, &words(&[256, 1, 1, 4])),
+            ipfix_set(3, &words(&[257, 2, 1, 302, 1, 34, 4])),
+        ];
+        let message = |sets: &[Vec<u8>]| {
+            let sets = sets.concat();
+            [
+                words(&[10, 16 + sets.len() as u16]),
+                vec![0; 8],
+                1u32.to_be_bytes().to_vec(),
+                sets,
+            ]
+            .concat()
+        };
+        let data = ipfix_set(256, &500u32.to_be_bytes());
+        let src: IpAddr = [192, 0, 2, 1].into();
+        let mut processor = NetflowProcessor::new();
+        let mut rate_of = |options: &[u8]| {
+            let sets = [
+                templates.to_vec(),
+                vec![ipfix_set(257, options), data.clone()],
+            ]
+            .concat();
+            let packet = processor.parse(src, &message(&sets)).unwrap();
+            processor.convert(src, &packet, None)[0].sampling_rate
+        };
+
+        assert_eq!(rate_of(&selector_record(7, 100)), Some(100));
+        assert_eq!(rate_of(&selector_record(8, 100)), Some(100));
+        assert_eq!(rate_of(&selector_record(8, 1000)), None);
     }
 }
