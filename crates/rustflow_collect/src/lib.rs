@@ -89,7 +89,7 @@ fn collect<P: Processor>(
         exporters.record_packet(src, packet.version(), payload.len(), packet.flow_count());
 
         match format {
-            OutputFormat::Raw => output.push_raw(&packet)?,
+            OutputFormat::Raw => output.push_raw(&packet, packet.flow_count())?,
             OutputFormat::Common => {
                 output.push(processor.convert(src, &packet, time_received_ns))?
             }

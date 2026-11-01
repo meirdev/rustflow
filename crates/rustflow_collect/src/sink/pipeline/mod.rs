@@ -42,7 +42,11 @@ const PIPELINE_DEPTH: usize = 1024;
 /// JSON lines the ingest thread wrote for `--format raw`.
 pub enum Chunk {
     Flows(Vec<CommonFlow>),
-    Raw(Vec<u8>),
+    /// JSON lines, and the flows the packets they hold carry.
+    Raw {
+        lines: Vec<u8>,
+        flows: usize,
+    },
 }
 
 /// The encoder thread and the channel feeding it. Each ingest thread gets
@@ -79,6 +83,7 @@ impl Pipeline {
             flows: Vec::with_capacity(CHUNK_RECORDS),
             raw: Vec::new(),
             raw_records: 0,
+            raw_flows: 0,
             discard: self.discard,
             chunk_started: Instant::now(),
         }
@@ -107,6 +112,7 @@ pub struct Producer {
     flows: Vec<CommonFlow>,
     raw: Vec<u8>,
     raw_records: usize,
+    raw_flows: usize,
     discard: bool,
     /// When the first record of the current chunk arrived.
     chunk_started: Instant,
@@ -122,19 +128,23 @@ impl Producer {
     }
 
     /// Queue a raw packet as one JSON line.
-    pub fn push_raw<T: Serialize + ?Sized>(&mut self, record: &T) -> Result<(), EncoderGone> {
-        if self.discard {
-            return Ok(());
-        }
+    pub fn push_raw<T: Serialize + ?Sized>(
+        &mut self,
+        record: &T,
+        flows: usize,
+    ) -> Result<(), EncoderGone> {
         self.start_chunk();
-        serde_json::to_writer(&mut self.raw, record).expect("packet types serialize");
-        self.raw.push(b'\n');
+        if !self.discard {
+            serde_json::to_writer(&mut self.raw, record).expect("packet types serialize");
+            self.raw.push(b'\n');
+        }
         self.raw_records += 1;
+        self.raw_flows += flows;
         self.send_if_ready(self.raw_records)
     }
 
     fn start_chunk(&mut self) {
-        if self.flows.is_empty() && self.raw.is_empty() {
+        if self.flows.is_empty() && self.raw_records == 0 {
             self.chunk_started = Instant::now();
         }
     }
@@ -152,10 +162,11 @@ impl Producer {
             let full = std::mem::replace(&mut self.flows, Vec::with_capacity(CHUNK_RECORDS));
             self.send(Chunk::Flows(full))?;
         }
-        if !self.raw.is_empty() {
-            let full = std::mem::take(&mut self.raw);
+        if self.raw_records > 0 {
+            let lines = std::mem::take(&mut self.raw);
+            let flows = std::mem::take(&mut self.raw_flows);
             self.raw_records = 0;
-            self.send(Chunk::Raw(full))?;
+            self.send(Chunk::Raw { lines, flows })?;
         }
         Ok(())
     }
@@ -198,7 +209,10 @@ pub fn encoder_loop(
                         }
                         metrics.flows.inc_by(flows.len() as u64);
                     }
-                    Chunk::Raw(lines) => errors.write(sink.write_raw(&lines)),
+                    Chunk::Raw { lines, flows } => {
+                        errors.write(sink.write_raw(&lines));
+                        metrics.flows.inc_by(flows as u64);
+                    }
                 }
             }
             Err(RecvTimeoutError::Timeout) => {}
