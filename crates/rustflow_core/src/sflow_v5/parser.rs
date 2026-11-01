@@ -64,42 +64,7 @@ fn parse_sflow_v5(input: &[u8]) -> IResult<&[u8], SFlowV5> {
     let (input, uptime) = be_u32(input)?;
     let (input, sample_count) = be_u32(input)?;
 
-    let (input, samples) = count(
-        |v| {
-            let (input, data_format) = peek(be_u32).parse(v)?;
-
-            match SampleFormat::try_from(data_format) {
-                Ok(SampleFormat::Flow) => {
-                    let (input, v) = parse_flow_sample(v)?;
-                    Ok((input, Sample::Flow(v)))
-                }
-                Ok(SampleFormat::Counter) => {
-                    let (input, v) = parse_counter_sample(v)?;
-                    Ok((input, Sample::Counter(v)))
-                }
-                Ok(SampleFormat::ExpandedFlow) => {
-                    let (input, v) = parse_expanded_flow_sample(v)?;
-                    Ok((input, Sample::ExpandedFlow(v)))
-                }
-                Ok(SampleFormat::ExpandedCounter) => {
-                    let (input, v) = parse_counter_sample(v)?;
-                    Ok((input, Sample::ExpandedCounter(v)))
-                }
-                Ok(SampleFormat::Drop) => {
-                    let (input, v) = parse_drop_sample(v)?;
-                    Ok((input, Sample::Drop(v)))
-                }
-                Err(_) => {
-                    let (input, _format) = be_u32(input)?;
-                    let (input, length) = be_u32(input)?;
-                    let (input, data) = take(length as usize)(input)?;
-                    Ok((input, Sample::Unknown(data.to_vec())))
-                }
-            }
-        },
-        sample_count.to_usize(),
-    )
-    .parse(input)?;
+    let (input, samples) = count(parse_sample, sample_count.to_usize()).parse(input)?;
 
     Ok((
         input,
@@ -112,6 +77,28 @@ fn parse_sflow_v5(input: &[u8]) -> IResult<&[u8], SFlowV5> {
             samples,
         },
     ))
+}
+
+fn parse_sample(input: &[u8]) -> IResult<&[u8], Sample> {
+    let (_, (format, length)) = peek((be_u32, be_u32)).parse(input)?;
+    let (input, sample) = take(length.to_usize().saturating_add(8))(input)?;
+
+    let unknown = || Sample::Unknown(sample[8..].to_vec());
+
+    let parsed = match SampleFormat::try_from(format) {
+        Ok(SampleFormat::Flow) => parse_flow_sample(sample).map(|(_, v)| Sample::Flow(v)),
+        Ok(SampleFormat::Counter) => parse_counter_sample(sample).map(|(_, v)| Sample::Counter(v)),
+        Ok(SampleFormat::ExpandedFlow) => {
+            parse_expanded_flow_sample(sample).map(|(_, v)| Sample::ExpandedFlow(v))
+        }
+        Ok(SampleFormat::ExpandedCounter) => {
+            parse_counter_sample(sample).map(|(_, v)| Sample::ExpandedCounter(v))
+        }
+        Ok(SampleFormat::Drop) => parse_drop_sample(sample).map(|(_, v)| Sample::Drop(v)),
+        Err(_) => return Ok((input, unknown())),
+    };
+
+    Ok((input, parsed.unwrap_or_else(|_| unknown())))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -363,68 +350,68 @@ pub struct FlowRecord {
 
 fn parse_flow_record(input: &[u8]) -> IResult<&[u8], FlowRecord> {
     let (input, header) = parse_record_header(input)?;
-    let (input, data) = map(take(header.length as usize), |v| {
-        match FlowType::try_from(header.data_format) {
-            Ok(FlowType::SampledHeader) => {
-                let (_input, v) = parse_sampled_header(v)?;
-                Ok(FlowRecordType::SampledHeader(v))
-            }
-            Ok(FlowType::SampledEthernet) => {
-                let (_input, v) = parse_sampled_ethernet(v)?;
-                Ok(FlowRecordType::SampledEthernet(v))
-            }
-            Ok(FlowType::SampledIpv4) => {
-                let (_input, v) = parse_sampled_ipv4(v)?;
-                Ok(FlowRecordType::SampledIpv4(v))
-            }
-            Ok(FlowType::SampledIpv6) => {
-                let (_input, v) = parse_sampled_ipv6(v)?;
-                Ok(FlowRecordType::SampledIpv6(v))
-            }
-            Ok(FlowType::ExtendedSwitch) => {
-                let (_input, v) = parse_extended_switch(v)?;
-                Ok(FlowRecordType::ExtendedSwitch(v))
-            }
-            Ok(FlowType::ExtendedRouter) => {
-                let (_input, v) = parse_extended_router(v)?;
-                Ok(FlowRecordType::ExtendedRouter(v))
-            }
-            Ok(FlowType::ExtendedGateway) => {
-                let (_input, v) = parse_extended_gateway(v)?;
-                Ok(FlowRecordType::ExtendedGateway(v))
-            }
-            Ok(FlowType::ExtendedUser) => {
-                let (_input, v) = parse_extended_user(v)?;
-                Ok(FlowRecordType::ExtendedUser(v))
-            }
-            Ok(FlowType::ExtendedUrl) => {
-                let (_input, v) = parse_extended_url(v)?;
-                Ok(FlowRecordType::ExtendedUrl(v))
-            }
-            Ok(FlowType::ExtendedEgressQueue) => {
-                let (_input, v) = parse_extended_egress_queue(v)?;
-                Ok(FlowRecordType::ExtendedEgressQueue(v))
-            }
-            Ok(FlowType::ExtendedAcl) => {
-                let (_input, v) = parse_extended_acl(v)?;
-                Ok(FlowRecordType::ExtendedAcl(v))
-            }
-            Ok(FlowType::ExtendedFunction) => {
-                let (_input, v) = parse_extended_function(v)?;
-                Ok(FlowRecordType::ExtendedFunction(v))
-            }
-            Err(_) => Ok(FlowRecordType::Unknown(v.to_vec())),
-        }
-    })
-    .parse(input)?;
+    let (input, data) = take(header.length as usize)(input)?;
+    let data = flow_record_data(header.data_format, data)
+        .unwrap_or_else(|_| FlowRecordType::Unknown(data.to_vec()));
 
-    Ok((
-        input,
-        FlowRecord {
-            header,
-            data: data?,
-        },
-    ))
+    Ok((input, FlowRecord { header, data }))
+}
+
+fn flow_record_data(
+    format: u32,
+    v: &[u8],
+) -> Result<FlowRecordType, nom::Err<nom::error::Error<&[u8]>>> {
+    match FlowType::try_from(format) {
+        Ok(FlowType::SampledHeader) => {
+            let (_input, v) = parse_sampled_header(v)?;
+            Ok(FlowRecordType::SampledHeader(v))
+        }
+        Ok(FlowType::SampledEthernet) => {
+            let (_input, v) = parse_sampled_ethernet(v)?;
+            Ok(FlowRecordType::SampledEthernet(v))
+        }
+        Ok(FlowType::SampledIpv4) => {
+            let (_input, v) = parse_sampled_ipv4(v)?;
+            Ok(FlowRecordType::SampledIpv4(v))
+        }
+        Ok(FlowType::SampledIpv6) => {
+            let (_input, v) = parse_sampled_ipv6(v)?;
+            Ok(FlowRecordType::SampledIpv6(v))
+        }
+        Ok(FlowType::ExtendedSwitch) => {
+            let (_input, v) = parse_extended_switch(v)?;
+            Ok(FlowRecordType::ExtendedSwitch(v))
+        }
+        Ok(FlowType::ExtendedRouter) => {
+            let (_input, v) = parse_extended_router(v)?;
+            Ok(FlowRecordType::ExtendedRouter(v))
+        }
+        Ok(FlowType::ExtendedGateway) => {
+            let (_input, v) = parse_extended_gateway(v)?;
+            Ok(FlowRecordType::ExtendedGateway(v))
+        }
+        Ok(FlowType::ExtendedUser) => {
+            let (_input, v) = parse_extended_user(v)?;
+            Ok(FlowRecordType::ExtendedUser(v))
+        }
+        Ok(FlowType::ExtendedUrl) => {
+            let (_input, v) = parse_extended_url(v)?;
+            Ok(FlowRecordType::ExtendedUrl(v))
+        }
+        Ok(FlowType::ExtendedEgressQueue) => {
+            let (_input, v) = parse_extended_egress_queue(v)?;
+            Ok(FlowRecordType::ExtendedEgressQueue(v))
+        }
+        Ok(FlowType::ExtendedAcl) => {
+            let (_input, v) = parse_extended_acl(v)?;
+            Ok(FlowRecordType::ExtendedAcl(v))
+        }
+        Ok(FlowType::ExtendedFunction) => {
+            let (_input, v) = parse_extended_function(v)?;
+            Ok(FlowRecordType::ExtendedFunction(v))
+        }
+        Err(_) => Ok(FlowRecordType::Unknown(v.to_vec())),
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -459,7 +446,23 @@ fn parse_counter_record(input: &[u8]) -> IResult<&[u8], CounterRecord> {
     let (input, header) = parse_record_header(input)?;
     let (input, data) = take(header.length as usize)(input)?;
 
-    let record = match CounterType::try_from(header.data_format) {
+    let record = counter_record_data(header.data_format, data)
+        .unwrap_or_else(|_| CounterRecordType::Unknown(data.to_vec()));
+
+    Ok((
+        input,
+        CounterRecord {
+            header,
+            data: vec![record],
+        },
+    ))
+}
+
+fn counter_record_data(
+    format: u32,
+    data: &[u8],
+) -> Result<CounterRecordType, nom::Err<nom::error::Error<&[u8]>>> {
+    Ok(match CounterType::try_from(format) {
         Ok(CounterType::IfCounters) => CounterRecordType::IfCounters(parse_if_counters(data)?.1),
         Ok(CounterType::EthernetCounters) => {
             CounterRecordType::EthernetCounters(parse_ethernet_counters(data)?.1)
@@ -473,15 +476,7 @@ fn parse_counter_record(input: &[u8]) -> IResult<&[u8], CounterRecord> {
         }
         Ok(CounterType::Processor) => CounterRecordType::Processor(parse_processor(data)?.1),
         Err(_) => CounterRecordType::Unknown(data.to_vec()),
-    };
-
-    Ok((
-        input,
-        CounterRecord {
-            header,
-            data: vec![record],
-        },
-    ))
+    })
 }
 
 #[derive(Debug, Clone, Serialize, TryFromPrimitive)]
@@ -1284,4 +1279,82 @@ fn parse_xdr_string(input: &[u8]) -> IResult<&[u8], String> {
     let (input, _) = take(padding)(input)?;
 
     Ok((input, string))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn words(values: &[u32]) -> Vec<u8> {
+        values.iter().flat_map(|v| v.to_be_bytes()).collect()
+    }
+
+    /// A format word, a length word and the data.
+    fn opaque(format: u32, data: &[u8]) -> Vec<u8> {
+        [words(&[format, data.len() as u32]), data.to_vec()].concat()
+    }
+
+    fn datagram(samples: &[Vec<u8>]) -> Vec<u8> {
+        // Version, IPv4 agent 192.0.2.1, sub-agent, sequence, uptime.
+        let header = words(&[5, 1, 0xc000_0201, 0, 1, 1000, samples.len() as u32]);
+        [header, samples.concat()].concat()
+    }
+
+    /// A flow sample stating `count` records, followed by `trailing` bytes.
+    fn flow_sample(count: u32, records: &[Vec<u8>], trailing: &[u8]) -> Vec<u8> {
+        // Sequence, source ID, sampling rate, pool, drops, input, output.
+        let fields = words(&[1, 3, 100, 100, 0, 3, 4, count]);
+        opaque(1, &[fields, records.concat(), trailing.to_vec()].concat())
+    }
+
+    fn sampled_header(protocol: u32) -> Vec<u8> {
+        // Protocol, frame length, stripped, header length, header.
+        opaque(1, &words(&[protocol, 64, 4, 4, 0]))
+    }
+
+    fn counter_sample() -> Vec<u8> {
+        // Sequence, source ID, no records.
+        opaque(2, &words(&[1, 3, 0]))
+    }
+
+    fn parse(samples: &[Vec<u8>]) -> Vec<Sample> {
+        let (_, packet) = parse_sflow_v5(&datagram(samples)).unwrap();
+        packet.samples
+    }
+
+    #[test]
+    fn a_record_that_does_not_parse_is_kept_as_bytes() {
+        // Header protocol 15 (802.11) is not one this parser knows.
+        let samples = parse(&[flow_sample(1, &[sampled_header(15)], &[]), counter_sample()]);
+        let [Sample::Flow(flow), Sample::Counter(_)] = samples.as_slice() else {
+            panic!("expected a flow and a counter sample, got {samples:?}");
+        };
+        assert!(matches!(flow.records[0].data, FlowRecordType::Unknown(_)));
+        assert_eq!(flow.input, 3);
+    }
+
+    #[test]
+    fn bytes_past_a_sample_records_are_skipped() {
+        let samples = parse(&[
+            flow_sample(1, &[sampled_header(1)], &[0; 8]),
+            counter_sample(),
+        ]);
+        let [Sample::Flow(flow), Sample::Counter(_)] = samples.as_slice() else {
+            panic!("expected a flow and a counter sample, got {samples:?}");
+        };
+        assert!(matches!(
+            flow.records[0].data,
+            FlowRecordType::SampledHeader(_)
+        ));
+    }
+
+    #[test]
+    fn a_sample_that_does_not_parse_is_kept_as_bytes() {
+        // Two records stated, one present.
+        let samples = parse(&[flow_sample(2, &[sampled_header(1)], &[]), counter_sample()]);
+        assert!(
+            matches!(samples.as_slice(), [Sample::Unknown(_), Sample::Counter(_)]),
+            "{samples:?}"
+        );
+    }
 }
