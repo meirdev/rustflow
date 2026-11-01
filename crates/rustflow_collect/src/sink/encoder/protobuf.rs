@@ -9,7 +9,7 @@ use super::{Encoder, WRITE_BUFFER_BYTES, Writer};
 use crate::enrich::Enriched;
 
 /// `rustflow.CommonFlow` of `proto/rustflow.proto`. Tags are the wire
-/// contract: new fields get tags from 39, 38 is the enrichment map.
+/// contract: new fields get tags from 40, 39 is the enrichment map.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct FlowMessage {
     #[prost(string, tag = "1")]
