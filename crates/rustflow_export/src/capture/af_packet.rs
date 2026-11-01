@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::{io, mem, ptr, slice};
 
 use anyhow::{Result, anyhow};
-use log::info;
+use log::{info, warn};
 
 use super::{Capture, Frame, Link};
 
@@ -252,6 +252,16 @@ impl AfPacket {
                 revents: 0,
             };
             let ret = unsafe { libc::poll(&mut pfd, 1, 1000) };
+            if ret > 0 && pfd.revents & libc::POLLERR != 0 {
+                // A pending socket error, such as ENETDOWN once the
+                // interface goes down, makes poll return at once until it is
+                // read.
+                match take_error(&self.socket) {
+                    Ok(Some(e)) | Err(e) => warn!("Capture error: {}", e),
+                    Ok(None) => {}
+                }
+                return false;
+            }
             if ret <= 0 || !self.block_ready() {
                 return false;
             }
@@ -323,6 +333,25 @@ fn is_loopback_echo(frame: *const u8) -> bool {
     let offset = libc::TPACKET3_HDRLEN - mem::size_of::<libc::sockaddr_ll>();
     let sll = unsafe { &*(frame.add(offset) as *const libc::sockaddr_ll) };
     sll.sll_pkttype == libc::PACKET_OUTGOING && sll.sll_hatype == libc::ARPHRD_LOOPBACK
+}
+
+/// Reads and clears the socket's pending error.
+fn take_error(socket: &OwnedFd) -> io::Result<Option<io::Error>> {
+    let mut error: libc::c_int = 0;
+    let mut length = mem::size_of::<libc::c_int>() as libc::socklen_t;
+    let ret = unsafe {
+        libc::getsockopt(
+            socket.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_ERROR,
+            ptr::from_mut(&mut error).cast(),
+            &mut length,
+        )
+    };
+    if ret < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok((error != 0).then(|| io::Error::from_raw_os_error(error)))
 }
 
 fn get_interface_index(socket: &OwnedFd, interface: &str) -> Result<libc::c_int> {

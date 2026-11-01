@@ -2,7 +2,7 @@
 use std::os::fd::AsRawFd;
 
 use anyhow::{Context, Result, bail};
-use log::{debug, info};
+use log::{info, warn};
 use pcap::{Active, Linktype};
 
 use super::{Capture, Frame, Link};
@@ -108,7 +108,7 @@ impl Capture for Libpcap {
             Ok(packet) => packet,
             Err(pcap::Error::TimeoutExpired) => return None,
             Err(e) => {
-                debug!("pcap read error: {}", e);
+                warn!("pcap read error: {}", e);
                 return None;
             }
         };
