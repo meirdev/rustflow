@@ -36,16 +36,18 @@ const UDP: u8 = 17;
 
 pub struct Meter {
     link: Link,
-    /// The exporter's own datagrams, from `source` to `collector`, are not
-    /// metered: on the capture interface each would produce more of them.
-    source: SocketAddr,
+    /// The exporter's own datagrams, from `local_port` to `collector`, are
+    /// not metered: on the capture interface each would produce more of
+    /// them. Their source address is whatever the route picks, so it is not
+    /// matched.
+    local_port: u16,
     collector: SocketAddr,
     sampler: Sampler,
     output: Output,
 }
 
 impl Meter {
-    pub fn new(args: &ExportArgs, link: Link, source: SocketAddr, collector: SocketAddr) -> Self {
+    pub fn new(args: &ExportArgs, link: Link, local_port: u16, collector: SocketAddr) -> Self {
         let output = match args.mode {
             Mode::Flow => Output::Flows(FlowCache::new(
                 args.active_timeout,
@@ -59,7 +61,7 @@ impl Meter {
         };
         Self {
             link,
-            source,
+            local_port,
             collector,
             sampler: Sampler::new(args.sampling()),
             output,
@@ -69,8 +71,7 @@ impl Meter {
     fn is_export(&self, packet: &PacketInfo) -> bool {
         let key = &packet.flow_key;
         key.protocol == UDP
-            && key.source_ip == self.source.ip()
-            && key.source_port == self.source.port()
+            && key.source_port == self.local_port
             && key.destination_ip == self.collector.ip()
             && key.destination_port == self.collector.port()
     }
@@ -149,21 +150,16 @@ mod tests {
         args: ExportArgs,
     }
 
-    /// A meter for an exporter sending from `source` to the collector the
-    /// flags name.
-    fn meter_from(source: &str, flags: &[&str]) -> Meter {
+    /// A meter for an exporter sending from `local_port` to the collector
+    /// the flags name.
+    fn meter_from(local_port: u16, flags: &[&str]) -> Meter {
         let cli = Cli::parse_from([&["export"], flags].concat());
         let collector = cli.args.collector_addr().unwrap();
-        Meter::new(
-            &cli.args,
-            Link::Ethernet,
-            source.parse().unwrap(),
-            collector,
-        )
+        Meter::new(&cli.args, Link::Ethernet, local_port, collector)
     }
 
     fn meter(flags: &[&str]) -> Meter {
-        meter_from("10.0.0.9:9", flags)
+        meter_from(9, flags)
     }
 
     /// Ethernet + IPv4 + UDP, 10.0.0.1:1111 -> 10.0.0.2:2222, no payload.
@@ -229,10 +225,7 @@ mod tests {
     #[test]
     fn own_export_datagrams_are_not_metered() {
         for mode in ["flow", "packet"] {
-            let mut meter = meter_from(
-                "10.0.0.1:1111",
-                &["--mode", mode, "-H", "10.0.0.2", "-p", "2222"],
-            );
+            let mut meter = meter_from(1111, &["--mode", mode, "-H", "10.0.0.2", "-p", "2222"]);
             observe(&mut meter, &udp_frame(), 10);
 
             match meter.take_all() {
@@ -245,10 +238,7 @@ mod tests {
     #[test]
     fn another_sender_to_the_collector_is_metered() {
         for mode in ["flow", "packet"] {
-            let mut meter = meter_from(
-                "10.0.0.1:3333",
-                &["--mode", mode, "-H", "10.0.0.2", "-p", "2222"],
-            );
+            let mut meter = meter_from(3333, &["--mode", mode, "-H", "10.0.0.2", "-p", "2222"]);
             observe(&mut meter, &udp_frame(), 10);
 
             match meter.take_all() {

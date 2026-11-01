@@ -37,16 +37,15 @@ impl Exporter {
         info!("Exporting to collector at {}", collector_addr);
 
         // The socket stays unconnected: a connected one fails its next send
-        // after any ICMP port unreachable, as while the collector is down. A
-        // connected probe still learns the source address the route uses,
-        // which the meter needs to recognise the exporter's own datagrams.
-        let probe = UdpSocket::bind(if collector_addr.is_ipv6() {
+        // after any ICMP port unreachable, as while the collector is down. It
+        // is not bound to an address either, so each send takes the source
+        // address the route picks then, and a link-local collector keeps its
+        // scope.
+        let socket = UdpSocket::bind(if collector_addr.is_ipv6() {
             "[::]:0"
         } else {
             "0.0.0.0:0"
         })?;
-        probe.connect(collector_addr)?;
-        let socket = UdpSocket::bind((probe.local_addr()?.ip(), 0))?;
 
         Ok(Self {
             socket,
@@ -300,16 +299,6 @@ mod tests {
             exporter.send(Records::Flows(vec![flow()])).unwrap();
             std::thread::sleep(Duration::from_millis(20));
         }
-    }
-
-    #[test]
-    fn the_exporter_sends_from_the_address_the_route_picks() {
-        let receiver = receiver();
-        let exporter = exporter(&receiver, &[]);
-        assert_eq!(
-            exporter.local_addr().unwrap().ip(),
-            std::net::Ipv4Addr::LOCALHOST
-        );
     }
 
     #[test]

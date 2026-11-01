@@ -47,7 +47,7 @@ pub fn run(args: ExportArgs) -> Result<()> {
     let mut meter = Meter::new(
         &args,
         capture.link(),
-        exporter.local_addr()?,
+        exporter.local_addr()?.port(),
         exporter.collector_addr(),
     );
 
