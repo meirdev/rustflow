@@ -394,6 +394,7 @@ impl IpfixGenerator {
             }],
         };
 
+        self.sequence_number = self.sequence_number.wrapping_add(1);
         self.send_packet(&packet)
     }
 
