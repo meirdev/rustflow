@@ -40,6 +40,10 @@ pub const SET_HEADER_SIZE: usize = 4;
 /// (sequence_number) + 4 (observation_domain_id)
 pub const IPFIX_HEADER_SIZE: usize = 16;
 
+/// How deep lists (RFC 6313) may nest before the rest is kept undecoded.
+/// The sender controls the nesting, and each level costs stack.
+const MAX_LIST_DEPTH: usize = 8;
+
 // (observation_domain_id, template_id)
 type TemplateKey = (u32, u16);
 type TemplateCache = TimeoutHashMap<TemplateKey, Arc<[ResolvedField]>>;
@@ -75,6 +79,7 @@ impl IpfixParser {
         input: &'a [u8],
         observation_domain_id: u32,
         template_id: u16,
+        depth: usize,
     ) -> IResult<&'a [u8], Vec<Record>> {
         let key = (observation_domain_id, template_id);
 
@@ -99,7 +104,7 @@ impl IpfixParser {
         }
 
         let (input, records) =
-            many0(|i| self.parse_record_from_fields(i, observation_domain_id, fields))
+            many0(|i| self.parse_record_from_fields(i, observation_domain_id, fields, depth))
                 .parse(input)?;
         if records.is_empty() && !input.is_empty() {
             warn!(
@@ -232,7 +237,7 @@ impl IpfixParser {
                 ))
             }
             template_id if IPFIX_VALID_TEMPLATE_ID.contains(&template_id) => {
-                self.parse_templated_records(input, observation_domain_id, template_id)
+                self.parse_templated_records(input, observation_domain_id, template_id, 0)
             }
             _ => {
                 warn!("Invalid set ID: {}. Skipping.", set_id);
@@ -247,6 +252,7 @@ impl IpfixParser {
         input: &'a [u8],
         observation_domain_id: u32,
         fields: &Arc<[ResolvedField]>,
+        depth: usize,
     ) -> IResult<&'a [u8], DataRecord> {
         let mut values = Vec::with_capacity(fields.len());
         let mut remaining = input;
@@ -258,6 +264,7 @@ impl IpfixParser {
                 observation_domain_id,
                 field.data_type,
                 field_length,
+                depth,
             )?;
             values.push(value);
             remaining = input;
@@ -275,6 +282,7 @@ impl IpfixParser {
         observation_domain_id: u32,
         data_type: DataType,
         length: usize,
+        depth: usize,
     ) -> IResult<&'a [u8], FieldValue> {
         match (data_type, length) {
             (DataType::Boolean, 1) => {
@@ -316,12 +324,20 @@ impl IpfixParser {
             (DataType::DateTimeNanoseconds, 8) => {
                 map(timestamp_nanos, FieldValue::DateTimeNanoseconds).parse(input)
             }
-            (DataType::BasicList, len) => self.parse_basic_list(input, observation_domain_id, len),
+            (
+                DataType::BasicList | DataType::SubTemplateList | DataType::SubTemplateMultiList,
+                _,
+            ) if depth >= MAX_LIST_DEPTH => {
+                map(vector(length), FieldValue::OctetArray).parse(input)
+            }
+            (DataType::BasicList, len) => {
+                self.parse_basic_list(input, observation_domain_id, len, depth + 1)
+            }
             (DataType::SubTemplateList, len) => {
-                self.parse_sub_template_list(input, observation_domain_id, len)
+                self.parse_sub_template_list(input, observation_domain_id, len, depth + 1)
             }
             (DataType::SubTemplateMultiList, len) => {
-                self.parse_sub_template_multi_list(input, observation_domain_id, len)
+                self.parse_sub_template_multi_list(input, observation_domain_id, len, depth + 1)
             }
             _ => map(vector(length), FieldValue::OctetArray).parse(input),
         }
@@ -332,6 +348,7 @@ impl IpfixParser {
         input: &'a [u8],
         observation_domain_id: u32,
         length: usize,
+        depth: usize,
     ) -> IResult<&'a [u8], FieldValue> {
         let (remaining, data) = take(length)(input)?;
         let (data, semantic) = map(be_u8, Semantic::from).parse(data)?;
@@ -358,6 +375,7 @@ impl IpfixParser {
                 observation_domain_id,
                 element_data_type,
                 actual_length,
+                depth,
             )?;
             content.push(value);
             list_data = next_data;
@@ -378,13 +396,14 @@ impl IpfixParser {
         input: &'a [u8],
         observation_domain_id: u32,
         length: usize,
+        depth: usize,
     ) -> IResult<&'a [u8], FieldValue> {
         let (remaining, data) = take(length)(input)?;
         let (data, semantic) = map(be_u8, Semantic::from).parse(data)?;
         let (data, template_id) = be_u16(data)?;
 
         let (_, records) =
-            self.parse_templated_records(data, observation_domain_id, template_id)?;
+            self.parse_templated_records(data, observation_domain_id, template_id, depth)?;
 
         if records.is_empty() && !data.is_empty() {
             warn!(
@@ -416,6 +435,7 @@ impl IpfixParser {
         input: &'a [u8],
         observation_domain_id: u32,
         length: usize,
+        depth: usize,
     ) -> IResult<&'a [u8], FieldValue> {
         let (remaining, data) = take(length)(input)?;
         let (data, semantic) = map(be_u8, Semantic::from).parse(data)?;
@@ -435,7 +455,7 @@ impl IpfixParser {
 
             let (next_data, item_data) = take(content_length)(next_data)?;
             let (_, records) =
-                self.parse_templated_records(item_data, observation_domain_id, template_id)?;
+                self.parse_templated_records(item_data, observation_domain_id, template_id, depth)?;
 
             if records.is_empty() && !item_data.is_empty() {
                 warn!(
@@ -1211,6 +1231,76 @@ mod tests {
         let mut encoded = Vec::new();
         record.encode(&mut encoded);
         assert_eq!(encoded, data);
+    }
+
+    fn variable_length(value: &[u8]) -> Vec<u8> {
+        let prefix = match u8::try_from(value.len()) {
+            Ok(length) if length < 255 => vec![length],
+            _ => [&[255][..], &(value.len() as u16).to_be_bytes()].concat(),
+        };
+        [prefix, value.to_vec()].concat()
+    }
+
+    #[test]
+    fn sub_template_lists_nested_past_the_cap_are_kept_undecoded() {
+        // Every level is a record of template 256, whose only field is a
+        // subTemplateList of template 256.
+        let mut parser = IpfixParser::default();
+        let template = template(256, &[(292, IPFIX_VARIABLE_LENGTH)]);
+        let header = [Semantic::AllOf as u8, 0x01, 0x00];
+        let mut list = header.to_vec();
+        for _ in 0..2000 {
+            list = [&header[..], &variable_length(&list)].concat();
+        }
+
+        let msg = message(&[
+            set(IPFIX_TEMPLATE_SET_ID, &template),
+            set(256, &variable_length(&list)),
+        ]);
+        let (_, packet) = parser.parse(&msg).unwrap();
+        let Record::Data(record) = &packet.sets[1].records[0] else {
+            panic!("expected data record");
+        };
+        let mut value = &record.values()[0];
+        for _ in 0..MAX_LIST_DEPTH {
+            let FieldValue::SubTemplateList(list) = value else {
+                panic!("expected subTemplateList, got {value:?}");
+            };
+            value = &list.data[0].values()[0];
+        }
+        assert!(matches!(value, FieldValue::OctetArray(_)));
+    }
+
+    #[test]
+    fn basic_lists_nested_past_the_cap_are_kept_undecoded() {
+        let mut parser = IpfixParser::default();
+        let template = template(256, &[(291, IPFIX_VARIABLE_LENGTH)]);
+        let header = [
+            &[Semantic::AllOf as u8][..],
+            &field(291, IPFIX_VARIABLE_LENGTH),
+        ]
+        .concat();
+        let mut list = header.clone();
+        for _ in 0..7000 {
+            list = [&header[..], &variable_length(&list)].concat();
+        }
+
+        let msg = message(&[
+            set(IPFIX_TEMPLATE_SET_ID, &template),
+            set(256, &variable_length(&list)),
+        ]);
+        let (_, packet) = parser.parse(&msg).unwrap();
+        let Record::Data(record) = &packet.sets[1].records[0] else {
+            panic!("expected data record");
+        };
+        let mut value = &record.values()[0];
+        for _ in 0..MAX_LIST_DEPTH {
+            let FieldValue::BasicList(list) = value else {
+                panic!("expected basicList, got {value:?}");
+            };
+            value = &list.content[0];
+        }
+        assert!(matches!(value, FieldValue::OctetArray(_)));
     }
 
     #[test]
