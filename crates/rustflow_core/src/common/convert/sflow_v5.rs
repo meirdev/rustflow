@@ -8,6 +8,29 @@ use crate::sflow_v5::parser::{
     SampledIpv4, SampledIpv6,
 };
 
+/// The value bits of an interface field; in a compact sample the top two bits
+/// are its format.
+const INTERFACE_VALUE_MASK: u32 = 0x3fff_ffff;
+
+/// A compact interface value standing for the agent itself rather than an
+/// interface. The expanded encoding defines no such value.
+const INTERNAL_INTERFACE: u32 = 0x3fff_ffff;
+
+/// The ifIndex an sFlow interface field names, if any. Only format 0 is an
+/// ifIndex, with 0 for unknown; format 1 is a discard reason and 2 a count
+/// of output interfaces.
+fn if_index(format: u32, value: u32) -> Option<u32> {
+    (format == 0 && value != 0).then_some(value)
+}
+
+fn compact_if_index(field: u32) -> Option<u32> {
+    let value = field & INTERFACE_VALUE_MASK;
+    if value == INTERNAL_INTERFACE {
+        return None;
+    }
+    if_index(field >> 30, value)
+}
+
 pub struct SFlowV5Context<'a> {
     pub header: &'a SFlowV5,
 }
@@ -18,8 +41,8 @@ impl SFlowV5Context<'_> {
         flow.sequence_num = self.header.sequence_number;
         flow.sampler_address = Some(self.header.agent_address);
         flow.sampling_rate = Some(sample.sampling_rate);
-        flow.in_if = Some(sample.input);
-        flow.out_if = Some(sample.output);
+        flow.in_if = compact_if_index(sample.input);
+        flow.out_if = compact_if_index(sample.output);
 
         for record in &sample.records {
             self.apply_flow_record(&mut flow, &record.data);
@@ -33,8 +56,8 @@ impl SFlowV5Context<'_> {
         flow.sequence_num = self.header.sequence_number;
         flow.sampler_address = Some(self.header.agent_address);
         flow.sampling_rate = Some(sample.sampling_rate);
-        flow.in_if = Some(sample.input_if_value);
-        flow.out_if = Some(sample.output_if_value);
+        flow.in_if = if_index(sample.input_if_format, sample.input_if_value);
+        flow.out_if = if_index(sample.output_if_format, sample.output_if_value);
 
         for record in &sample.records {
             self.apply_flow_record(&mut flow, &record.data);
@@ -140,5 +163,25 @@ impl SFlowV5Context<'_> {
             Some(AsPathType::AsSequence(as_seq)) => as_seq.last().copied(),
             _ => None,
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_format_zero_names_an_interface() {
+        assert_eq!(if_index(0, 7), Some(7));
+        assert_eq!(if_index(0, 0), None);
+        assert_eq!(if_index(0, INTERNAL_INTERFACE), Some(INTERNAL_INTERFACE));
+        // Dropped with reason 2, and sent out of 3 interfaces.
+        assert_eq!(if_index(1, 2), None);
+        assert_eq!(if_index(2, 3), None);
+
+        assert_eq!(compact_if_index(7), Some(7));
+        assert_eq!(compact_if_index(0x4000_0002), None);
+        assert_eq!(compact_if_index(0x8000_0003), None);
+        assert_eq!(compact_if_index(INTERNAL_INTERFACE), None);
     }
 }
