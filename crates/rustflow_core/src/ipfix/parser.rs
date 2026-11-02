@@ -365,7 +365,7 @@ impl IpfixParser {
 
         while !list_data.is_empty() {
             let (next_data, actual_length) = parse_field_length(list_data, field.field_length)?;
-            if actual_length == 0 || next_data.len() < actual_length {
+            if field.field_length == 0 || next_data.len() < actual_length {
                 break;
             }
 
@@ -1244,6 +1244,46 @@ mod tests {
             parsed.content[0],
             FieldValue::Unsigned32(0x010203)
         ));
+
+        let mut encoded = Vec::new();
+        record.encode(&mut encoded);
+        assert_eq!(encoded, data);
+    }
+
+    #[test]
+    fn basic_lists_keep_empty_variable_length_elements() {
+        use crate::common::encoder::Encode;
+
+        // basicList(291) of variable-length interfaceName(82) strings.
+        let mut parser = IpfixParser::default();
+        let template = template(256, &[(291, IPFIX_VARIABLE_LENGTH)]);
+        let list = [
+            &[Semantic::AllOf as u8][..],
+            &field(82, IPFIX_VARIABLE_LENGTH),
+            &variable_length(b"abc"),
+            &variable_length(b""),
+            &variable_length(b"def"),
+        ]
+        .concat();
+        let data = variable_length(&list);
+
+        let msg = message(&[set(IPFIX_TEMPLATE_SET_ID, &template), set(256, &data)]);
+        let (_, packet) = parser.parse(&msg).unwrap();
+        let Record::Data(record) = &packet.sets[1].records[0] else {
+            panic!("expected data record");
+        };
+        let FieldValue::BasicList(parsed) = &record.values()[0] else {
+            panic!("expected basicList, got {:?}", record.values()[0]);
+        };
+        let names: Vec<_> = parsed
+            .content
+            .iter()
+            .map(|value| match value {
+                FieldValue::String(name) => name.as_str(),
+                other => panic!("expected string, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(names, ["abc", "", "def"]);
 
         let mut encoded = Vec::new();
         record.encode(&mut encoded);
