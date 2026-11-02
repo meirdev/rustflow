@@ -1412,6 +1412,46 @@ mod tests {
     }
 
     #[test]
+    fn fixed_length_strings_and_octet_arrays_fill_their_field() {
+        use crate::common::encoder::Encode;
+
+        // interfaceName(82) at a fixed 8 bytes, holding "eth0".
+        let mut parser = IpfixParser::default();
+        let template = template(256, &[(82, 8)]);
+        let data = b"eth0\0\0\0\0";
+        let msg = message(&[set(IPFIX_TEMPLATE_SET_ID, &template), set(256, data)]);
+        let (_, packet) = parser.parse(&msg).unwrap();
+        let Record::Data(record) = &packet.sets[1].records[0] else {
+            panic!("expected data record");
+        };
+        let mut encoded = Vec::new();
+        record.encode(&mut encoded);
+        assert_eq!(encoded, data);
+
+        let field = |length, data_type| ResolvedField {
+            spec: FieldSpecifier::iana(82, length),
+            data_type,
+            name: Arc::from(""),
+        };
+        let record = DataRecord::from_template(
+            [
+                field(4, DataType::String),
+                field(3, DataType::OctetArray),
+                field(3, DataType::OctetArray),
+            ]
+            .into(),
+            vec![
+                FieldValue::String("ethé".to_string()),
+                FieldValue::OctetArray(vec![1, 2, 3, 4, 5]),
+                FieldValue::OctetArray(vec![1]),
+            ],
+        );
+        let mut encoded = Vec::new();
+        record.encode(&mut encoded);
+        assert_eq!(encoded, b"eth\0\x01\x02\x03\x01\0\0");
+    }
+
+    #[test]
     fn basic_list_elements_round_trip_at_the_declared_width() {
         use crate::common::encoder::Encode;
 

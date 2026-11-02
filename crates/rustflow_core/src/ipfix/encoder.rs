@@ -159,9 +159,22 @@ fn encode_field_value<B: BufMut>(value: &FieldValue, field_length: u16, buf: &mu
         FieldValue::Signed16(v) => put_int(i64::from(*v), length, buf),
         FieldValue::Signed32(v) => put_int(i64::from(*v), length, buf),
         FieldValue::Signed64(v) => put_int(*v, length, buf),
+        FieldValue::OctetArray(v) => put_fixed(v, length, buf),
+        // Cut at a character boundary, so the string stays UTF-8.
+        FieldValue::String(v) => {
+            put_fixed(&v.as_bytes()[..v.floor_char_boundary(length)], length, buf)
+        }
         FieldValue::Null => buf.put_bytes(0, length),
         _ => value.encode(buf),
     }
+}
+
+/// `bytes` cut to `length`, or padded to it with zeros: the parser trims a
+/// fixed-length string's trailing zeros, and this puts them back.
+fn put_fixed<B: BufMut>(bytes: &[u8], length: usize, buf: &mut B) {
+    let bytes = &bytes[..bytes.len().min(length)];
+    buf.put_slice(bytes);
+    buf.put_bytes(0, length - bytes.len());
 }
 
 fn put_uint<B: BufMut>(value: u64, length: usize, buf: &mut B) {
