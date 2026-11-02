@@ -52,7 +52,7 @@ impl Exporter {
             collector_addr,
             args,
             sequence_number: AtomicU32::new(0),
-            last_template_send: Instant::now() - Duration::from_secs(9999), // Force initial send
+            last_template_send: Instant::now(),
         })
     }
 
