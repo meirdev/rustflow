@@ -628,12 +628,7 @@ fn resolve_fields(registry: &IERegistry, fields: &[FieldSpecifier]) -> Arc<[Reso
             let (data_type, name) = registry
                 .lookup(spec.information_element_identifier, spec.enterprise_number)
                 .map_or_else(
-                    || {
-                        (
-                            DataType::OctetArray,
-                            Arc::from(spec.information_element_identifier.to_string()),
-                        )
-                    },
+                    || (DataType::OctetArray, Arc::from(unknown_element_name(spec))),
                     |ie| (ie.data_type, ie.name.clone()),
                 );
             ResolvedField {
@@ -643,6 +638,13 @@ fn resolve_fields(registry: &IERegistry, fields: &[FieldSpecifier]) -> Arc<[Reso
             }
         })
         .collect()
+}
+
+fn unknown_element_name(spec: &FieldSpecifier) -> String {
+    match spec.enterprise_number {
+        Some(enterprise) => format!("{enterprise}.{}", spec.information_element_identifier),
+        None => spec.information_element_identifier.to_string(),
+    }
 }
 
 /// Template ID and field count of a (Options) Template Record. A field count
@@ -1120,6 +1122,22 @@ mod tests {
         };
         assert_eq!(t.scope_field_count, 1);
         assert_eq!(t.fields.len(), 1);
+    }
+
+    #[test]
+    fn unknown_elements_of_different_enterprises_get_distinct_names() {
+        let fields = [
+            FieldSpecifier::iana(12, 4),
+            FieldSpecifier::enterprise(12, 4, 9),
+            FieldSpecifier::enterprise(12, 4, 29305),
+        ];
+
+        let names: Vec<_> = resolve_fields(&IERegistry::new(), &fields)
+            .iter()
+            .map(|field| field.name.to_string())
+            .collect();
+
+        assert_eq!(names, ["12", "9.12", "29305.12"]);
     }
 
     #[test]
