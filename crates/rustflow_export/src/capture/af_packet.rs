@@ -54,6 +54,8 @@ struct Ring {
 
 impl Ring {
     fn map(socket: &OwnedFd, len: usize) -> io::Result<Self> {
+        // SAFETY: a new shared mapping of the socket's ring, at an address the
+        // kernel picks; no memory of this process is touched.
         let ptr = unsafe {
             libc::mmap(
                 ptr::null_mut(),
@@ -76,6 +78,8 @@ impl Ring {
 
 impl Drop for Ring {
     fn drop(&mut self) {
+        // SAFETY: `ptr` and `len` are the mapping `map` made. Frames borrow
+        // the capture that owns the ring, so none outlives it.
         unsafe {
             libc::munmap(self.ptr as *mut libc::c_void, self.len);
         }
@@ -88,6 +92,7 @@ fn set_option<T>(
     name: libc::c_int,
     value: &T,
 ) -> io::Result<()> {
+    // SAFETY: the kernel reads `size_of::<T>()` bytes from `value`, a live `T`.
     let ret = unsafe {
         libc::setsockopt(
             socket.as_raw_fd(),
@@ -115,6 +120,7 @@ impl AfPacket {
         info!("Opening AF_PACKET capture on interface: {}", interface);
 
         let protocol = (libc::ETH_P_ALL as u16).to_be();
+        // SAFETY: takes no pointers.
         let fd = unsafe { libc::socket(libc::AF_PACKET, libc::SOCK_RAW, protocol as libc::c_int) };
         if fd < 0 {
             return Err(anyhow!(
@@ -122,6 +128,7 @@ impl AfPacket {
                 io::Error::last_os_error()
             ));
         }
+        // SAFETY: `fd` was just opened, and nothing else owns it.
         let socket = unsafe { OwnedFd::from_raw_fd(fd) };
 
         set_option(&socket, libc::SOL_PACKET, libc::PACKET_VERSION, &TPACKET_V3)
@@ -135,7 +142,8 @@ impl AfPacket {
         }];
         let program = filter.unwrap_or(&snap);
         let filter = libc::sock_fprog {
-            len: program.len() as u16,
+            len: u16::try_from(program.len())
+                .map_err(|_| anyhow!("The packet filter has too many instructions"))?,
             filter: program.as_ptr().cast_mut(),
         };
         set_option(&socket, libc::SOL_SOCKET, libc::SO_ATTACH_FILTER, &filter)
@@ -167,6 +175,7 @@ impl AfPacket {
             sll_halen: 0,
             sll_addr: [0; 8],
         };
+        // SAFETY: the kernel reads one `sockaddr_ll`, `addr`.
         let ret = unsafe {
             libc::bind(
                 socket.as_raw_fd(),
@@ -226,6 +235,8 @@ impl AfPacket {
     }
 
     fn block(&self) -> *mut libc::tpacket_hdr_v1 {
+        // SAFETY: `block_idx < BLOCK_NR`, so the offset lies inside the ring,
+        // where each block starts with its descriptor. No reference is made.
         unsafe {
             let desc = self.ring.ptr.add(self.block_offset()) as *mut libc::tpacket_block_desc;
             ptr::addr_of_mut!((*desc).hdr.bh1)
@@ -235,6 +246,8 @@ impl AfPacket {
     /// The kernel and this thread pass the block back and forth through
     /// its status word.
     fn block_status(&self) -> &AtomicU32 {
+        // SAFETY: the status word is aligned, lives as long as the ring, which
+        // `self` owns, and is only accessed atomically, here and by the kernel.
         unsafe { AtomicU32::from_ptr(ptr::addr_of_mut!((*self.block()).block_status)) }
     }
 
@@ -251,6 +264,7 @@ impl AfPacket {
                 events: libc::POLLIN,
                 revents: 0,
             };
+            // SAFETY: `pfd` is the one `pollfd` the count says.
             let ret = unsafe { libc::poll(&mut pfd, 1, 1000) };
             if ret > 0 && pfd.revents & libc::POLLERR != 0 {
                 // A pending socket error, such as ENETDOWN once the
@@ -267,6 +281,8 @@ impl AfPacket {
             }
         }
 
+        // SAFETY: the block is ours: its status was seen with TP_STATUS_USER,
+        // with acquire ordering, so the kernel is done writing it.
         let (frames, first_frame) = unsafe {
             let block = self.block();
             ((*block).num_pkts, (*block).offset_to_first_pkt)
@@ -307,14 +323,22 @@ impl Capture for AfPacket {
                 }
             }
 
+            // SAFETY: the kernel's offsets keep `frame_offset` on a frame of
+            // the block held while frames are left.
             let frame = unsafe { self.ring.ptr.add(self.frame_offset) };
+            // SAFETY: a frame starts with its header, aligned, and the kernel
+            // does not write a block it has handed over.
             let hdr = unsafe { &*(frame as *const libc::tpacket3_hdr) };
             self.frames_left -= 1;
             self.frame_offset += hdr.tp_next_offset as usize;
 
-            if is_loopback_echo(frame) {
+            // SAFETY: `frame` is a frame of the block held.
+            if unsafe { is_loopback_echo(frame) } {
                 continue;
             }
+            // SAFETY: the kernel put `tp_snaplen` bytes of the packet at
+            // `tp_mac`, within the frame. The slice borrows `self`, so the
+            // block is not handed back while it lives.
             let data = unsafe {
                 slice::from_raw_parts(frame.add(hdr.tp_mac as usize), hdr.tp_snaplen as usize)
             };
@@ -329,9 +353,15 @@ impl Capture for AfPacket {
 
 /// A loopback device hands every packet to a packet socket twice, as sent
 /// and as received; like libpcap, keep only the received copy.
-fn is_loopback_echo(frame: *const u8) -> bool {
-    // The frame's link-layer address follows its header, aligned.
+///
+/// # Safety
+///
+/// `frame` must point to a frame of a TPACKET_V3 block the kernel has
+/// handed over.
+unsafe fn is_loopback_echo(frame: *const u8) -> bool {
     let offset = libc::TPACKET3_HDRLEN - mem::size_of::<libc::sockaddr_ll>();
+    // SAFETY: the kernel puts the frame's link-layer address right after its
+    // header, aligned, ending at `TPACKET3_HDRLEN`.
     let sll = unsafe { &*(frame.add(offset) as *const libc::sockaddr_ll) };
     sll.sll_pkttype == libc::PACKET_OUTGOING && sll.sll_hatype == libc::ARPHRD_LOOPBACK
 }
@@ -340,6 +370,7 @@ fn is_loopback_echo(frame: *const u8) -> bool {
 fn take_error(socket: &OwnedFd) -> io::Result<Option<io::Error>> {
     let mut error: libc::c_int = 0;
     let mut length = mem::size_of::<libc::c_int>() as libc::socklen_t;
+    // SAFETY: the kernel writes at most `length` bytes, the size of `error`.
     let ret = unsafe {
         libc::getsockopt(
             socket.as_raw_fd(),
@@ -357,11 +388,14 @@ fn take_error(socket: &OwnedFd) -> io::Result<Option<io::Error>> {
 
 fn get_interface_index(socket: &OwnedFd, interface: &str) -> Result<libc::c_int> {
     let ifname = CString::new(interface)?;
+    // SAFETY: `ifreq` is plain data, for which all zeros is a valid value.
     let mut ifr: libc::ifreq = unsafe { mem::zeroed() };
 
     // Copy interface name (max 15 chars + null)
     let name_bytes = ifname.as_bytes_with_nul();
     let copy_len = name_bytes.len().min(libc::IFNAMSIZ);
+    // SAFETY: `copy_len` is within both the name and `ifr_name`, which is
+    // IFNAMSIZ long.
     unsafe {
         ptr::copy_nonoverlapping(
             name_bytes.as_ptr(),
@@ -376,6 +410,7 @@ fn get_interface_index(socket: &OwnedFd, interface: &str) -> Result<libc::c_int>
     #[cfg(not(target_env = "musl"))]
     let request = libc::SIOCGIFINDEX as libc::c_ulong;
 
+    // SAFETY: SIOCGIFINDEX reads and writes one `ifreq`, `ifr`.
     let ret = unsafe { libc::ioctl(socket.as_raw_fd(), request, &mut ifr) };
     if ret < 0 {
         return Err(anyhow!(
@@ -385,5 +420,6 @@ fn get_interface_index(socket: &OwnedFd, interface: &str) -> Result<libc::c_int>
         ));
     }
 
+    // SAFETY: a successful SIOCGIFINDEX sets `ifru_ifindex`.
     Ok(unsafe { ifr.ifr_ifru.ifru_ifindex })
 }

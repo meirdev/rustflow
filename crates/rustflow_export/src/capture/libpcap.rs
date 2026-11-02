@@ -86,6 +86,7 @@ impl Libpcap {
             events: libc::POLLIN,
             revents: 0,
         };
+        // SAFETY: `pfd` is the one `pollfd` the count says.
         unsafe { libc::poll(&mut pfd, 1, 1000) > 0 }
     }
 }
@@ -142,8 +143,8 @@ pub fn compile(expression: &str, snaplen: u32) -> Result<Vec<libc::sock_filter>>
         .compile(expression, true)
         .with_context(|| format!("Invalid filter '{expression}'"))?;
     let instructions = program.get_instructions();
-    // `BpfInstruction` is a transparent wrapper of libpcap's `bpf_insn`,
-    // which has the layout of `sock_filter`.
+    // SAFETY: `BpfInstruction` is a transparent wrapper of libpcap's
+    // `bpf_insn`, which has the layout of `sock_filter`.
     let instructions: &[libc::sock_filter] =
         unsafe { std::slice::from_raw_parts(instructions.as_ptr().cast(), instructions.len()) };
     Ok(instructions

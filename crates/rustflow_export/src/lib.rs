@@ -1,4 +1,5 @@
 mod args;
+#[warn(clippy::undocumented_unsafe_blocks)]
 mod capture;
 mod exporter;
 mod flow;

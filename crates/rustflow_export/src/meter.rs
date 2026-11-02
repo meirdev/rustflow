@@ -52,7 +52,7 @@ impl Meter {
             Mode::Flow => Output::Flows(FlowCache::new(
                 args.active_timeout,
                 args.inactive_timeout,
-                args.max_flows as usize,
+                args.max_flows,
             )),
             Mode::Packet => Output::Packets {
                 clip_length: usize::from(args.clip_length),
