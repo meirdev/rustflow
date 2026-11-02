@@ -3,7 +3,7 @@ use std::io;
 use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::time::Duration;
 
-use rustflow_core::common::common_flow::CommonFlow;
+use rustflow_core::common::common_flow::{CommonFlow, FlowType};
 use rustflow_core::common::ie_registry::IERegistry;
 use socket2::SockRef;
 
@@ -18,12 +18,12 @@ pub enum ReadResult<P: Processor> {
         src: IpAddr,
         packet: P::Packet,
     },
-    /// Received data but failed to parse it. `version` names the version
-    /// in the header when it is a known one.
+    /// Received data but failed to parse it. `version` is the version in
+    /// the header when it is a known one.
     ParseError {
         len: usize,
         src: IpAddr,
-        version: Option<&'static str>,
+        version: Option<FlowType>,
     },
     /// No data available (timeout or would block).
     Timeout,

@@ -61,7 +61,7 @@ pub mod tokio {
     pub use crate::async_reader::{NetflowReader, Reader, SflowReader};
 }
 
-pub use rustflow_core::common::common_flow::CommonFlow;
+pub use rustflow_core::common::common_flow::{CommonFlow, FlowType};
 pub use rustflow_core::common::ie_registry::IERegistry;
 
 pub mod ipfix {

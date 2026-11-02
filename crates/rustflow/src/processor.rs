@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use log::warn;
 use rustc_hash::FxHashMap;
-use rustflow_core::common::common_flow::CommonFlow;
+use rustflow_core::common::common_flow::{CommonFlow, FlowType};
 use rustflow_core::common::convert::{
     IpfixContext, NetFlowV5Context, NetFlowV9Context, SFlowV5Context, extract_ipfix_sampler_id,
     extract_ipfix_sampling_rate, extract_ipfix_system_init_time, extract_v9_sampler_id,
@@ -55,9 +55,9 @@ pub trait Processor: Default {
         flows
     }
 
-    /// The version name in a datagram's header, such as `netflow_v9`;
-    /// `None` for an unknown version or a truncated header.
-    fn version_of(payload: &[u8]) -> Option<&'static str>;
+    /// The version in a datagram's header; `None` for an unknown version or
+    /// a truncated header.
+    fn version_of(payload: &[u8]) -> Option<FlowType>;
 
     /// Parses and converts in one step; a packet that fails to parse
     /// yields no flows.
@@ -88,19 +88,12 @@ pub trait Processor: Default {
 
 /// A parsed packet of some protocol version, in its original structure.
 pub trait Packet: Serialize {
-    /// The version name, such as `netflow_v9`.
-    fn version(&self) -> &'static str;
+    /// The protocol version, which is also the `flow_type` of its flows.
+    fn version(&self) -> FlowType;
 
     /// The data records, or flow samples, the packet carries.
     fn flow_count(&self) -> usize;
 }
-
-pub const NETFLOW: &str = "netflow";
-pub const NETFLOW_V5: &str = "netflow_v5";
-pub const NETFLOW_V9: &str = "netflow_v9";
-pub const IPFIX: &str = "ipfix";
-pub const SFLOW: &str = "sflow";
-pub const SFLOW_V5: &str = "sflow_v5";
 
 /// A parsed NetFlow v5, NetFlow v9 or IPFIX packet. Serializes as the
 /// packet itself, without a version wrapper.
@@ -113,11 +106,11 @@ pub enum NetflowPacket {
 }
 
 impl Packet for NetflowPacket {
-    fn version(&self) -> &'static str {
+    fn version(&self) -> FlowType {
         match self {
-            Self::V5(_) => NETFLOW_V5,
-            Self::V9(_) => NETFLOW_V9,
-            Self::Ipfix(_) => IPFIX,
+            Self::V5(_) => FlowType::NetflowV5,
+            Self::V9(_) => FlowType::NetflowV9,
+            Self::Ipfix(_) => FlowType::Ipfix,
         }
     }
 
@@ -148,9 +141,9 @@ pub enum SflowPacket {
 }
 
 impl Packet for SflowPacket {
-    fn version(&self) -> &'static str {
+    fn version(&self) -> FlowType {
         match self {
-            Self::V5(_) => SFLOW_V5,
+            Self::V5(_) => FlowType::SflowV5,
         }
     }
 
@@ -309,7 +302,7 @@ impl NetflowProcessor {
 impl Processor for NetflowProcessor {
     type Packet = NetflowPacket;
 
-    const NAME: &'static str = NETFLOW;
+    const NAME: &'static str = "netflow";
 
     fn parse(&mut self, src: IpAddr, payload: &[u8]) -> Option<NetflowPacket> {
         let version = u16::from_be_bytes(payload.get(..2)?.try_into().ok()?);
@@ -427,11 +420,11 @@ impl Processor for NetflowProcessor {
         }
     }
 
-    fn version_of(payload: &[u8]) -> Option<&'static str> {
+    fn version_of(payload: &[u8]) -> Option<FlowType> {
         match u16::from_be_bytes(payload.get(..2)?.try_into().ok()?) {
-            NETFLOW_V5_VERSION => Some(NETFLOW_V5),
-            NETFLOW_V9_VERSION => Some(NETFLOW_V9),
-            IPFIX_VERSION => Some(IPFIX),
+            NETFLOW_V5_VERSION => Some(FlowType::NetflowV5),
+            NETFLOW_V9_VERSION => Some(FlowType::NetflowV9),
+            IPFIX_VERSION => Some(FlowType::Ipfix),
             _ => None,
         }
     }
@@ -459,7 +452,7 @@ impl SflowProcessor {
 impl Processor for SflowProcessor {
     type Packet = SflowPacket;
 
-    const NAME: &'static str = SFLOW;
+    const NAME: &'static str = "sflow";
 
     fn parse(&mut self, _src: IpAddr, payload: &[u8]) -> Option<SflowPacket> {
         let version = u32::from_be_bytes(payload.get(..4)?.try_into().ok()?);
@@ -501,9 +494,9 @@ impl Processor for SflowProcessor {
         }
     }
 
-    fn version_of(payload: &[u8]) -> Option<&'static str> {
+    fn version_of(payload: &[u8]) -> Option<FlowType> {
         match u32::from_be_bytes(payload.get(..4)?.try_into().ok()?) {
-            SFLOW_V5_VERSION => Some(SFLOW_V5),
+            SFLOW_V5_VERSION => Some(FlowType::SflowV5),
             _ => None,
         }
     }
@@ -550,6 +543,30 @@ mod tests {
             Some(100)
         );
         assert!(exporters.domain(b, 1).is_none());
+    }
+
+    #[test]
+    fn versions_are_the_flow_types_of_their_flows() {
+        assert_eq!(
+            NetflowProcessor::version_of(&words(&[9])),
+            Some(FlowType::NetflowV9)
+        );
+        assert_eq!(NetflowProcessor::version_of(&words(&[7])), None);
+        assert_eq!(
+            SflowProcessor::version_of(&5u32.to_be_bytes()),
+            Some(FlowType::SflowV5)
+        );
+
+        // A NetFlow v5 header announcing one record, and an empty record.
+        let payload = [words(&[5, 1]), vec![0; 20 + 48]].concat();
+        let src: IpAddr = [192, 0, 2, 1].into();
+        let mut processor = NetflowProcessor::new();
+        let packet = processor.parse(src, &payload).unwrap();
+        let flows = processor.convert(src, &packet, None);
+
+        assert_eq!(packet.version(), FlowType::NetflowV5);
+        assert_eq!(flows.len(), 1);
+        assert_eq!(flows[0].flow_type, packet.version());
     }
 
     fn words(values: &[u16]) -> Vec<u8> {

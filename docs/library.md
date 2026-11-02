@@ -203,8 +203,11 @@ fn main() -> std::io::Result<()> {
                 NetflowPacket::Ipfix(p) => println!("ipfix from {}: {} sets",
                     src, p.sets.len()),
             },
-            NetflowReadResult::ParseError { src, version, .. } => {
-                eprintln!("undecodable packet from {} ({})", src, version.unwrap_or("unknown version"));
+            NetflowReadResult::ParseError { src, version: Some(version), .. } => {
+                eprintln!("undecodable {} packet from {}", version.name(), src);
+            }
+            NetflowReadResult::ParseError { src, version: None, .. } => {
+                eprintln!("packet of unknown version from {}", src);
             }
             NetflowReadResult::Timeout => {}
         }
@@ -213,7 +216,8 @@ fn main() -> std::io::Result<()> {
 ```
 
 `SflowReadResult` is the sFlow counterpart, carrying `SflowPacket::V5`. `version` is the
-name of the version in the packet header, `netflow_v9` for instance, when it is a known one.
+version in the packet header, such as `FlowType::NetflowV9`, when it is a known one;
+`FlowType::name` gives its lowercase name, `netflow_v9`.
 
 The protocol types are re-exported per protocol: `rustflow_lib::ipfix`,
 `rustflow_lib::netflow_v5`, `rustflow_lib::netflow_v9`, and `rustflow_lib::sflow`.

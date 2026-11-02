@@ -80,13 +80,18 @@ fn collect<P: Processor>(
 
         let Some(packet) = processor.parse(src, payload) else {
             match P::version_of(payload) {
-                Some(version) => exporters.record_parse_error(src, version, payload.len()),
+                Some(version) => exporters.record_parse_error(src, version.name(), payload.len()),
                 None => exporters.record_unknown_version(src, payload.len()),
             }
             continue;
         };
 
-        exporters.record_packet(src, packet.version(), payload.len(), packet.flow_count());
+        exporters.record_packet(
+            src,
+            packet.version().name(),
+            payload.len(),
+            packet.flow_count(),
+        );
 
         match format {
             OutputFormat::Raw => output.push_raw(&packet, packet.flow_count())?,
