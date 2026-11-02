@@ -14,7 +14,7 @@ pub use netflow_v5::NetFlowV5Context;
 pub use netflow_v9::{NetFlowV9Context, extract_v9_sampler_id, extract_v9_sampling_rate};
 pub use sflow_v5::SFlowV5Context;
 
-/// Converts a NetFlow uptime stamp, the exporter's uptime in milliseconds, to
+/// Converts an uptime stamp, the exporter's uptime in milliseconds, to
 /// absolute nanoseconds, given the header's export time and uptime:
 /// `absolute_time = export_time - (sys_uptime - uptime)`
 fn uptime_to_absolute_ns(

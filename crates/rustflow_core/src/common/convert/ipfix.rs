@@ -3,6 +3,7 @@ use std::net::IpAddr;
 use crate::common::InformationElement;
 use crate::common::common_flow::{CommonFlow, FlowType};
 use crate::common::convert::packet::{apply_ethernet_frame, apply_ip_packet};
+use crate::common::convert::uptime_to_absolute_ns;
 use crate::ipfix::parser::{
     DataRecord as IpfixDataRecord, FieldSpecifier, FieldValue as IpfixFieldValue,
     Header as IpfixHeader,
@@ -32,10 +33,15 @@ impl IpfixContext<'_> {
         Some(export_time_ns - (delta_us as i64 * 1_000))
     }
 
+    /// `flowStart/EndSysUpTime` count from `systemInitTimeMilliseconds` in
+    /// a u32, so they wrap like NetFlow's uptimes; the uptime at export
+    /// follows from the boot time.
     fn uptime_to_absolute_ns(&self, uptime_ms: u32) -> Option<i64> {
-        self.system_init_time_ms?
-            .checked_add(i64::from(uptime_ms))?
-            .checked_mul(1_000_000)
+        let export_time = self.header.export_time;
+        let sys_uptime_ms = export_time
+            .timestamp_millis()
+            .wrapping_sub(self.system_init_time_ms?) as u32;
+        uptime_to_absolute_ns(export_time, sys_uptime_ms, uptime_ms)
     }
 
     pub fn convert(&self, record: &IpfixDataRecord, template_id: u16) -> CommonFlow {
@@ -449,9 +455,13 @@ mod sampling_tests {
         }
     }
 
+    fn exported_at(secs: i64) -> IpfixHeader {
+        IpfixHeader::new(chrono::DateTime::from_timestamp_secs(secs).unwrap(), 1, 1)
+    }
+
     #[test]
     fn uptimes_become_absolute_with_the_boot_time() {
-        let header = IpfixHeader::new(chrono::Utc::now(), 1, 1);
+        let header = exported_at(1_700_000_010);
         let flow = context(&header, Some(1_700_000_000_000)).convert(
             &record(&[
                 (InformationElement::FlowStartSysUpTime, 5_000),
@@ -461,6 +471,37 @@ mod sampling_tests {
         );
         assert_eq!(flow.time_flow_start_ns, Some(1_700_000_005_000_000_000));
         assert_eq!(flow.time_flow_end_ns, Some(1_700_000_008_000_000_000));
+    }
+
+    #[test]
+    fn uptimes_of_an_exporter_up_past_the_wrap_stay_near_the_export() {
+        // Booted 60 days before the export, so the uptime has wrapped once;
+        // the flow ran from 10 s to 1 s before the export.
+        let boot_ms = 1_700_000_000_000;
+        let export_secs = 1_700_000_000 + 60 * 86_400;
+        let uptime_at_export = ((export_secs * 1_000 - boot_ms) % (1 << 32)) as u32;
+        let header = exported_at(export_secs);
+        let flow = context(&header, Some(boot_ms)).convert(
+            &record(&[
+                (
+                    InformationElement::FlowStartSysUpTime,
+                    uptime_at_export - 10_000,
+                ),
+                (
+                    InformationElement::FlowEndSysUpTime,
+                    uptime_at_export - 1_000,
+                ),
+            ]),
+            256,
+        );
+        assert_eq!(
+            flow.time_flow_start_ns,
+            Some((export_secs - 10) * 1_000_000_000)
+        );
+        assert_eq!(
+            flow.time_flow_end_ns,
+            Some((export_secs - 1) * 1_000_000_000)
+        );
     }
 
     #[test]
