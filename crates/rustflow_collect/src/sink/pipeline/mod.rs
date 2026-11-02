@@ -119,11 +119,12 @@ pub struct Producer {
 }
 
 impl Producer {
-    /// Queue decoded flows; sends to the encoder once a chunk is full or
-    /// has waited long enough, so a slow trickle is not held back.
-    pub fn push(&mut self, flows: impl IntoIterator<Item = CommonFlow>) -> Result<(), EncoderGone> {
+    /// Queue the flows `decode` adds to the chunk; sends to the encoder once
+    /// a chunk is full or has waited long enough, so a slow trickle is not
+    /// held back.
+    pub fn push(&mut self, decode: impl FnOnce(&mut Vec<CommonFlow>)) -> Result<(), EncoderGone> {
         self.start_chunk();
-        self.flows.extend(flows);
+        decode(&mut self.flows);
         self.send_if_ready(self.flows.len())
     }
 

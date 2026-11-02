@@ -90,9 +90,8 @@ fn collect<P: Processor>(
 
         match format {
             OutputFormat::Raw => output.push_raw(&packet, packet.flow_count())?,
-            OutputFormat::Common => {
-                output.push(processor.convert(src, &packet, time_received_ns))?
-            }
+            OutputFormat::Common => output
+                .push(|flows| processor.convert_into(src, &packet, time_received_ns, flows))?,
         }
     }
 }
