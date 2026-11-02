@@ -53,7 +53,7 @@ impl<P: Processor> Reader<P> {
             let link_type = self.reader.header().datalink.into();
             match self.reader.next_packet() {
                 Some(Ok(packet)) => {
-                    let time_received_ns = Some(packet.timestamp.as_nanos() as i64);
+                    let time_received_ns = i64::try_from(packet.timestamp.as_nanos()).ok();
                     if let Some((src, payload)) = parse_udp_packet(link_type, &packet.data) {
                         self.processor.process_into(
                             src,

@@ -234,7 +234,7 @@ fn decode(exporter: IpAddr, payload: &[u8], processor: &mut NetflowProcessor) {
     let received = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .ok()
-        .map(|d| d.as_nanos() as i64);
+        .and_then(|d| i64::try_from(d.as_nanos()).ok());
 
     for flow in processor.process(exporter, payload, received) {
         println!("{:?}", flow);

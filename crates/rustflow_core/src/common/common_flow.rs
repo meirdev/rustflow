@@ -232,7 +232,7 @@ impl CommonFlow {
     }
 
     pub fn with_time_received(mut self, time: DateTime<Utc>) -> Self {
-        self.time_received_ns = Some(time.timestamp_nanos_opt().unwrap_or(0));
+        self.time_received_ns = time.timestamp_nanos_opt();
         self
     }
 }
@@ -253,6 +253,19 @@ mod tests {
         };
     }
     for_each_flow_field!(names);
+
+    #[test]
+    fn a_receive_time_past_i64_nanoseconds_is_unset_not_1970() {
+        let flow = CommonFlow::new(FlowType::Ipfix);
+        let in_range = DateTime::from_timestamp_secs(1_700_000_000).unwrap();
+        let out_of_range = DateTime::from_timestamp_secs(i64::from(u32::MAX) * 3).unwrap();
+
+        assert_eq!(
+            flow.clone().with_time_received(in_range).time_received_ns,
+            Some(1_700_000_000_000_000_000)
+        );
+        assert_eq!(flow.with_time_received(out_of_range).time_received_ns, None);
+    }
 
     #[test]
     fn list_names_every_field_of_the_struct() {

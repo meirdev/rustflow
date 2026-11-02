@@ -98,7 +98,7 @@ impl Source for Socket {
             Ok((len, addr)) => Datagram::Packet {
                 src: addr.ip(),
                 payload: &self.buf[..len],
-                time_received_ns: Some(Utc::now().timestamp_nanos_opt().unwrap_or(0)),
+                time_received_ns: Utc::now().timestamp_nanos_opt(),
             },
             Err(e) if is_retryable(&e) => Datagram::Idle,
             Err(e) => {
@@ -140,7 +140,7 @@ impl Source for Pcap {
                     let Some((src, payload)) = parse_udp_packet(link_type, &packet.data) else {
                         continue;
                     };
-                    let time_received_ns = Some(packet.timestamp.as_nanos() as i64);
+                    let time_received_ns = i64::try_from(packet.timestamp.as_nanos()).ok();
 
                     // Copied out, as the borrow of the frame cannot leave the loop.
                     self.payload.clear();
