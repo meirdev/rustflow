@@ -70,7 +70,6 @@ pub struct Entry {
     pub window: DateTime<Utc>,
     /// Still being written, or left behind by a crash. Expiry removes
     /// these like any other; a reader of the tree must skip them.
-    #[allow(dead_code)]
     pub temporary: bool,
 }
 
