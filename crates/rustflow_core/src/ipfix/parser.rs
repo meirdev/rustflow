@@ -18,7 +18,8 @@ use primitive_types::U256;
 use serde::Serialize;
 use strum::EnumString;
 
-use crate::common::ie_registry::{DataType, IERegistry};
+use super::element_types::ElementTypes;
+use crate::common::ie_registry::{DataType, IEDefinition, IERegistry};
 use crate::common::parser::{
     be_int, be_uint, boolean, ipv4_addr, ipv6_addr, macaddr6, string, timestamp_micros,
     timestamp_millis, timestamp_nanos, timestamp_secs, vector, verify_version,
@@ -48,6 +49,7 @@ type Templates = TemplateCache<ResolvedField>;
 
 pub struct IpfixParser {
     ie_registry: IERegistry,
+    element_types: ElementTypes,
     templates: Templates,
     options_templates: Templates,
 }
@@ -56,6 +58,7 @@ impl IpfixParser {
     pub fn new(ie_registry: IERegistry, timeout: std::time::Duration) -> Self {
         Self {
             ie_registry,
+            element_types: ElementTypes::default(),
             templates: TemplateCache::new(timeout),
             options_templates: TemplateCache::new(timeout),
         }
@@ -187,10 +190,14 @@ impl IpfixParser {
                             IPFIX_TEMPLATE_SET_ID,
                         );
                     } else if IPFIX_VALID_TEMPLATE_ID.contains(&template.template_id) {
-                        self.templates.insert(
-                            (observation_domain_id, template.template_id),
-                            resolve_fields(&self.ie_registry, &template.fields),
+                        let fields = resolve_fields(
+                            &self.ie_registry,
+                            &self.element_types,
+                            observation_domain_id,
+                            &template.fields,
                         );
+                        self.templates
+                            .insert((observation_domain_id, template.template_id), fields);
                     } else {
                         warn!(
                             "Template ID {} is reserved. Skipping.",
@@ -214,10 +221,14 @@ impl IpfixParser {
                             IPFIX_OPTIONS_TEMPLATE_SET_ID,
                         );
                     } else if IPFIX_VALID_TEMPLATE_ID.contains(&template.template_id) {
-                        self.options_templates.insert(
-                            (observation_domain_id, template.template_id),
-                            resolve_fields(&self.ie_registry, &template.fields),
+                        let fields = resolve_fields(
+                            &self.ie_registry,
+                            &self.element_types,
+                            observation_domain_id,
+                            &template.fields,
                         );
+                        self.options_templates
+                            .insert((observation_domain_id, template.template_id), fields);
                     } else {
                         warn!(
                             "Template ID {} is reserved. Skipping.",
@@ -235,7 +246,10 @@ impl IpfixParser {
                 ))
             }
             template_id if IPFIX_VALID_TEMPLATE_ID.contains(&template_id) => {
-                self.parse_templated_records(input, observation_domain_id, template_id, 0)
+                let (input, records) =
+                    self.parse_templated_records(input, observation_domain_id, template_id, 0)?;
+                self.learn_element_types(observation_domain_id, &records);
+                Ok((input, records))
             }
             _ => {
                 warn!("Invalid set ID: {}. Skipping.", set_id);
@@ -243,6 +257,32 @@ impl IpfixParser {
                 Ok((input, vec![]))
             }
         }
+    }
+
+    /// Learns from the type records (RFC 5610) among `records`. What they
+    /// describe applies to the domain's templates from then on, those
+    /// already cached included.
+    fn learn_element_types(&mut self, observation_domain_id: u32, records: &[Record]) {
+        let mut changed = false;
+        for record in records {
+            if let Record::OptionsData(record) = record {
+                changed |=
+                    self.element_types
+                        .learn(observation_domain_id, record, &self.ie_registry);
+            }
+        }
+        if !changed {
+            return;
+        }
+        let (registry, element_types) = (&self.ie_registry, &self.element_types);
+        let resolve = |fields: &[ResolvedField]| {
+            let specs: Vec<_> = fields.iter().map(|field| field.spec).collect();
+            resolve_fields(registry, element_types, observation_domain_id, &specs)
+        };
+        self.templates
+            .refresh_domain(observation_domain_id, resolve);
+        self.options_templates
+            .refresh_domain(observation_domain_id, resolve);
     }
 
     fn parse_record_from_fields<'a>(
@@ -353,13 +393,13 @@ impl IpfixParser {
         let (data, semantic) = map(be_u8, Semantic::from).parse(data)?;
         let (data, field) = parse_field_specifier(data)?;
 
-        let element_data_type = self
-            .ie_registry
-            .lookup(
-                field.information_element_identifier,
-                field.enterprise_number,
-            )
-            .map_or(DataType::OctetArray, |ie| ie.data_type);
+        let element_data_type = lookup(
+            &self.ie_registry,
+            &self.element_types,
+            observation_domain_id,
+            &field,
+        )
+        .map_or(DataType::OctetArray, |ie| ie.data_type);
         let mut content = Vec::new();
         let mut list_data = data;
 
@@ -496,6 +536,7 @@ impl Default for IpfixParser {
 
         Self {
             ie_registry,
+            element_types: ElementTypes::default(),
             templates: TemplateCache::new(timeout),
             options_templates: TemplateCache::new(timeout),
         }
@@ -619,16 +660,41 @@ impl TemplateRecord {
 
 pub type ResolvedField = data_record::ResolvedField<FieldSpecifier>;
 
+/// The registry's definition of an element, or else the one the exporter's
+/// type records gave for the domain.
+fn lookup<'a>(
+    registry: &'a IERegistry,
+    element_types: &'a ElementTypes,
+    observation_domain_id: u32,
+    spec: &FieldSpecifier,
+) -> Option<&'a IEDefinition> {
+    let (id, enterprise_number) = (spec.information_element_identifier, spec.enterprise_number);
+    registry
+        .lookup(id, enterprise_number)
+        .or_else(|| element_types.lookup(observation_domain_id, id, enterprise_number))
+}
+
 /// RFC 7011 section 3.4.2.1: scope fields are ordinary Information
 /// Elements, so every field resolves through the registry the same way.
-fn resolve_fields(registry: &IERegistry, fields: &[FieldSpecifier]) -> Arc<[ResolvedField]> {
+fn resolve_fields(
+    registry: &IERegistry,
+    element_types: &ElementTypes,
+    observation_domain_id: u32,
+    fields: &[FieldSpecifier],
+) -> Arc<[ResolvedField]> {
     fields
         .iter()
         .map(|spec| {
-            let (data_type, name) = registry
-                .lookup(spec.information_element_identifier, spec.enterprise_number)
+            let (data_type, name) = lookup(registry, element_types, observation_domain_id, spec)
                 .map_or_else(
-                    || (DataType::OctetArray, Arc::from(unknown_element_name(spec))),
+                    || {
+                        let (id, enterprise_number) =
+                            (spec.information_element_identifier, spec.enterprise_number);
+                        (
+                            DataType::OctetArray,
+                            Arc::from(unknown_element_name(id, enterprise_number)),
+                        )
+                    },
                     |ie| (ie.data_type, ie.name.clone()),
                 );
             ResolvedField {
@@ -640,10 +706,10 @@ fn resolve_fields(registry: &IERegistry, fields: &[FieldSpecifier]) -> Arc<[Reso
         .collect()
 }
 
-fn unknown_element_name(spec: &FieldSpecifier) -> String {
-    match spec.enterprise_number {
-        Some(enterprise) => format!("{enterprise}.{}", spec.information_element_identifier),
-        None => spec.information_element_identifier.to_string(),
+pub(super) fn unknown_element_name(id: u16, enterprise_number: Option<u32>) -> String {
+    match enterprise_number {
+        Some(enterprise) => format!("{enterprise}.{id}"),
+        None => id.to_string(),
     }
 }
 
@@ -1132,12 +1198,144 @@ mod tests {
             FieldSpecifier::enterprise(12, 4, 29305),
         ];
 
-        let names: Vec<_> = resolve_fields(&IERegistry::new(), &fields)
-            .iter()
-            .map(|field| field.name.to_string())
-            .collect();
+        let names: Vec<_> =
+            resolve_fields(&IERegistry::new(), &ElementTypes::default(), 0, &fields)
+                .iter()
+                .map(|field| field.name.to_string())
+                .collect();
 
         assert_eq!(names, ["12", "9.12", "29305.12"]);
+    }
+
+    fn enterprise_field(id: u16, length: u16, enterprise_number: u32) -> Vec<u8> {
+        [
+            field(0x8000 | id, length),
+            enterprise_number.to_be_bytes().to_vec(),
+        ]
+        .concat()
+    }
+
+    /// An options template (ID 400) for RFC 5610 type records, and a set of
+    /// records: element ID, enterprise number, data type, semantics, name.
+    fn type_records(records: &[(u16, u32, u8, u8, &str)]) -> [Vec<u8>; 2] {
+        let template = [
+            &[400u16.to_be_bytes(), 5u16.to_be_bytes(), 2u16.to_be_bytes()].concat()[..],
+            &field(303, 2),
+            &field(346, 4),
+            &field(339, 1),
+            &field(344, 1),
+            &field(341, IPFIX_VARIABLE_LENGTH),
+        ]
+        .concat();
+        let data: Vec<u8> = records
+            .iter()
+            .flat_map(|&(id, enterprise_number, data_type, semantics, name)| {
+                [
+                    &id.to_be_bytes()[..],
+                    &enterprise_number.to_be_bytes(),
+                    &[data_type, semantics],
+                    &variable_length(name.as_bytes()),
+                ]
+                .concat()
+            })
+            .collect();
+        [
+            set(IPFIX_OPTIONS_TEMPLATE_SET_ID, &template),
+            set(400, &data),
+        ]
+    }
+
+    /// Template 256: the given fields, one data record of `data`.
+    fn template_and_data(fields: &[Vec<u8>], data: &[u8]) -> [Vec<u8>; 2] {
+        let header = [256u16.to_be_bytes(), (fields.len() as u16).to_be_bytes()].concat();
+        let template = [header, fields.concat()].concat();
+        [set(IPFIX_TEMPLATE_SET_ID, &template), set(256, data)]
+    }
+
+    fn data_fields(packet: &IpfixPacket, set: usize) -> Vec<(&str, &FieldValue)> {
+        let Record::Data(record) = &packet.sets[set].records[0] else {
+            panic!("expected a data record, got {:?}", packet.sets[set].records);
+        };
+        record
+            .iter()
+            .map(|(_, name, value)| (name, value))
+            .collect()
+    }
+
+    #[test]
+    fn type_records_describe_enterprise_elements_for_later_templates() {
+        let mut parser = IpfixParser::default();
+        let [options_template, types] = type_records(&[(100, 4242, 3, 3, "vendorCounter")]);
+        let [template, data] =
+            template_and_data(&[enterprise_field(100, 4, 4242)], &42u32.to_be_bytes());
+
+        let msg = message(&[options_template, types, template, data]);
+        let (_, packet) = parser.parse(&msg).unwrap();
+
+        let fields = data_fields(&packet, 3);
+        assert_eq!(fields[0].0, "vendorCounter");
+        assert!(matches!(fields[0].1, FieldValue::Unsigned32(42)));
+    }
+
+    #[test]
+    fn type_records_apply_to_templates_already_cached() {
+        let mut parser = IpfixParser::default();
+        let [template, data] =
+            template_and_data(&[enterprise_field(100, 4, 4242)], &42u32.to_be_bytes());
+        let (_, packet) = parser.parse(&message(&[template, data.clone()])).unwrap();
+        let fields = data_fields(&packet, 1);
+        assert_eq!(fields[0].0, "4242.100");
+        assert!(matches!(fields[0].1, FieldValue::OctetArray(_)));
+
+        let [options_template, types] = type_records(&[(100, 4242, 3, 3, "vendorCounter")]);
+        let msg = message(&[options_template, types, data]);
+        let (_, packet) = parser.parse(&msg).unwrap();
+        let fields = data_fields(&packet, 2);
+        assert_eq!(fields[0].0, "vendorCounter");
+        assert!(matches!(fields[0].1, FieldValue::Unsigned32(42)));
+    }
+
+    #[test]
+    fn type_records_never_redefine_known_disputed_or_ill_fitting_elements() {
+        let mut parser = IpfixParser::default();
+        let [options_template, types] = type_records(&[
+            // octetDeltaCount: the registry's definition stands.
+            (1, 0, 13, 0, "octets"),
+            // Two records that disagree leave the element unknown.
+            (100, 4242, 3, 3, "vendorCounter"),
+            (100, 4242, 13, 0, "vendorCounter"),
+            // A string cannot be a deltaCounter.
+            (101, 4242, 13, 3, "vendorString"),
+            // A name holding a null character is ignored, the type is not.
+            (102, 4242, 3, 0, "vendor\0counter"),
+        ]);
+        let [template, data] = template_and_data(
+            &[
+                field(1, 4),
+                enterprise_field(100, 4, 4242),
+                enterprise_field(101, 4, 4242),
+                enterprise_field(102, 4, 4242),
+            ],
+            &words32(&[1, 2, 3, 4]),
+        );
+
+        let msg = message(&[options_template, types, template, data]);
+        let (_, packet) = parser.parse(&msg).unwrap();
+
+        let fields = data_fields(&packet, 3);
+        let names: Vec<_> = fields.iter().map(|(name, _)| *name).collect();
+        assert_eq!(
+            names,
+            ["octetDeltaCount", "4242.100", "4242.101", "4242.102"]
+        );
+        assert!(matches!(fields[0].1, FieldValue::Unsigned32(1)));
+        assert!(matches!(fields[1].1, FieldValue::OctetArray(_)));
+        assert!(matches!(fields[2].1, FieldValue::OctetArray(_)));
+        assert!(matches!(fields[3].1, FieldValue::Unsigned32(4)));
+    }
+
+    fn words32(values: &[u32]) -> Vec<u8> {
+        values.iter().flat_map(|v| v.to_be_bytes()).collect()
     }
 
     #[test]

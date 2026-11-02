@@ -91,6 +91,10 @@ rustflow collect \
 
 This can be used for enterprise-specific or vendor-specific Information Elements that are not part of the built-in mappings.
 
+IPFIX exporters can also describe their own elements in type records ([RFC 5610](https://datatracker.ietf.org/doc/html/rfc5610)).
+RustFlow uses a type record for an element that neither the built-in mappings nor `--ie-mapping` define, for the exporter and observation domain that sent it.
+Elements described differently by two type records stay undecoded.
+
 ## Template Cache
 
 NetFlow v9 and IPFIX use templates to describe the fields contained in data records.

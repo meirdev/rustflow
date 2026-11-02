@@ -5,7 +5,7 @@ use rustc_hash::FxHashMap;
 use serde::Deserialize;
 use strum::EnumString;
 
-#[derive(Debug, Clone, Copy, Deserialize, EnumString)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, EnumString)]
 #[strum(serialize_all = "camelCase")]
 pub enum DataType {
     Unsigned,

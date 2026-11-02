@@ -124,6 +124,19 @@ impl<F> TemplateCache<F> {
         }
     }
 
+    /// Replaces the fields of every template of `domain` with what
+    /// `resolve` makes of them, keeping when each was sent.
+    pub fn refresh_domain(&mut self, domain: u32, mut resolve: impl FnMut(&[F]) -> Arc<[F]>) {
+        let Some(templates) = self.domains.get_mut(&domain) else {
+            return;
+        };
+        for entry in templates.values_mut() {
+            let fields = resolve(&entry.fields);
+            self.fields = self.fields - entry.fields.len() + fields.len();
+            entry.fields = fields;
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.domains.values().map(FxHashMap::len).sum()
     }

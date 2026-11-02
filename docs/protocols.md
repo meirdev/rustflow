@@ -23,6 +23,7 @@ RustFlow supports the following flow protocols:
 
 - [RFC 7011 — Specification of the IP Flow Information Export (IPFIX) Protocol](https://datatracker.ietf.org/doc/html/rfc7011)
 - [RFC 7012 — Information Model for IP Flow Information Export](https://datatracker.ietf.org/doc/html/rfc7012)
+- [RFC 5610 — Exporting Type Information for IPFIX Information Elements](https://datatracker.ietf.org/doc/html/rfc5610)
 - [IANA IPFIX Information Elements](https://www.iana.org/assignments/ipfix/ipfix.xhtml)
 
 ## sFlow v5
