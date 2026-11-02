@@ -39,7 +39,7 @@ impl SFlowV5Context<'_> {
     pub fn convert_flow_sample(&self, sample: &FlowSample) -> CommonFlow {
         let mut flow = CommonFlow::new(FlowType::SflowV5);
         flow.sequence_num = self.header.sequence_number;
-        flow.sampler_address = Some(self.header.agent_address);
+        flow.sampler_address = self.header.agent_address;
         flow.sampling_rate = Some(sample.sampling_rate);
         flow.in_if = compact_if_index(sample.input);
         flow.out_if = compact_if_index(sample.output);
@@ -54,7 +54,7 @@ impl SFlowV5Context<'_> {
     pub fn convert_expanded_flow_sample(&self, sample: &ExpandedFlowSample) -> CommonFlow {
         let mut flow = CommonFlow::new(FlowType::SflowV5);
         flow.sequence_num = self.header.sequence_number;
-        flow.sampler_address = Some(self.header.agent_address);
+        flow.sampler_address = self.header.agent_address;
         flow.sampling_rate = Some(sample.sampling_rate);
         flow.in_if = if_index(sample.input_if_format, sample.input_if_value);
         flow.out_if = if_index(sample.output_if_format, sample.output_if_value);
@@ -145,7 +145,7 @@ impl SFlowV5Context<'_> {
     }
 
     fn apply_extended_router(&self, flow: &mut CommonFlow, router: &ExtendedRouter) {
-        flow.next_hop = Some(router.nexthop);
+        flow.next_hop = router.nexthop;
         flow.src_net = Some(router.src_mask as u8);
         flow.dst_net = Some(router.dst_mask as u8);
     }
@@ -157,7 +157,7 @@ impl SFlowV5Context<'_> {
     }
 
     fn apply_extended_gateway(&self, flow: &mut CommonFlow, gateway: &ExtendedGateway) {
-        flow.bgp_next_hop = Some(gateway.nexthop);
+        flow.bgp_next_hop = gateway.nexthop;
         flow.src_as = Some(gateway.src_as);
         flow.dst_as = match gateway.dst_as_path.last() {
             Some(AsPathType::AsSequence(as_seq)) => as_seq.last().copied(),

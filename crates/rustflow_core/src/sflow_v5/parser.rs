@@ -15,6 +15,7 @@ use crate::common::serializer::serialize_mac;
 
 pub const SFLOW_V5_VERSION: u32 = 5;
 
+const UNKNOWN: u32 = 0;
 const IPV4: u32 = 1;
 const IPV6: u32 = 2;
 
@@ -49,7 +50,7 @@ pub enum DataValue {
 #[derive(Debug, Clone, Serialize)]
 pub struct SFlowV5 {
     pub version: u32,
-    pub agent_address: IpAddr,
+    pub agent_address: Option<IpAddr>,
     pub sub_agent_id: u32,
     pub sequence_number: u32,
     pub uptime: u32,
@@ -755,21 +756,23 @@ fn parse_extended_switch(input: &[u8]) -> IResult<&[u8], ExtendedSwitch> {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ExtendedRouter {
-    pub nexthop: IpAddr,
+    pub nexthop: Option<IpAddr>,
     pub src_mask: u32,
     pub dst_mask: u32,
 }
 
-fn parse_address(input: &[u8]) -> IResult<&[u8], IpAddr> {
+fn parse_address(input: &[u8]) -> IResult<&[u8], Option<IpAddr>> {
     let (input, address_type) = be_u32(input)?;
+
     match address_type {
+        UNKNOWN => Ok((input, None)),
         IPV4 => {
             let (input, addr) = be_u32(input)?;
-            Ok((input, IpAddr::V4(Ipv4Addr::from(addr))))
+            Ok((input, Some(IpAddr::V4(Ipv4Addr::from(addr)))))
         }
         IPV6 => {
             let (input, addr) = be_u128(input)?;
-            Ok((input, IpAddr::V6(Ipv6Addr::from(addr))))
+            Ok((input, Some(IpAddr::V6(Ipv6Addr::from(addr)))))
         }
         _ => fail().parse(input),
     }
@@ -805,7 +808,7 @@ pub enum AsPathType {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ExtendedGateway {
-    pub nexthop: IpAddr,
+    pub nexthop: Option<IpAddr>,
     pub r#as: u32,
     pub src_as: u32,
     pub src_peer_as: u32,
@@ -1346,6 +1349,29 @@ mod tests {
             flow.records[0].data,
             FlowRecordType::SampledHeader(_)
         ));
+    }
+
+    #[test]
+    fn unknown_addresses_are_unset_and_keep_their_record() {
+        // An UNKNOWN agent address, and an extended router record with an
+        // UNKNOWN next hop and masks 24 and 16.
+        let router = opaque(1002, &words(&[0, 24, 16]));
+        let sample = flow_sample(1, &[router], &[]);
+        let header = words(&[5, 0, 0, 1, 1000, 1]);
+        let (_, packet) = parse_sflow_v5(&[header, sample].concat()).unwrap();
+
+        assert_eq!(packet.agent_address, None);
+        let [Sample::Flow(flow)] = packet.samples.as_slice() else {
+            panic!("expected one flow sample, got {:?}", packet.samples);
+        };
+        let FlowRecordType::ExtendedRouter(router) = &flow.records[0].data else {
+            panic!(
+                "expected an extended router, got {:?}",
+                flow.records[0].data
+            );
+        };
+        assert_eq!(router.nexthop, None);
+        assert_eq!((router.src_mask, router.dst_mask), (24, 16));
     }
 
     #[test]
