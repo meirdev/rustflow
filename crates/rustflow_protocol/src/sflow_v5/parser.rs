@@ -209,6 +209,7 @@ fn parse_discarded_packet(r: &mut Reader) -> Result<DiscardedPacket, ParseError>
 
 fn parse_flow_record(r: &mut Reader) -> Result<FlowRecord, Truncated> {
     let (format, data) = parse_formatted(r)?;
+
     let mut d = Reader::new(data);
     let d = &mut d;
     let record = match (format.enterprise, format.format) {
@@ -238,6 +239,7 @@ fn parse_flow_record(r: &mut Reader) -> Result<FlowRecord, Truncated> {
             .map(FlowRecord::ExtendedFunction),
         _ => None,
     };
+
     Ok(record.unwrap_or_else(|| FlowRecord::Unknown {
         format,
         data: data.to_vec(),
@@ -246,6 +248,7 @@ fn parse_flow_record(r: &mut Reader) -> Result<FlowRecord, Truncated> {
 
 fn parse_counter_record(r: &mut Reader) -> Result<CounterRecord, Truncated> {
     let (format, data) = parse_formatted(r)?;
+
     let mut d = Reader::new(data);
     let d = &mut d;
     let record = match (format.enterprise, format.format) {
@@ -261,6 +264,7 @@ fn parse_counter_record(r: &mut Reader) -> Result<CounterRecord, Truncated> {
         (0, PROCESSOR) => parse_processor(d).ok().map(CounterRecord::Processor),
         _ => None,
     };
+
     Ok(record.unwrap_or_else(|| CounterRecord::Unknown {
         format,
         data: data.to_vec(),
