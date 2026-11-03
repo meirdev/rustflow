@@ -37,7 +37,9 @@ impl<P: Processor> Reader<P> {
         })
     }
 
-    /// Decode with a processor configured by hand.
+    /// Decode with a processor configured by hand. It replaces the current
+    /// one, and with it what `with_ie_registry` and `with_template_timeout`
+    /// set, so call those after this.
     pub fn with_processor(mut self, processor: P) -> Self {
         self.processor = processor;
         self

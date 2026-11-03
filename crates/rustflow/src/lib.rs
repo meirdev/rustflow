@@ -47,7 +47,7 @@ pub use processor::{
     NetflowPacket, NetflowProcessor, Packet, Processor, SflowPacket, SflowProcessor,
 };
 pub use reader::{
-    NetflowReadResult, NetflowReader, ReadResult, Reader, SflowReadResult, SflowReader,
+    NetflowReadResult, NetflowReader, ReadEvent, ReadResult, Reader, SflowReadResult, SflowReader,
 };
 
 pub mod pcap {

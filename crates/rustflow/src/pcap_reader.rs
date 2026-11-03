@@ -10,6 +10,7 @@ use rustflow_core::common::ie_registry::IERegistry;
 use rustflow_core::common::packet::parse_udp_packet;
 
 use crate::processor::{NetflowProcessor, Processor, SflowProcessor};
+use crate::reader::{ReadEvent, ReadResult};
 
 /// Reads one protocol family from the UDP datagrams of a pcap file, with
 /// the capture time as the receive time.
@@ -37,18 +38,53 @@ impl<P: Processor> Reader<P> {
         })
     }
 
-    /// Decode with a processor configured by hand.
+    /// Decode with a processor configured by hand. It replaces the current
+    /// one, and with it what `with_ie_registry` and `with_template_timeout`
+    /// set, so call those after this.
     pub fn with_processor(mut self, processor: P) -> Self {
         self.processor = processor;
         self
     }
 
-    /// Read the next flow from the pcap file.
-    /// Returns `None` when the file is exhausted.
-    pub fn read(&mut self) -> io::Result<Option<CommonFlow>> {
+    pub fn processor(&self) -> &P {
+        &self.processor
+    }
+
+    pub fn processor_mut(&mut self) -> &mut P {
+        &mut self.processor
+    }
+
+    /// Read the next UDP datagram of the file as a raw packet, or
+    /// [`ReadResult::End`] when the file is exhausted.
+    pub fn read_raw(&mut self) -> io::Result<ReadResult<P>> {
+        let link_type = self.reader.header().datalink.into();
+        loop {
+            let Some(packet) = self.reader.next_packet() else {
+                return Ok(ReadResult::End);
+            };
+            let packet =
+                packet.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+            let Some((src, payload)) = parse_udp_packet(link_type, &packet.data) else {
+                continue;
+            };
+            let len = payload.len();
+            return Ok(match self.processor.parse(src, payload) {
+                Some(packet) => ReadResult::Packet { len, src, packet },
+                None => ReadResult::ParseError {
+                    len,
+                    src,
+                    version: P::version_of(payload),
+                },
+            });
+        }
+    }
+
+    /// Read the next flow from the pcap file, or [`ReadEvent::End`] when the
+    /// file is exhausted.
+    pub fn read(&mut self) -> io::Result<ReadEvent> {
         loop {
             if let Some(flow) = self.pending_flows.pop_front() {
-                return Ok(Some(flow));
+                return Ok(ReadEvent::Flow(Box::new(flow)));
             }
             let link_type = self.reader.header().datalink.into();
             match self.reader.next_packet() {
@@ -66,7 +102,7 @@ impl<P: Processor> Reader<P> {
                 Some(Err(e)) => {
                     return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string()));
                 }
-                None => return Ok(None),
+                None => return Ok(ReadEvent::End),
             }
         }
     }
@@ -90,7 +126,14 @@ impl<P: Processor> Iterator for Reader<P> {
     type Item = io::Result<CommonFlow>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.read().transpose()
+        loop {
+            match self.read() {
+                Ok(ReadEvent::Flow(flow)) => return Some(Ok(*flow)),
+                Ok(ReadEvent::Timeout) => continue,
+                Ok(ReadEvent::End) => return None,
+                Err(e) => return Some(Err(e)),
+            }
+        }
     }
 }
 
@@ -103,6 +146,26 @@ mod tests {
             "{}/../../tests/fixtures/pcap/{name}_sanity.pcap",
             env!("CARGO_MANIFEST_DIR")
         )
+    }
+
+    #[test]
+    fn read_raw_yields_every_datagram_then_the_end() {
+        use crate::processor::Packet;
+
+        let mut reader = NetflowPcapReader::open(fixture("netflow_v5")).unwrap();
+        let mut flows = 0;
+        loop {
+            match reader.read_raw().unwrap() {
+                ReadResult::Packet { packet, .. } => flows += packet.flow_count(),
+                ReadResult::End => break,
+                ReadResult::ParseError { .. } | ReadResult::Timeout => {
+                    panic!("expected a packet or the end")
+                }
+            }
+        }
+        assert_eq!(flows, 10);
+        assert!(matches!(reader.read_raw().unwrap(), ReadResult::End));
+        assert!(matches!(reader.read().unwrap(), ReadEvent::End));
     }
 
     #[test]

@@ -7,7 +7,7 @@ The crate is named `rustflow_lib` because `rustflow` was already taken on crates
 
 ```toml
 [dependencies]
-rustflow_lib = "0.11"
+rustflow_lib = "0.19"
 ```
 
 ## Reading Flows From the Network
@@ -57,11 +57,13 @@ which are buffered internally and returned one by one.
 
 ### Reading Without an Iterator
 
-`read` gives you control over the waiting. It returns `Ok(None)` when no datagram arrived
-before the read timeout, which is the hook for doing other work in the same thread:
+`read` gives you control over the waiting. It returns a `ReadEvent`: `Flow` with the next
+flow, or `Timeout` when none arrived before the read timeout, which is the hook for doing
+other work in the same thread. Datagrams that carry no flows, such as template-only ones, are
+read past:
 
 ```rust
-use rustflow_lib::NetflowReader;
+use rustflow_lib::{NetflowReader, ReadEvent};
 use std::time::Duration;
 
 fn main() -> std::io::Result<()> {
@@ -70,11 +72,12 @@ fn main() -> std::io::Result<()> {
 
     loop {
         match reader.read()? {
-            Some(flow) => println!("{:?}", flow),
-            None => {
+            ReadEvent::Flow(flow) => println!("{:?}", flow),
+            ReadEvent::Timeout => {
                 // No flow within the timeout: flush metrics, check for
                 // shutdown, then keep reading.
             }
+            ReadEvent::End => unreachable!("a socket has no end"),
         }
     }
 }
@@ -104,7 +107,8 @@ fn main() -> std::io::Result<()> {
 ```
 
 `SflowPcapReader` is the sFlow equivalent. Both expect a pcap containing the UDP datagrams
-carrying the flow protocol.
+carrying the flow protocol. Their `read` and `read_raw` return `End` at the end of the file
+instead of `Timeout`.
 
 ## Async
 
@@ -112,12 +116,12 @@ The async readers are behind the `tokio` feature:
 
 ```toml
 [dependencies]
-rustflow_lib = { version = "0.11", features = ["tokio"] }
+rustflow_lib = { version = "0.19", features = ["tokio"] }
 tokio = { version = "1", features = ["full"] }
 ```
 
 They live in `rustflow_lib::tokio` and mirror the sync API, except that `read` waits for a
-flow rather than returning `Option`:
+flow rather than returning a `ReadEvent`; wrap it in `tokio::time::timeout` to stop waiting:
 
 ```rust
 use rustflow_lib::tokio::NetflowReader;
@@ -209,7 +213,7 @@ fn main() -> std::io::Result<()> {
             NetflowReadResult::ParseError { src, version: None, .. } => {
                 eprintln!("packet of unknown version from {}", src);
             }
-            NetflowReadResult::Timeout => {}
+            NetflowReadResult::Timeout | NetflowReadResult::End => {}
         }
     }
 }

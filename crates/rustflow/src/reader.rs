@@ -25,8 +25,20 @@ pub enum ReadResult<P: Processor> {
         src: IpAddr,
         version: Option<FlowType>,
     },
-    /// No data available (timeout or would block).
+    /// Socket readers: no datagram before the read timeout.
     Timeout,
+    /// Pcap readers: the file is exhausted.
+    End,
+}
+
+/// What reading a flow turned up.
+#[derive(Debug)]
+pub enum ReadEvent {
+    Flow(Box<CommonFlow>),
+    /// Socket readers: no flow before the read timeout.
+    Timeout,
+    /// Pcap readers: the file is exhausted.
+    End,
 }
 
 pub type NetflowReadResult = ReadResult<NetflowProcessor>;
@@ -70,7 +82,9 @@ impl<P: Processor> Reader<P> {
         })
     }
 
-    /// Decode with a processor configured by hand.
+    /// Decode with a processor configured by hand. It replaces the current
+    /// one, and with it what `with_ie_registry` and `with_template_timeout`
+    /// set, so call those after this.
     pub fn with_processor(mut self, processor: P) -> Self {
         self.processor = processor;
         self
@@ -126,28 +140,30 @@ impl<P: Processor> Reader<P> {
         })
     }
 
-    /// Read the next flow from the socket.
-    /// Returns `None` if a read timeout occurs.
-    pub fn read(&mut self) -> io::Result<Option<CommonFlow>> {
-        if let Some(flow) = self.pending_flows.pop_front() {
-            return Ok(Some(flow));
+    /// Read the next flow from the socket, or [`ReadEvent::Timeout`] once the
+    /// read timeout passes without one. Datagrams that carry no flows, such
+    /// as template-only ones, are read past.
+    pub fn read(&mut self) -> io::Result<ReadEvent> {
+        loop {
+            if let Some(flow) = self.pending_flows.pop_front() {
+                return Ok(ReadEvent::Flow(Box::new(flow)));
+            }
+
+            let (len, src_addr) = match self.socket.recv_from(&mut self.buf) {
+                Ok(result) => result,
+                Err(e) if is_retryable(&e) => return Ok(ReadEvent::Timeout),
+                Err(e) => return Err(e),
+            };
+            let payload = &self.buf[..len];
+            let time_received_ns = chrono::Utc::now().timestamp_nanos_opt();
+
+            self.processor.process_into(
+                src_addr.ip(),
+                payload,
+                time_received_ns,
+                &mut self.pending_flows,
+            );
         }
-
-        let (len, src_addr) = match self.socket.recv_from(&mut self.buf) {
-            Ok(result) => result,
-            Err(e) if is_retryable(&e) => return Ok(None),
-            Err(e) => return Err(e),
-        };
-        let payload = &self.buf[..len];
-        let time_received_ns = chrono::Utc::now().timestamp_nanos_opt();
-
-        self.processor.process_into(
-            src_addr.ip(),
-            payload,
-            time_received_ns,
-            &mut self.pending_flows,
-        );
-        Ok(self.pending_flows.pop_front())
     }
 }
 
@@ -171,10 +187,43 @@ impl<P: Processor> Iterator for Reader<P> {
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             match self.read() {
-                Ok(Some(flow)) => return Some(Ok(flow)),
-                Ok(None) => continue,
+                Ok(ReadEvent::Flow(flow)) => return Some(Ok(*flow)),
+                Ok(ReadEvent::Timeout) => continue,
+                Ok(ReadEvent::End) => return None,
                 Err(e) => return Some(Err(e)),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn words(values: &[u16]) -> Vec<u8> {
+        values.iter().flat_map(|v| v.to_be_bytes()).collect()
+    }
+
+    #[test]
+    fn read_skips_datagrams_without_flows_and_reports_the_timeout() {
+        let mut reader = NetflowReader::bind("127.0.0.1:0")
+            .unwrap()
+            .with_read_timeout(Some(Duration::from_millis(200)))
+            .unwrap();
+        let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let addr = reader.local_addr().unwrap();
+
+        // An IPFIX message holding only template 256, octetDeltaCount(1).
+        let template_only = words(&[10, 28, 0, 0, 0, 0, 0, 1, 2, 12, 256, 1, 1, 4]);
+        // A NetFlow v5 header announcing one record, and an empty record.
+        let v5 = [words(&[5, 1]), vec![0; 20 + 48]].concat();
+        sender.send_to(&template_only, addr).unwrap();
+        sender.send_to(&v5, addr).unwrap();
+
+        let ReadEvent::Flow(flow) = reader.read().unwrap() else {
+            panic!("expected the v5 flow");
+        };
+        assert_eq!(flow.flow_type, FlowType::NetflowV5);
+        assert!(matches!(reader.read().unwrap(), ReadEvent::Timeout));
     }
 }
