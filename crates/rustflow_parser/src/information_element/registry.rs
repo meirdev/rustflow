@@ -1,42 +1,9 @@
-//! Information elements: what a template's field type stands for, and how
-//! its values are decoded and interpreted.
-
 use std::borrow::Cow;
 use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
-use crate::iana;
-use crate::value::DataType;
-
-/// How a field's values are to be interpreted, numbered as in IANA's IPFIX
-/// Information Element Semantics registry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[repr(u8)]
-pub enum DataTypeSemantics {
-    Default = 0,
-    Quantity = 1,
-    TotalCounter = 2,
-    DeltaCounter = 3,
-    Identifier = 4,
-    Flags = 5,
-    List = 6,
-    SnmpCounter = 7,
-    SnmpGauge = 8,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct InformationElement {
-    pub id: u16,
-    /// The private enterprise number of a vendor's element; `None` for an
-    /// IANA element.
-    pub enterprise_number: Option<u32>,
-    pub name: Cow<'static, str>,
-    pub data_type: DataType,
-    pub semantics: Option<DataTypeSemantics>,
-}
+use super::{InformationElement, iana};
 
 /// Information elements by enterprise number and ID. Clones share the
 /// elements until one of them is changed.
@@ -87,6 +54,7 @@ impl Default for Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::information_element::{DataType, DataTypeSemantics};
 
     fn element(id: u16, enterprise_number: Option<u32>, name: &'static str) -> InformationElement {
         InformationElement {

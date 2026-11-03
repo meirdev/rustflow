@@ -1,7 +1,7 @@
 //! IANA's IPFIX Information Elements registry
 
-use crate::information_element::DataTypeSemantics::{self, *};
-use crate::value::DataType::{self, *};
+use super::DataType::{self, *};
+use super::DataTypeSemantics::{self, *};
 
 #[rustfmt::skip]
 pub(crate) const ELEMENTS: &[(u16, &str, DataType, Option<DataTypeSemantics>)] = &[
