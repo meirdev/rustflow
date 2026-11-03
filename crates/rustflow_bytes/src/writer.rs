@@ -37,6 +37,16 @@ impl<'a> Writer<'a> {
         self.buf[at..at + 2].copy_from_slice(&value.to_be_bytes());
     }
 
+    /// Overwrites the four bytes at `at`, such as a length known only once
+    /// what it counts is written.
+    ///
+    /// # Panics
+    ///
+    /// If the buffer holds fewer than `at + 4` bytes.
+    pub fn set_u32(&mut self, at: usize, value: u32) {
+        self.buf[at..at + 4].copy_from_slice(&value.to_be_bytes());
+    }
+
     pub fn bytes(&mut self, bytes: &[u8]) {
         self.buf.extend_from_slice(bytes);
     }
@@ -129,10 +139,15 @@ mod tests {
         w.u16(0);
         w.u32(0x0102_0304);
         w.set_u16(start, 0xbeef);
+        w.set_u32(start + 2, 0x0a0b_0c0d);
         assert_eq!(w.len(), 7);
         w.truncate(start + 2);
         assert!(!w.is_empty());
         assert_eq!(buf, [0xaa, 0xbe, 0xef]);
+        let mut w = Writer::new(&mut buf);
+        w.zeros(4);
+        w.set_u32(3, 0x0102_0304);
+        assert_eq!(buf, [0xaa, 0xbe, 0xef, 1, 2, 3, 4]);
     }
 
     #[test]

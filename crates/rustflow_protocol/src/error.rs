@@ -17,6 +17,12 @@ pub enum ParseError {
     /// An options template's scope field count is zero, or more than its
     /// field count.
     ScopeFieldCount(u16),
+    /// An sFlow address of a type other than unknown, IPv4 or IPv6.
+    AddressType(u32),
+    /// An sFlow AS path segment other than a set or a sequence.
+    AsPathSegmentType(u32),
+    /// A string that is not UTF-8.
+    Utf8,
 }
 
 impl From<Truncated> for ParseError {
@@ -36,6 +42,11 @@ impl fmt::Display for ParseError {
                 write!(f, "message length {length} is shorter than its header")
             }
             Self::ScopeFieldCount(count) => write!(f, "invalid scope field count {count}"),
+            Self::AddressType(address_type) => write!(f, "unknown address type {address_type}"),
+            Self::AsPathSegmentType(segment_type) => {
+                write!(f, "unknown AS path segment type {segment_type}")
+            }
+            Self::Utf8 => write!(f, "string is not UTF-8"),
         }
     }
 }
@@ -82,7 +93,10 @@ impl error::Error for ParseError {
             | Self::SetLength(_)
             | Self::TemplateId(_)
             | Self::MessageLength(_)
-            | Self::ScopeFieldCount(_) => None,
+            | Self::ScopeFieldCount(_)
+            | Self::AddressType(_)
+            | Self::AsPathSegmentType(_)
+            | Self::Utf8 => None,
         }
     }
 }
@@ -115,6 +129,15 @@ mod tests {
             ParseError::ScopeFieldCount(0).to_string(),
             "invalid scope field count 0"
         );
+        assert_eq!(
+            ParseError::AddressType(3).to_string(),
+            "unknown address type 3"
+        );
+        assert_eq!(
+            ParseError::AsPathSegmentType(3).to_string(),
+            "unknown AS path segment type 3"
+        );
+        assert_eq!(ParseError::Utf8.to_string(), "string is not UTF-8");
         assert_eq!(
             WriteError::TooLarge {
                 field: "count",
