@@ -44,9 +44,14 @@
 //! ```
 //!
 //! A [`Writer`] does the reverse, appending values to a byte vector.
+//!
+//! A struct whose fields simply follow each other on the wire needs no
+//! parser or writer of its own: [`wire!`] defines it with both.
 
 pub use reader::{Reader, Truncated};
+pub use wire::Wire;
 pub use writer::Writer;
 
 mod reader;
+mod wire;
 mod writer;

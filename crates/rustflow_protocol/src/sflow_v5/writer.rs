@@ -1,6 +1,6 @@
 use std::net::IpAddr;
 
-use rustflow_bytes::Writer;
+use rustflow_bytes::{Wire, Writer};
 
 use super::*;
 use crate::WriteError;
@@ -248,15 +248,15 @@ fn write_flow_record(w: &mut Writer, record: &FlowRecord) -> Result<(), WriteErr
             })
         }
         FlowRecord::SampledIpv4(record) => write_formatted(w, standard(SAMPLED_IPV4), |w| {
-            write_sampled_ipv4(w, record);
+            record.write(w);
             Ok(())
         }),
         FlowRecord::SampledIpv6(record) => write_formatted(w, standard(SAMPLED_IPV6), |w| {
-            write_sampled_ipv6(w, record);
+            record.write(w);
             Ok(())
         }),
         FlowRecord::ExtendedSwitch(record) => write_formatted(w, standard(EXTENDED_SWITCH), |w| {
-            write_extended_switch(w, record);
+            record.write(w);
             Ok(())
         }),
         FlowRecord::ExtendedRouter(record) => write_formatted(w, standard(EXTENDED_ROUTER), |w| {
@@ -296,31 +296,31 @@ fn write_counter_record(w: &mut Writer, record: &CounterRecord) -> Result<(), Wr
     let standard = DataFormat::standard;
     match record {
         CounterRecord::IfCounters(record) => write_formatted(w, standard(IF_COUNTERS), |w| {
-            write_if_counters(w, record);
+            record.write(w);
             Ok(())
         }),
         CounterRecord::EthernetCounters(record) => {
             write_formatted(w, standard(ETHERNET_COUNTERS), |w| {
-                write_ethernet_counters(w, record);
+                record.write(w);
                 Ok(())
             })
         }
         CounterRecord::TokenringCounters(record) => {
             write_formatted(w, standard(TOKENRING_COUNTERS), |w| {
-                write_tokenring_counters(w, record);
+                record.write(w);
                 Ok(())
             })
         }
         CounterRecord::VgCounters(record) => write_formatted(w, standard(VG_COUNTERS), |w| {
-            write_vg_counters(w, record);
+            record.write(w);
             Ok(())
         }),
         CounterRecord::VlanCounters(record) => write_formatted(w, standard(VLAN_COUNTERS), |w| {
-            write_vlan_counters(w, record);
+            record.write(w);
             Ok(())
         }),
         CounterRecord::Processor(record) => write_formatted(w, standard(PROCESSOR), |w| {
-            write_processor(w, record);
+            record.write(w);
             Ok(())
         }),
         CounterRecord::Unknown { format, data } => write_unknown(w, *format, data),
@@ -351,61 +351,6 @@ fn write_sampled_ethernet(w: &mut Writer, record: &SampledEthernet) {
     write_mac(w, src_mac);
     write_mac(w, dst_mac);
     w.u32(*r#type);
-}
-
-fn write_sampled_ipv4(w: &mut Writer, record: &SampledIpv4) {
-    let SampledIpv4 {
-        length,
-        protocol,
-        src_ip,
-        dst_ip,
-        src_port,
-        dst_port,
-        tcp_flags,
-        tos,
-    } = *record;
-    w.u32(length);
-    w.u32(protocol);
-    w.ipv4(src_ip);
-    w.ipv4(dst_ip);
-    w.u32(src_port);
-    w.u32(dst_port);
-    w.u32(tcp_flags);
-    w.u32(tos);
-}
-
-fn write_sampled_ipv6(w: &mut Writer, record: &SampledIpv6) {
-    let SampledIpv6 {
-        length,
-        protocol,
-        src_ip,
-        dst_ip,
-        src_port,
-        dst_port,
-        tcp_flags,
-        priority,
-    } = *record;
-    w.u32(length);
-    w.u32(protocol);
-    w.ipv6(src_ip);
-    w.ipv6(dst_ip);
-    w.u32(src_port);
-    w.u32(dst_port);
-    w.u32(tcp_flags);
-    w.u32(priority);
-}
-
-fn write_extended_switch(w: &mut Writer, record: &ExtendedSwitch) {
-    let ExtendedSwitch {
-        src_vlan,
-        src_priority,
-        dst_vlan,
-        dst_priority,
-    } = *record;
-    w.u32(src_vlan);
-    w.u32(src_priority);
-    w.u32(dst_vlan);
-    w.u32(dst_priority);
 }
 
 fn write_extended_router(w: &mut Writer, record: &ExtendedRouter) {
@@ -487,192 +432,4 @@ fn write_extended_acl(w: &mut Writer, record: &ExtendedAcl) -> Result<(), WriteE
     write_opaque(w, name.as_bytes())?;
     w.u32((*direction).into());
     Ok(())
-}
-
-fn write_if_counters(w: &mut Writer, record: &IfCounters) {
-    let IfCounters {
-        if_index,
-        if_type,
-        if_speed,
-        if_direction,
-        if_status,
-        if_in_octets,
-        if_in_ucast_pkts,
-        if_in_multicast_pkts,
-        if_in_broadcast_pkts,
-        if_in_discards,
-        if_in_errors,
-        if_in_unknown_protos,
-        if_out_octets,
-        if_out_ucast_pkts,
-        if_out_multicast_pkts,
-        if_out_broadcast_pkts,
-        if_out_discards,
-        if_out_errors,
-        if_promiscuous_mode,
-    } = *record;
-    w.u32(if_index);
-    w.u32(if_type);
-    w.u64(if_speed);
-    w.u32(if_direction);
-    w.u32(if_status);
-    w.u64(if_in_octets);
-    w.u32(if_in_ucast_pkts);
-    w.u32(if_in_multicast_pkts);
-    w.u32(if_in_broadcast_pkts);
-    w.u32(if_in_discards);
-    w.u32(if_in_errors);
-    w.u32(if_in_unknown_protos);
-    w.u64(if_out_octets);
-    w.u32(if_out_ucast_pkts);
-    w.u32(if_out_multicast_pkts);
-    w.u32(if_out_broadcast_pkts);
-    w.u32(if_out_discards);
-    w.u32(if_out_errors);
-    w.u32(if_promiscuous_mode);
-}
-
-fn write_ethernet_counters(w: &mut Writer, record: &EthernetCounters) {
-    let EthernetCounters {
-        dot3_stats_alignment_errors,
-        dot3_stats_fcs_errors,
-        dot3_stats_single_collision_frames,
-        dot3_stats_multiple_collision_frames,
-        dot3_stats_sqe_test_errors,
-        dot3_stats_deferred_transmissions,
-        dot3_stats_late_collisions,
-        dot3_stats_excessive_collisions,
-        dot3_stats_internal_mac_transmit_errors,
-        dot3_stats_carrier_sense_errors,
-        dot3_stats_frame_too_longs,
-        dot3_stats_internal_mac_receive_errors,
-        dot3_stats_symbol_errors,
-    } = *record;
-    for value in [
-        dot3_stats_alignment_errors,
-        dot3_stats_fcs_errors,
-        dot3_stats_single_collision_frames,
-        dot3_stats_multiple_collision_frames,
-        dot3_stats_sqe_test_errors,
-        dot3_stats_deferred_transmissions,
-        dot3_stats_late_collisions,
-        dot3_stats_excessive_collisions,
-        dot3_stats_internal_mac_transmit_errors,
-        dot3_stats_carrier_sense_errors,
-        dot3_stats_frame_too_longs,
-        dot3_stats_internal_mac_receive_errors,
-        dot3_stats_symbol_errors,
-    ] {
-        w.u32(value);
-    }
-}
-
-fn write_tokenring_counters(w: &mut Writer, record: &TokenringCounters) {
-    let TokenringCounters {
-        dot5_stats_line_errors,
-        dot5_stats_burst_errors,
-        dot5_stats_ac_errors,
-        dot5_stats_abort_trans_errors,
-        dot5_stats_internal_errors,
-        dot5_stats_lost_frame_errors,
-        dot5_stats_receive_congestions,
-        dot5_stats_frame_copied_errors,
-        dot5_stats_token_errors,
-        dot5_stats_soft_errors,
-        dot5_stats_hard_errors,
-        dot5_stats_signal_loss,
-        dot5_stats_transmit_beacons,
-        dot5_stats_recoverys,
-        dot5_stats_lobe_wires,
-        dot5_stats_removes,
-        dot5_stats_singles,
-        dot5_stats_freq_errors,
-    } = *record;
-    for value in [
-        dot5_stats_line_errors,
-        dot5_stats_burst_errors,
-        dot5_stats_ac_errors,
-        dot5_stats_abort_trans_errors,
-        dot5_stats_internal_errors,
-        dot5_stats_lost_frame_errors,
-        dot5_stats_receive_congestions,
-        dot5_stats_frame_copied_errors,
-        dot5_stats_token_errors,
-        dot5_stats_soft_errors,
-        dot5_stats_hard_errors,
-        dot5_stats_signal_loss,
-        dot5_stats_transmit_beacons,
-        dot5_stats_recoverys,
-        dot5_stats_lobe_wires,
-        dot5_stats_removes,
-        dot5_stats_singles,
-        dot5_stats_freq_errors,
-    ] {
-        w.u32(value);
-    }
-}
-
-fn write_vg_counters(w: &mut Writer, record: &VgCounters) {
-    let VgCounters {
-        dot12_in_high_priority_frames,
-        dot12_in_high_priority_octets,
-        dot12_in_norm_priority_frames,
-        dot12_in_norm_priority_octets,
-        dot12_in_ipm_errors,
-        dot12_in_oversize_frame_errors,
-        dot12_in_data_errors,
-        dot12_in_null_addressed_frames,
-        dot12_out_high_priority_frames,
-        dot12_out_high_priority_octets,
-        dot12_transition_into_trainings,
-        dot12_hc_in_high_priority_octets,
-        dot12_hc_in_norm_priority_octets,
-        dot12_hc_out_high_priority_octets,
-    } = *record;
-    w.u32(dot12_in_high_priority_frames);
-    w.u64(dot12_in_high_priority_octets);
-    w.u32(dot12_in_norm_priority_frames);
-    w.u64(dot12_in_norm_priority_octets);
-    w.u32(dot12_in_ipm_errors);
-    w.u32(dot12_in_oversize_frame_errors);
-    w.u32(dot12_in_data_errors);
-    w.u32(dot12_in_null_addressed_frames);
-    w.u32(dot12_out_high_priority_frames);
-    w.u64(dot12_out_high_priority_octets);
-    w.u32(dot12_transition_into_trainings);
-    w.u64(dot12_hc_in_high_priority_octets);
-    w.u64(dot12_hc_in_norm_priority_octets);
-    w.u64(dot12_hc_out_high_priority_octets);
-}
-
-fn write_vlan_counters(w: &mut Writer, record: &VlanCounters) {
-    let VlanCounters {
-        vlan_id,
-        octets,
-        ucast_pkts,
-        multicast_pkts,
-        broadcast_pkts,
-        discards,
-    } = *record;
-    w.u32(vlan_id);
-    w.u64(octets);
-    w.u32(ucast_pkts);
-    w.u32(multicast_pkts);
-    w.u32(broadcast_pkts);
-    w.u32(discards);
-}
-
-fn write_processor(w: &mut Writer, record: &Processor) {
-    let Processor {
-        cpu_5s,
-        cpu_1m,
-        cpu_5m,
-        total_memory,
-        free_memory,
-    } = *record;
-    w.i32(cpu_5s);
-    w.i32(cpu_1m);
-    w.i32(cpu_5m);
-    w.u64(total_memory);
-    w.u64(free_memory);
 }

@@ -1,7 +1,7 @@
 use std::net::IpAddr;
 use std::str::from_utf8;
 
-use rustflow_bytes::{Reader, Truncated};
+use rustflow_bytes::{Reader, Truncated, Wire};
 
 use super::*;
 use crate::ParseError;
@@ -217,11 +217,9 @@ fn parse_flow_record(r: &mut Reader) -> Result<FlowRecord, Truncated> {
         (0, SAMPLED_ETHERNET) => parse_sampled_ethernet(d)
             .ok()
             .map(FlowRecord::SampledEthernet),
-        (0, SAMPLED_IPV4) => parse_sampled_ipv4(d).ok().map(FlowRecord::SampledIpv4),
-        (0, SAMPLED_IPV6) => parse_sampled_ipv6(d).ok().map(FlowRecord::SampledIpv6),
-        (0, EXTENDED_SWITCH) => parse_extended_switch(d)
-            .ok()
-            .map(FlowRecord::ExtendedSwitch),
+        (0, SAMPLED_IPV4) => SampledIpv4::read(d).ok().map(FlowRecord::SampledIpv4),
+        (0, SAMPLED_IPV6) => SampledIpv6::read(d).ok().map(FlowRecord::SampledIpv6),
+        (0, EXTENDED_SWITCH) => ExtendedSwitch::read(d).ok().map(FlowRecord::ExtendedSwitch),
         (0, EXTENDED_ROUTER) => parse_extended_router(d)
             .ok()
             .map(FlowRecord::ExtendedRouter),
@@ -252,16 +250,16 @@ fn parse_counter_record(r: &mut Reader) -> Result<CounterRecord, Truncated> {
     let mut d = Reader::new(data);
     let d = &mut d;
     let record = match (format.enterprise, format.format) {
-        (0, IF_COUNTERS) => parse_if_counters(d).ok().map(CounterRecord::IfCounters),
-        (0, ETHERNET_COUNTERS) => parse_ethernet_counters(d)
+        (0, IF_COUNTERS) => IfCounters::read(d).ok().map(CounterRecord::IfCounters),
+        (0, ETHERNET_COUNTERS) => EthernetCounters::read(d)
             .ok()
             .map(CounterRecord::EthernetCounters),
-        (0, TOKENRING_COUNTERS) => parse_tokenring_counters(d)
+        (0, TOKENRING_COUNTERS) => TokenringCounters::read(d)
             .ok()
             .map(CounterRecord::TokenringCounters),
-        (0, VG_COUNTERS) => parse_vg_counters(d).ok().map(CounterRecord::VgCounters),
-        (0, VLAN_COUNTERS) => parse_vlan_counters(d).ok().map(CounterRecord::VlanCounters),
-        (0, PROCESSOR) => parse_processor(d).ok().map(CounterRecord::Processor),
+        (0, VG_COUNTERS) => VgCounters::read(d).ok().map(CounterRecord::VgCounters),
+        (0, VLAN_COUNTERS) => VlanCounters::read(d).ok().map(CounterRecord::VlanCounters),
+        (0, PROCESSOR) => Processor::read(d).ok().map(CounterRecord::Processor),
         _ => None,
     };
 
@@ -296,64 +294,6 @@ fn parse_sampled_ethernet(r: &mut Reader) -> Result<SampledEthernet, ParseError>
         src_mac,
         dst_mac,
         r#type,
-    })
-}
-
-fn parse_sampled_ipv4(r: &mut Reader) -> Result<SampledIpv4, ParseError> {
-    let length = r.u32()?;
-    let protocol = r.u32()?;
-    let src_ip = r.ipv4()?;
-    let dst_ip = r.ipv4()?;
-    let src_port = r.u32()?;
-    let dst_port = r.u32()?;
-    let tcp_flags = r.u32()?;
-    let tos = r.u32()?;
-
-    Ok(SampledIpv4 {
-        length,
-        protocol,
-        src_ip,
-        dst_ip,
-        src_port,
-        dst_port,
-        tcp_flags,
-        tos,
-    })
-}
-
-fn parse_sampled_ipv6(r: &mut Reader) -> Result<SampledIpv6, ParseError> {
-    let length = r.u32()?;
-    let protocol = r.u32()?;
-    let src_ip = r.ipv6()?;
-    let dst_ip = r.ipv6()?;
-    let src_port = r.u32()?;
-    let dst_port = r.u32()?;
-    let tcp_flags = r.u32()?;
-    let priority = r.u32()?;
-
-    Ok(SampledIpv6 {
-        length,
-        protocol,
-        src_ip,
-        dst_ip,
-        src_port,
-        dst_port,
-        tcp_flags,
-        priority,
-    })
-}
-
-fn parse_extended_switch(r: &mut Reader) -> Result<ExtendedSwitch, ParseError> {
-    let src_vlan = r.u32()?;
-    let src_priority = r.u32()?;
-    let dst_vlan = r.u32()?;
-    let dst_priority = r.u32()?;
-
-    Ok(ExtendedSwitch {
-        src_vlan,
-        src_priority,
-        dst_vlan,
-        dst_priority,
     })
 }
 
@@ -445,109 +385,4 @@ fn parse_extended_function(r: &mut Reader) -> Result<ExtendedFunction, ParseErro
     let symbol = parse_string(r)?;
 
     Ok(ExtendedFunction { symbol })
-}
-
-fn parse_if_counters(r: &mut Reader) -> Result<IfCounters, Truncated> {
-    Ok(IfCounters {
-        if_index: r.u32()?,
-        if_type: r.u32()?,
-        if_speed: r.u64()?,
-        if_direction: r.u32()?,
-        if_status: r.u32()?,
-        if_in_octets: r.u64()?,
-        if_in_ucast_pkts: r.u32()?,
-        if_in_multicast_pkts: r.u32()?,
-        if_in_broadcast_pkts: r.u32()?,
-        if_in_discards: r.u32()?,
-        if_in_errors: r.u32()?,
-        if_in_unknown_protos: r.u32()?,
-        if_out_octets: r.u64()?,
-        if_out_ucast_pkts: r.u32()?,
-        if_out_multicast_pkts: r.u32()?,
-        if_out_broadcast_pkts: r.u32()?,
-        if_out_discards: r.u32()?,
-        if_out_errors: r.u32()?,
-        if_promiscuous_mode: r.u32()?,
-    })
-}
-
-fn parse_ethernet_counters(r: &mut Reader) -> Result<EthernetCounters, Truncated> {
-    Ok(EthernetCounters {
-        dot3_stats_alignment_errors: r.u32()?,
-        dot3_stats_fcs_errors: r.u32()?,
-        dot3_stats_single_collision_frames: r.u32()?,
-        dot3_stats_multiple_collision_frames: r.u32()?,
-        dot3_stats_sqe_test_errors: r.u32()?,
-        dot3_stats_deferred_transmissions: r.u32()?,
-        dot3_stats_late_collisions: r.u32()?,
-        dot3_stats_excessive_collisions: r.u32()?,
-        dot3_stats_internal_mac_transmit_errors: r.u32()?,
-        dot3_stats_carrier_sense_errors: r.u32()?,
-        dot3_stats_frame_too_longs: r.u32()?,
-        dot3_stats_internal_mac_receive_errors: r.u32()?,
-        dot3_stats_symbol_errors: r.u32()?,
-    })
-}
-
-fn parse_tokenring_counters(r: &mut Reader) -> Result<TokenringCounters, Truncated> {
-    Ok(TokenringCounters {
-        dot5_stats_line_errors: r.u32()?,
-        dot5_stats_burst_errors: r.u32()?,
-        dot5_stats_ac_errors: r.u32()?,
-        dot5_stats_abort_trans_errors: r.u32()?,
-        dot5_stats_internal_errors: r.u32()?,
-        dot5_stats_lost_frame_errors: r.u32()?,
-        dot5_stats_receive_congestions: r.u32()?,
-        dot5_stats_frame_copied_errors: r.u32()?,
-        dot5_stats_token_errors: r.u32()?,
-        dot5_stats_soft_errors: r.u32()?,
-        dot5_stats_hard_errors: r.u32()?,
-        dot5_stats_signal_loss: r.u32()?,
-        dot5_stats_transmit_beacons: r.u32()?,
-        dot5_stats_recoverys: r.u32()?,
-        dot5_stats_lobe_wires: r.u32()?,
-        dot5_stats_removes: r.u32()?,
-        dot5_stats_singles: r.u32()?,
-        dot5_stats_freq_errors: r.u32()?,
-    })
-}
-
-fn parse_vg_counters(r: &mut Reader) -> Result<VgCounters, Truncated> {
-    Ok(VgCounters {
-        dot12_in_high_priority_frames: r.u32()?,
-        dot12_in_high_priority_octets: r.u64()?,
-        dot12_in_norm_priority_frames: r.u32()?,
-        dot12_in_norm_priority_octets: r.u64()?,
-        dot12_in_ipm_errors: r.u32()?,
-        dot12_in_oversize_frame_errors: r.u32()?,
-        dot12_in_data_errors: r.u32()?,
-        dot12_in_null_addressed_frames: r.u32()?,
-        dot12_out_high_priority_frames: r.u32()?,
-        dot12_out_high_priority_octets: r.u64()?,
-        dot12_transition_into_trainings: r.u32()?,
-        dot12_hc_in_high_priority_octets: r.u64()?,
-        dot12_hc_in_norm_priority_octets: r.u64()?,
-        dot12_hc_out_high_priority_octets: r.u64()?,
-    })
-}
-
-fn parse_vlan_counters(r: &mut Reader) -> Result<VlanCounters, Truncated> {
-    Ok(VlanCounters {
-        vlan_id: r.u32()?,
-        octets: r.u64()?,
-        ucast_pkts: r.u32()?,
-        multicast_pkts: r.u32()?,
-        broadcast_pkts: r.u32()?,
-        discards: r.u32()?,
-    })
-}
-
-fn parse_processor(r: &mut Reader) -> Result<Processor, Truncated> {
-    Ok(Processor {
-        cpu_5s: r.i32()?,
-        cpu_1m: r.i32()?,
-        cpu_5m: r.i32()?,
-        total_memory: r.u64()?,
-        free_memory: r.u64()?,
-    })
 }

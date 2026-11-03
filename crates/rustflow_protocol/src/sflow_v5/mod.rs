@@ -312,47 +312,53 @@ pub struct SampledEthernet {
     pub r#type: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct SampledIpv4 {
-    /// The IP packet's length, lower layer headers and trailers excluded.
-    pub length: u32,
-    /// The IP protocol type.
-    pub protocol: u32,
-    pub src_ip: Ipv4Addr,
-    pub dst_ip: Ipv4Addr,
-    pub src_port: u32,
-    pub dst_port: u32,
-    pub tcp_flags: u32,
-    pub tos: u32,
+rustflow_bytes::wire! {
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+    pub struct SampledIpv4 {
+        /// The IP packet's length, lower layer headers and trailers excluded.
+        pub length: u32,
+        /// The IP protocol type.
+        pub protocol: u32,
+        pub src_ip: Ipv4Addr,
+        pub dst_ip: Ipv4Addr,
+        pub src_port: u32,
+        pub dst_port: u32,
+        pub tcp_flags: u32,
+        pub tos: u32,
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct SampledIpv6 {
-    /// The IP packet's length, lower layer headers and trailers excluded.
-    pub length: u32,
-    /// The IP next header.
-    pub protocol: u32,
-    pub src_ip: Ipv6Addr,
-    pub dst_ip: Ipv6Addr,
-    pub src_port: u32,
-    pub dst_port: u32,
-    pub tcp_flags: u32,
-    pub priority: u32,
+rustflow_bytes::wire! {
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+    pub struct SampledIpv6 {
+        /// The IP packet's length, lower layer headers and trailers excluded.
+        pub length: u32,
+        /// The IP next header.
+        pub protocol: u32,
+        pub src_ip: Ipv6Addr,
+        pub dst_ip: Ipv6Addr,
+        pub src_port: u32,
+        pub dst_port: u32,
+        pub tcp_flags: u32,
+        pub priority: u32,
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct ExtendedSwitch {
-    /// The 802.1Q VLAN ID of the incoming frame.
-    pub src_vlan: u32,
-    /// The 802.1p priority of the incoming frame.
-    pub src_priority: u32,
-    /// The 802.1Q VLAN ID of the outgoing frame.
-    pub dst_vlan: u32,
-    /// The 802.1p priority of the outgoing frame.
-    pub dst_priority: u32,
+rustflow_bytes::wire! {
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+    pub struct ExtendedSwitch {
+        /// The 802.1Q VLAN ID of the incoming frame.
+        pub src_vlan: u32,
+        /// The 802.1p priority of the incoming frame.
+        pub src_priority: u32,
+        /// The 802.1Q VLAN ID of the outgoing frame.
+        pub dst_vlan: u32,
+        /// The 802.1p priority of the outgoing frame.
+        pub dst_priority: u32,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -526,122 +532,134 @@ pub enum DropReason {
     Unassigned(u32),
 }
 
-/// Generic interface counters (RFC 2233).
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct IfCounters {
-    pub if_index: u32,
-    pub if_type: u32,
-    pub if_speed: u64,
-    /// 0 unknown, 1 full-duplex, 2 half-duplex, 3 in, 4 out.
-    pub if_direction: u32,
-    /// Bit 0 the ifAdminStatus (up), bit 1 the ifOperStatus (up).
-    pub if_status: u32,
-    pub if_in_octets: u64,
-    pub if_in_ucast_pkts: u32,
-    pub if_in_multicast_pkts: u32,
-    pub if_in_broadcast_pkts: u32,
-    pub if_in_discards: u32,
-    pub if_in_errors: u32,
-    pub if_in_unknown_protos: u32,
-    pub if_out_octets: u64,
-    pub if_out_ucast_pkts: u32,
-    pub if_out_multicast_pkts: u32,
-    pub if_out_broadcast_pkts: u32,
-    pub if_out_discards: u32,
-    pub if_out_errors: u32,
-    pub if_promiscuous_mode: u32,
+rustflow_bytes::wire! {
+    /// Generic interface counters (RFC 2233).
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+    pub struct IfCounters {
+        pub if_index: u32,
+        pub if_type: u32,
+        pub if_speed: u64,
+        /// 0 unknown, 1 full-duplex, 2 half-duplex, 3 in, 4 out.
+        pub if_direction: u32,
+        /// Bit 0 the ifAdminStatus (up), bit 1 the ifOperStatus (up).
+        pub if_status: u32,
+        pub if_in_octets: u64,
+        pub if_in_ucast_pkts: u32,
+        pub if_in_multicast_pkts: u32,
+        pub if_in_broadcast_pkts: u32,
+        pub if_in_discards: u32,
+        pub if_in_errors: u32,
+        pub if_in_unknown_protos: u32,
+        pub if_out_octets: u64,
+        pub if_out_ucast_pkts: u32,
+        pub if_out_multicast_pkts: u32,
+        pub if_out_broadcast_pkts: u32,
+        pub if_out_discards: u32,
+        pub if_out_errors: u32,
+        pub if_promiscuous_mode: u32,
+    }
 }
 
-/// Ethernet interface counters (RFC 2358).
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct EthernetCounters {
-    pub dot3_stats_alignment_errors: u32,
-    pub dot3_stats_fcs_errors: u32,
-    pub dot3_stats_single_collision_frames: u32,
-    pub dot3_stats_multiple_collision_frames: u32,
-    pub dot3_stats_sqe_test_errors: u32,
-    pub dot3_stats_deferred_transmissions: u32,
-    pub dot3_stats_late_collisions: u32,
-    pub dot3_stats_excessive_collisions: u32,
-    pub dot3_stats_internal_mac_transmit_errors: u32,
-    pub dot3_stats_carrier_sense_errors: u32,
-    pub dot3_stats_frame_too_longs: u32,
-    pub dot3_stats_internal_mac_receive_errors: u32,
-    pub dot3_stats_symbol_errors: u32,
+rustflow_bytes::wire! {
+    /// Ethernet interface counters (RFC 2358).
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+    pub struct EthernetCounters {
+        pub dot3_stats_alignment_errors: u32,
+        pub dot3_stats_fcs_errors: u32,
+        pub dot3_stats_single_collision_frames: u32,
+        pub dot3_stats_multiple_collision_frames: u32,
+        pub dot3_stats_sqe_test_errors: u32,
+        pub dot3_stats_deferred_transmissions: u32,
+        pub dot3_stats_late_collisions: u32,
+        pub dot3_stats_excessive_collisions: u32,
+        pub dot3_stats_internal_mac_transmit_errors: u32,
+        pub dot3_stats_carrier_sense_errors: u32,
+        pub dot3_stats_frame_too_longs: u32,
+        pub dot3_stats_internal_mac_receive_errors: u32,
+        pub dot3_stats_symbol_errors: u32,
+    }
 }
 
-/// Token Ring counters (RFC 1748).
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct TokenringCounters {
-    pub dot5_stats_line_errors: u32,
-    pub dot5_stats_burst_errors: u32,
-    pub dot5_stats_ac_errors: u32,
-    pub dot5_stats_abort_trans_errors: u32,
-    pub dot5_stats_internal_errors: u32,
-    pub dot5_stats_lost_frame_errors: u32,
-    pub dot5_stats_receive_congestions: u32,
-    pub dot5_stats_frame_copied_errors: u32,
-    pub dot5_stats_token_errors: u32,
-    pub dot5_stats_soft_errors: u32,
-    pub dot5_stats_hard_errors: u32,
-    pub dot5_stats_signal_loss: u32,
-    pub dot5_stats_transmit_beacons: u32,
-    pub dot5_stats_recoverys: u32,
-    pub dot5_stats_lobe_wires: u32,
-    pub dot5_stats_removes: u32,
-    pub dot5_stats_singles: u32,
-    pub dot5_stats_freq_errors: u32,
+rustflow_bytes::wire! {
+    /// Token Ring counters (RFC 1748).
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+    pub struct TokenringCounters {
+        pub dot5_stats_line_errors: u32,
+        pub dot5_stats_burst_errors: u32,
+        pub dot5_stats_ac_errors: u32,
+        pub dot5_stats_abort_trans_errors: u32,
+        pub dot5_stats_internal_errors: u32,
+        pub dot5_stats_lost_frame_errors: u32,
+        pub dot5_stats_receive_congestions: u32,
+        pub dot5_stats_frame_copied_errors: u32,
+        pub dot5_stats_token_errors: u32,
+        pub dot5_stats_soft_errors: u32,
+        pub dot5_stats_hard_errors: u32,
+        pub dot5_stats_signal_loss: u32,
+        pub dot5_stats_transmit_beacons: u32,
+        pub dot5_stats_recoverys: u32,
+        pub dot5_stats_lobe_wires: u32,
+        pub dot5_stats_removes: u32,
+        pub dot5_stats_singles: u32,
+        pub dot5_stats_freq_errors: u32,
+    }
 }
 
-/// 100 BaseVG interface counters (RFC 2020).
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct VgCounters {
-    pub dot12_in_high_priority_frames: u32,
-    pub dot12_in_high_priority_octets: u64,
-    pub dot12_in_norm_priority_frames: u32,
-    pub dot12_in_norm_priority_octets: u64,
-    pub dot12_in_ipm_errors: u32,
-    pub dot12_in_oversize_frame_errors: u32,
-    pub dot12_in_data_errors: u32,
-    pub dot12_in_null_addressed_frames: u32,
-    pub dot12_out_high_priority_frames: u32,
-    pub dot12_out_high_priority_octets: u64,
-    pub dot12_transition_into_trainings: u32,
-    pub dot12_hc_in_high_priority_octets: u64,
-    pub dot12_hc_in_norm_priority_octets: u64,
-    pub dot12_hc_out_high_priority_octets: u64,
+rustflow_bytes::wire! {
+    /// 100 BaseVG interface counters (RFC 2020).
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+    pub struct VgCounters {
+        pub dot12_in_high_priority_frames: u32,
+        pub dot12_in_high_priority_octets: u64,
+        pub dot12_in_norm_priority_frames: u32,
+        pub dot12_in_norm_priority_octets: u64,
+        pub dot12_in_ipm_errors: u32,
+        pub dot12_in_oversize_frame_errors: u32,
+        pub dot12_in_data_errors: u32,
+        pub dot12_in_null_addressed_frames: u32,
+        pub dot12_out_high_priority_frames: u32,
+        pub dot12_out_high_priority_octets: u64,
+        pub dot12_transition_into_trainings: u32,
+        pub dot12_hc_in_high_priority_octets: u64,
+        pub dot12_hc_in_norm_priority_octets: u64,
+        pub dot12_hc_out_high_priority_octets: u64,
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct VlanCounters {
-    pub vlan_id: u32,
-    pub octets: u64,
-    pub ucast_pkts: u32,
-    pub multicast_pkts: u32,
-    pub broadcast_pkts: u32,
-    pub discards: u32,
+rustflow_bytes::wire! {
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+    pub struct VlanCounters {
+        pub vlan_id: u32,
+        pub octets: u64,
+        pub ucast_pkts: u32,
+        pub multicast_pkts: u32,
+        pub broadcast_pkts: u32,
+        pub discards: u32,
+    }
 }
 
-/// The agent's processor and memory.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Processor {
-    /// The 5-second average CPU use, in hundredths of a percent; -1 if
-    /// unknown.
-    pub cpu_5s: i32,
-    /// The 1-minute average CPU use, in hundredths of a percent; -1 if
-    /// unknown.
-    pub cpu_1m: i32,
-    /// The 5-minute average CPU use, in hundredths of a percent; -1 if
-    /// unknown.
-    pub cpu_5m: i32,
-    /// In bytes.
-    pub total_memory: u64,
-    /// In bytes.
-    pub free_memory: u64,
+rustflow_bytes::wire! {
+    /// The agent's processor and memory.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+    pub struct Processor {
+        /// The 5-second average CPU use, in hundredths of a percent; -1 if
+        /// unknown.
+        pub cpu_5s: i32,
+        /// The 1-minute average CPU use, in hundredths of a percent; -1 if
+        /// unknown.
+        pub cpu_1m: i32,
+        /// The 5-minute average CPU use, in hundredths of a percent; -1 if
+        /// unknown.
+        pub cpu_5m: i32,
+        /// In bytes.
+        pub total_memory: u64,
+        /// In bytes.
+        pub free_memory: u64,
+    }
 }
