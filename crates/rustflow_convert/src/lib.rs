@@ -17,5 +17,6 @@ pub mod netflow_v5;
 pub mod netflow_v9;
 mod record;
 mod sampling;
+pub mod sflow_v5;
 mod templated;
 mod time;

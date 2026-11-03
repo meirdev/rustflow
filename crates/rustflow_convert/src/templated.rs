@@ -2,14 +2,12 @@
 //! already: copied, with relative times made absolute and what conversion
 //! adds appended.
 
-use std::sync::Arc;
-
 use rustflow_protocol::information_element::{ElementId, iana};
 use rustflow_protocol::value::Value;
 use rustflow_protocol::{DataSet, Elements};
 
 use crate::domain::Domain;
-use crate::record::Additions;
+use crate::record::{Additions, shared};
 use crate::time::uptime_to_unix_millis;
 use crate::{Protocol, Received, Record};
 
@@ -83,7 +81,7 @@ pub(crate) fn convert_data<T: Elements>(
     records: &mut impl Extend<Record>,
 ) {
     let base = Additions::new(context.received, Some(context.domain_id));
-    let mut shared: Option<Arc<[ElementId]>> = None;
+    let mut last_elements = None;
     records.extend(data.records().map(|record| {
         let mut additions = base.clone();
         if let Some(sampling) = domain.and_then(|domain| domain.sampling(record)) {
@@ -106,14 +104,10 @@ pub(crate) fn convert_data<T: Elements>(
         elements.extend(additions.elements);
         values.extend(additions.values);
 
-        let elements = match &shared {
-            Some(last) if last[..] == elements[..] => Arc::clone(last),
-            _ => Arc::clone(shared.insert(elements.into())),
-        };
         Record {
             protocol: context.protocol,
             sequence_number: context.sequence_number,
-            elements,
+            elements: shared(&mut last_elements, elements),
             values,
         }
     }));

@@ -112,3 +112,15 @@ impl Additions {
         self.values.push(value);
     }
 }
+
+/// `elements` as an `Arc`, the last record's if they are the same, so that
+/// records of one shape share them.
+pub(crate) fn shared(
+    last: &mut Option<Arc<[ElementId]>>,
+    elements: Vec<ElementId>,
+) -> Arc<[ElementId]> {
+    match last {
+        Some(last) if last[..] == elements[..] => Arc::clone(last),
+        _ => Arc::clone(last.insert(elements.into())),
+    }
+}
