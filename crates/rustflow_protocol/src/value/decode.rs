@@ -110,6 +110,14 @@ fn int(bytes: &[u8]) -> i64 {
 mod tests {
     use super::*;
     #[test]
+    fn unsigned_values_of_any_width_read_as_u64() {
+        for bytes in [&[7][..], &[0, 7], &[0, 0, 7], &[0, 0, 0, 0, 0, 0, 0, 7]] {
+            assert_eq!(decode(DataType::Unsigned64, bytes).as_u64(), Some(7));
+        }
+        assert_eq!(Value::Signed8(7).as_u64(), None);
+    }
+
+    #[test]
     fn unsigned_integers_of_every_size() {
         let unsigned = |bytes: &[u8]| decode(DataType::Unsigned64, bytes);
         assert_eq!(unsigned(&[0x01]), Value::Unsigned8(0x01));

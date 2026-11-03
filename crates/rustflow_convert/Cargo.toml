@@ -1,0 +1,10 @@
+[package]
+name = "rustflow_convert"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Flow records of NetFlow, IPFIX and sFlow converted to IPFIX information elements"
+
+[dependencies]
+rustflow_protocol = { path = "../rustflow_protocol" }

@@ -1622,6 +1622,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustflow_convert"
+version = "0.19.0"
+dependencies = [
+ "rustflow_protocol",
+]
+
+[[package]]
 name = "rustflow_core"
 version = "0.19.0"
 dependencies = [

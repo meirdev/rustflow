@@ -53,6 +53,19 @@ pub enum Value {
     Null,
 }
 
+impl Value {
+    /// An unsigned integer of up to 64 bits, whatever its width.
+    pub fn as_u64(&self) -> Option<u64> {
+        match *self {
+            Self::Unsigned8(v) => Some(v.into()),
+            Self::Unsigned16(v) => Some(v.into()),
+            Self::Unsigned32(v) => Some(v.into()),
+            Self::Unsigned64(v) => Some(v),
+            _ => None,
+        }
+    }
+}
+
 /// A timestamp in NTP format (RFC 5905 section 6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
