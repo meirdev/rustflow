@@ -3,9 +3,6 @@ use rustflow_bytes::Writer;
 use super::*;
 use crate::WriteError;
 
-/// Writes `packet` as a NetFlow v5 datagram at the end of `buf`. The count
-/// written is the number of flow records, whatever the header holds, and
-/// padding is written as zeros. On error, nothing is written.
 pub fn write(packet: &Packet, buf: &mut Vec<u8>) -> Result<(), WriteError> {
     let mut w = Writer::new(buf);
     write_header(&mut w, &packet.header, packet.flow_records.len())?;
@@ -15,8 +12,6 @@ pub fn write(packet: &Packet, buf: &mut Vec<u8>) -> Result<(), WriteError> {
     Ok(())
 }
 
-/// Converts every value before writing any, so that on error nothing is
-/// written.
 fn write_header(w: &mut Writer, header: &Header, records: usize) -> Result<(), WriteError> {
     let Header {
         version,
