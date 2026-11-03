@@ -3,11 +3,14 @@
 
 use std::net::Ipv4Addr;
 
-use rustflow_reader::Reader;
+use rustflow_reader::{Reader, Writer};
 
-use crate::Error;
+use crate::{Error, WriteError};
 
 pub const VERSION: u16 = 5;
+
+/// The low 14 bits of the sampling field.
+const SAMPLING_INTERVAL_MASK: u16 = 0x3fff;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -55,8 +58,28 @@ impl From<u16> for Sampling {
     fn from(field: u16) -> Self {
         Self {
             mode: field.to_be_bytes()[0] >> 6,
-            interval: field & 0x3fff,
+            interval: field & SAMPLING_INTERVAL_MASK,
         }
+    }
+}
+
+impl TryFrom<Sampling> for u16 {
+    type Error = WriteError;
+
+    fn try_from(sampling: Sampling) -> Result<Self, WriteError> {
+        if sampling.mode > 3 {
+            return Err(WriteError::TooLarge {
+                field: "sampling mode",
+                value: usize::from(sampling.mode),
+            });
+        }
+        if sampling.interval > SAMPLING_INTERVAL_MASK {
+            return Err(WriteError::TooLarge {
+                field: "sampling interval",
+                value: usize::from(sampling.interval),
+            });
+        }
+        Ok((u16::from(sampling.mode) << 14) | sampling.interval)
     }
 }
 
@@ -113,6 +136,18 @@ pub fn parse(datagram: &[u8]) -> Result<Packet, Error> {
         header,
         flow_records,
     })
+}
+
+/// Writes `packet` as a NetFlow v5 datagram at the end of `buf`. The count
+/// written is the number of flow records, whatever the header holds, and
+/// padding is written as zeros. On error, nothing is written.
+pub fn write(packet: &Packet, buf: &mut Vec<u8>) -> Result<(), WriteError> {
+    let mut w = Writer::new(buf);
+    write_header(&mut w, &packet.header, packet.flow_records.len())?;
+    for record in &packet.flow_records {
+        write_flow_record(&mut w, record);
+    }
+    Ok(())
 }
 
 fn parse_header(r: &mut Reader) -> Result<Header, Error> {
@@ -186,6 +221,83 @@ fn parse_flow_record(r: &mut Reader) -> Result<FlowRecord, Error> {
         src_mask,
         dst_mask,
     })
+}
+
+/// Converts every value before writing any, so that on error nothing is
+/// written.
+fn write_header(w: &mut Writer, header: &Header, records: usize) -> Result<(), WriteError> {
+    let Header {
+        version,
+        count: _,
+        sys_uptime,
+        unix_secs,
+        unix_nsecs,
+        flow_sequence,
+        engine_type,
+        engine_id,
+        sampling_interval,
+    } = *header;
+    let count = u16::try_from(records).map_err(|_| WriteError::TooLarge {
+        field: "count",
+        value: records,
+    })?;
+    let sampling_interval = u16::try_from(sampling_interval)?;
+
+    w.u16(version);
+    w.u16(count);
+    w.u32(sys_uptime);
+    w.u32(unix_secs);
+    w.u32(unix_nsecs);
+    w.u32(flow_sequence);
+    w.u8(engine_type);
+    w.u8(engine_id);
+    w.u16(sampling_interval);
+    Ok(())
+}
+
+fn write_flow_record(w: &mut Writer, record: &FlowRecord) {
+    let FlowRecord {
+        srcaddr,
+        dstaddr,
+        nexthop,
+        input,
+        output,
+        d_pkts,
+        d_octets,
+        first,
+        last,
+        srcport,
+        dstport,
+        tcp_flags,
+        prot,
+        tos,
+        src_as,
+        dst_as,
+        src_mask,
+        dst_mask,
+    } = *record;
+    w.ipv4(srcaddr);
+    w.ipv4(dstaddr);
+    w.ipv4(nexthop);
+    w.u16(input);
+    w.u16(output);
+    w.u32(d_pkts);
+    w.u32(d_octets);
+    w.u32(first);
+    w.u32(last);
+    w.u16(srcport);
+    w.u16(dstport);
+    // pad1
+    w.zeros(1);
+    w.u8(tcp_flags);
+    w.u8(prot);
+    w.u8(tos);
+    w.u16(src_as);
+    w.u16(dst_as);
+    w.u8(src_mask);
+    w.u8(dst_mask);
+    // pad2
+    w.zeros(2);
 }
 
 #[cfg(test)]
@@ -334,6 +446,94 @@ mod tests {
                 available: 1
             }))
         );
+    }
+
+    /// What [`write`] makes of `flow_record_bytes`: padding as zeros.
+    fn written_flow_record_bytes() -> Vec<u8> {
+        let mut bytes = flow_record_bytes();
+        bytes[36] = 0;
+        bytes[46..].fill(0);
+        bytes
+    }
+
+    #[test]
+    fn writes_what_it_parses_with_zero_padding() {
+        let datagram = [header_bytes(2), flow_record_bytes(), flow_record_bytes()].concat();
+        let packet = parse(&datagram).unwrap();
+
+        let mut written = Vec::new();
+        write(&packet, &mut written).unwrap();
+
+        assert_eq!(
+            written,
+            [
+                header_bytes(2),
+                written_flow_record_bytes(),
+                written_flow_record_bytes()
+            ]
+            .concat()
+        );
+        assert_eq!(parse(&written), Ok(packet));
+    }
+
+    #[test]
+    fn the_count_written_is_the_number_of_flow_records() {
+        let mut packet = parse(&[header_bytes(1), flow_record_bytes()].concat()).unwrap();
+        packet.header.count = 99;
+        let mut written = vec![0xab];
+        write(&packet, &mut written).unwrap();
+        assert_eq!(written[0], 0xab);
+        assert_eq!(written[3..5], 1u16.to_be_bytes());
+        assert_eq!(written.len(), 1 + HEADER_SIZE + FLOW_RECORD_SIZE);
+    }
+
+    #[test]
+    fn more_flow_records_than_a_count_holds_write_nothing() {
+        let record = parse(&[header_bytes(1), flow_record_bytes()].concat())
+            .unwrap()
+            .flow_records
+            .remove(0);
+        let packet = Packet {
+            header: expected_header(0),
+            flow_records: vec![record; 65_536],
+        };
+        let mut written = Vec::new();
+        assert_eq!(
+            write(&packet, &mut written),
+            Err(WriteError::TooLarge {
+                field: "count",
+                value: 65_536
+            })
+        );
+        assert!(written.is_empty());
+    }
+
+    #[test]
+    fn sampling_fields_round_trip_and_reject_values_too_wide() {
+        for field in [0, 100, (1 << 14) | 100, u16::MAX] {
+            assert_eq!(u16::try_from(Sampling::from(field)), Ok(field));
+        }
+        let too_wide = |mode, interval| u16::try_from(Sampling { mode, interval });
+        assert_eq!(
+            too_wide(4, 0),
+            Err(WriteError::TooLarge {
+                field: "sampling mode",
+                value: 4
+            })
+        );
+        assert_eq!(
+            too_wide(0, 0x4000),
+            Err(WriteError::TooLarge {
+                field: "sampling interval",
+                value: 0x4000
+            })
+        );
+
+        let mut packet = parse(&header_bytes(0)).unwrap();
+        packet.header.sampling_interval.mode = 4;
+        let mut written = Vec::new();
+        assert!(write(&packet, &mut written).is_err());
+        assert!(written.is_empty());
     }
 
     #[cfg(feature = "serde")]

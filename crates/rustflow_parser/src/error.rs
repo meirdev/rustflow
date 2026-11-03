@@ -40,6 +40,23 @@ impl fmt::Display for Error {
     }
 }
 
+/// Why a packet could not be written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteError {
+    /// A value larger than its field on the wire holds.
+    TooLarge { field: &'static str, value: usize },
+}
+
+impl fmt::Display for WriteError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TooLarge { field, value } => write!(f, "{field} {value} does not fit its field"),
+        }
+    }
+}
+
+impl error::Error for WriteError {}
+
 impl error::Error for Error {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match self {
@@ -80,6 +97,14 @@ mod tests {
         assert_eq!(
             Error::ScopeFieldCount(0).to_string(),
             "invalid scope field count 0"
+        );
+        assert_eq!(
+            WriteError::TooLarge {
+                field: "count",
+                value: 65_536
+            }
+            .to_string(),
+            "count 65536 does not fit its field"
         );
     }
 }

@@ -1,6 +1,6 @@
 //! Parsers for flow protocol datagrams.
 
-pub use error::Error;
+pub use error::{Error, WriteError};
 pub use template_cache::DataSet;
 
 mod error;

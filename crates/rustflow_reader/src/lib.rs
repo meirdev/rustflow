@@ -42,10 +42,16 @@
 //! assert_eq!(sets[0].id, 1);
 //! assert_eq!(sets[0].values, [7, 9]);
 //! ```
+//!
+//! A [`Writer`] does the reverse, appending values to a byte vector.
 
 use std::error::Error;
 use std::fmt;
 use std::net::{Ipv4Addr, Ipv6Addr};
+
+pub use writer::Writer;
+
+mod writer;
 
 /// A read needed more bytes than the reader had left.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
