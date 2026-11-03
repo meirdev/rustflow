@@ -6,19 +6,27 @@ use crate::{Error, Exporter, Item, Output, Process};
 /// A Collecting Process the embedding program feeds: see
 /// [`Pipeline::collector`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CollectorId(usize);
+pub struct CollectorId(pub(crate) usize);
 
 /// Where a component's input comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Node {
+pub(crate) enum Node {
     Collector(usize),
     Process(usize),
 }
 
-struct Component<T> {
-    name: String,
-    inputs: Vec<Node>,
-    inner: T,
+pub(crate) struct Component<T> {
+    pub(crate) name: String,
+    pub(crate) inputs: Vec<Node>,
+    pub(crate) inner: T,
+}
+
+/// A pipeline taken apart, for running its components on threads of
+/// their own.
+pub(crate) struct Parts {
+    pub(crate) collectors: Vec<String>,
+    pub(crate) processes: Vec<Component<Box<dyn Process>>>,
+    pub(crate) exporters: Vec<Component<Box<dyn Exporter>>>,
 }
 
 /// Named Collecting, Intermediate and Exporting Processes (RFC 6183
@@ -48,6 +56,14 @@ impl Pipeline {
             .iter()
             .position(|s| s == name)
             .map(CollectorId)
+    }
+
+    pub(crate) fn into_parts(self) -> Parts {
+        Parts {
+            collectors: self.collectors,
+            processes: self.processes,
+            exporters: self.exporters,
+        }
     }
 
     /// Runs `items` from `collector` through every process and exporter they

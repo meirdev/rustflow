@@ -13,3 +13,6 @@ toml.workspace = true
 
 [dev-dependencies]
 rustflow_protocol = { path = "../rustflow_protocol" }
+
+[[example]]
+name = "handoff"

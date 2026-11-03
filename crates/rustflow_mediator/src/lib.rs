@@ -41,9 +41,10 @@
 //! one its configuration names and pushes what it receives into the
 //! pipeline under that name.
 //!
-//! A [`Runner`] drives the pipeline on a thread of its own: collectors
-//! push chunks of items through a [`Feed`] each, the runner takes them in
-//! turn, ticks the pipeline on a schedule, and ends the stream once every
+//! A [`Runner`] runs every process and exporter on a thread of its own,
+//! each handing what it emits to the inboxes of the components that read
+//! it. Collectors push chunks of items through a [`Feed`] each; the runner
+//! ticks every component on a schedule, and the stream ends once every
 //! feed is gone.
 
 pub use config::{Collector, Component, Config};
