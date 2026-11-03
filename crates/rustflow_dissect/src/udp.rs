@@ -156,6 +156,33 @@ mod tests {
     }
 
     #[test]
+    fn an_ip_length_field_that_does_not_hold_is_not_whole() {
+        let mut ipv6 = Vec::new();
+        PacketBuilder::ipv6([0x20; 16], [0; 16], 64)
+            .udp(1000, 2055)
+            .write(&mut ipv6, PAYLOAD)
+            .unwrap();
+        assert!(udp_payload(RAW_IP, &ipv6).is_some());
+        // A payload length of 0, without a jumbogram.
+        ipv6[4..6].fill(0);
+
+        for packet in [zero_total_length(&datagram()), ipv6] {
+            assert_eq!(udp_payload(RAW_IP, &packet), None);
+        }
+    }
+
+    #[test]
+    fn a_tunnel_whose_outer_length_does_not_hold_is_not_peeled() {
+        let vxlan = [
+            &[0x08, 0, 0, 0, 0, 0, 1, 0][..],
+            &ethernet(0x0800, &datagram()),
+        ]
+        .concat();
+        let outer = zero_total_length(&ipv4_udp(OUTER, 4789, &vxlan));
+        assert_eq!(udp_payload(RAW_IP, &outer), None);
+    }
+
+    #[test]
     fn other_link_types_are_not_read() {
         assert_eq!(udp_payload(0, &datagram()), None);
     }

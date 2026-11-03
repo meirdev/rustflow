@@ -1,6 +1,6 @@
 use etherparse::{
-    Icmpv4Slice, Icmpv6Slice, IpNumber, Ipv6ExtensionSlice, LaxNetSlice, LaxSlicedPacket, TcpSlice,
-    TransportSlice, UdpSlice,
+    Icmpv4Slice, Icmpv6Slice, IpNumber, Ipv6ExtensionSlice, LaxNetSlice, LaxSlicedPacket,
+    LenSource, TcpSlice, TransportSlice, UdpSlice,
 };
 
 use crate::tunnel::{Inner, encapsulated};
@@ -118,15 +118,20 @@ fn ipv6_fragment_offset(extensions: etherparse::Ipv6ExtensionsSlice<'_>) -> u16 
         .unwrap_or(0)
 }
 
-/// Whether the IP packet is all there: not truncated, not a fragment, and
-/// with a UDP length that matches the bytes when the transport is UDP. A
-/// packet with no IP layer yet, such as a frame carrying an MPLS stack,
-/// has nothing to check.
+/// Whether the IP packet is all there: with a length field that holds, not
+/// truncated, not a fragment, and with a UDP length that matches the bytes
+/// when the transport is UDP. A packet with no IP layer yet, such as a frame
+/// carrying an MPLS stack, has nothing to check.
+///
+/// Where the IP length field does not hold, etherparse takes the slice's
+/// length instead: for an IPv4 total length shorter than the header, and
+/// for an IPv6 payload length of 0, which only a jumbogram may have and
+/// etherparse does not read the jumbogram's length.
 pub(crate) fn is_complete(sliced: &LaxSlicedPacket<'_>) -> bool {
     let Some(ip_payload) = sliced.ip_payload() else {
         return true;
     };
-    if ip_payload.incomplete || ip_payload.fragmented {
+    if ip_payload.len_source == LenSource::Slice || ip_payload.incomplete || ip_payload.fragmented {
         return false;
     }
     match &sliced.transport {
@@ -202,6 +207,18 @@ mod tests {
         }
         let peeled = peel_ip(&packet).unwrap();
         assert_eq!(source(&peeled.packet), Some(Ipv4Addr::new(10, 0, 0, 4)));
+    }
+
+    #[test]
+    fn lax_peeling_goes_through_a_length_field_that_does_not_hold() {
+        let tunnel = ipv4(
+            OUTER,
+            IpNumber::GRE,
+            &gre(0x0800, &ipv4_udp(INNER, 53, b"x")),
+        );
+        let packet = zero_total_length(&tunnel);
+        let peeled = peel_ip(&packet).unwrap();
+        assert_eq!(source(&peeled.packet), Some(Ipv4Addr::from(INNER)));
     }
 
     fn transport(packet: &[u8]) -> Option<TransportSlice<'_>> {

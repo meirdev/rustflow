@@ -54,6 +54,17 @@ pub(crate) fn fragment(packet: &[u8], offset: u16) -> Vec<u8> {
     fragment
 }
 
+/// `packet`, an IPv4 packet, with a total length of 0: shorter than its
+/// header.
+pub(crate) fn zero_total_length(packet: &[u8]) -> Vec<u8> {
+    let (mut header, rest) = Ipv4Header::from_slice(packet).unwrap();
+    header.total_len = 0;
+    header.header_checksum = header.calc_header_checksum();
+    let mut packet = header.to_bytes().to_vec();
+    packet.extend_from_slice(rest);
+    packet
+}
+
 pub(crate) fn source(packet: &LaxSlicedPacket<'_>) -> Option<Ipv4Addr> {
     match &packet.net {
         Some(LaxNetSlice::Ipv4(ipv4)) => Some(ipv4.header().source_addr()),
