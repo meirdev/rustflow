@@ -1,0 +1,66 @@
+//! An IPFIX Mediator (RFC 6183): Collecting Processes receive records,
+//! Intermediate Processes transform them, Exporting Processes send them
+//! on.
+//!
+//! A pipeline is a graph of named components, each of a `type`, processes
+//! and exporters fed by the components their `inputs` name:
+//!
+//! ```toml
+//! [collectors.netflow]
+//! type = "netflow"
+//! listen = ":9995"
+//!
+//! [processes.names]
+//! type = "correlation"
+//! inputs = ["netflow"]
+//! file = "ifnames.csv"
+//!
+//! [processes.tcp]
+//! type = "selection"
+//! inputs = ["names"]
+//! condition = "protocolIdentifier == 6"
+//!
+//! [exporters.parquet]
+//! type = "parquet"
+//! inputs = ["tcp"]
+//! path = "/var/lib/rustflow"
+//!
+//! [exporters.upstream]
+//! type = "ipfix"
+//! inputs = ["names"]            # every enriched record, not only TCP
+//! address = "10.0.0.5:4739"
+//! ```
+//!
+//! What flows is [`Item`]s: records in the IPFIX information model, and the
+//! control information a collector knows besides them. A [`Process`]
+//! turns items into items and nothing else, so processes compose in any
+//! order and test alone; an [`Exporter`] takes what reaches it. A
+//! [`Registry`] maps each process and exporter `type` to its constructor,
+//! so an embedding program decides which exist, and anything implementing
+//! the traits can be one. Collectors are the program's own: it runs each
+//! one its configuration names and pushes what it receives into the
+//! pipeline under that name.
+//!
+//! A [`Runner`] drives the pipeline on a thread of its own: collectors
+//! push chunks of items through a [`Feed`] each, the runner takes them in
+//! turn, ticks the pipeline on a schedule, and ends the stream once every
+//! feed is gone.
+
+pub use config::{Collector, Component, Config};
+pub use error::Error;
+pub use exporter::Exporter;
+pub use item::{Control, Item};
+pub use pipeline::{Builder, CollectorId, Pipeline};
+pub use process::{Output, Process};
+pub use registry::{Built, Registry};
+pub use runner::{Closed, Feed, Runner, Schedule};
+pub use rustflow_convert::{Received, Record};
+
+mod config;
+mod error;
+mod exporter;
+mod item;
+mod pipeline;
+mod process;
+mod registry;
+mod runner;
