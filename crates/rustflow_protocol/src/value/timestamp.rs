@@ -1,13 +1,6 @@
 use jiff::Timestamp;
 
-use super::{NtpTimestamp, Value};
-
-/// Seconds from 1900-01-01, the NTP epoch, to 1970-01-01.
-const NTP_UNIX_EPOCH_DIFF: i64 = 2_208_988_800;
-
-/// The bottom 11 bits of a microsecond fraction must be ignored (RFC
-/// 7011 section 6.1.9).
-const MICROSECOND_FRACTION_MASK: u32 = !0x7ff;
+use super::{MICROSECOND_FRACTION_MASK, NTP_UNIX_EPOCH_DIFF, NtpTimestamp, Value};
 
 impl Value {
     /// The instant a date-time value stands for, or `None` for another
@@ -43,9 +36,8 @@ impl NtpTimestamp {
         precision: u64,
     ) -> Option<Timestamp> {
         let seconds = nearest_era(self.seconds, -NTP_UNIX_EPOCH_DIFF, reference);
-        let per_second = 1_000_000_000 / precision;
-        let units = (u64::from(self.fraction & fraction_mask) * per_second + (1 << 31)) >> 32;
-        let nanos = i128::from(seconds) * 1_000_000_000 + i128::from(units * precision);
+        let fraction = self.fraction_nanos(fraction_mask, precision);
+        let nanos = i128::from(seconds) * 1_000_000_000 + i128::from(fraction);
         Timestamp::from_nanosecond(nanos).ok()
     }
 }

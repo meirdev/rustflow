@@ -10,6 +10,7 @@ pub use encode::{encode, natural_length};
 use crate::ipfix::{BasicList, SubTemplateList, SubTemplateMultiList};
 
 mod decode;
+mod display;
 mod encode;
 #[cfg(feature = "jiff")]
 mod timestamp;
@@ -60,4 +61,21 @@ pub struct NtpTimestamp {
     pub seconds: u32,
     /// The fraction of a second, in units of 2^-32 seconds.
     pub fraction: u32,
+}
+
+/// Seconds from 1900-01-01, the NTP epoch, to 1970-01-01.
+const NTP_UNIX_EPOCH_DIFF: i64 = 2_208_988_800;
+
+/// The bottom 11 bits of a microsecond fraction must be ignored (RFC 7011
+/// section 6.1.9).
+const MICROSECOND_FRACTION_MASK: u32 = !0x7ff;
+
+impl NtpTimestamp {
+    /// The fraction in nanoseconds, after `fraction_mask`, rounded to whole
+    /// `precision` nanoseconds: a whole second if it rounds up to one.
+    fn fraction_nanos(self, fraction_mask: u32, precision: u64) -> u64 {
+        let per_second = 1_000_000_000 / precision;
+        let units = (u64::from(self.fraction & fraction_mask) * per_second + (1 << 31)) >> 32;
+        units * precision
+    }
 }
