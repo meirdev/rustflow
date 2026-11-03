@@ -287,21 +287,30 @@ pub struct OptionsTemplateRecord {
     pub id: u16,
     pub option_scope_length: u16,
     pub option_length: u16,
-    pub scope_fields: Vec<ScopeField>,
-    pub option_fields: Vec<OptionField>,
+    pub fields: Vec<OptionsTemplateField>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub enum OptionsTemplateField {
+    Scope(ScopeField),
+    Option(TemplateField),
 }
 
 fn parse_options_template_record(input: &[u8]) -> IResult<&[u8], OptionsTemplateRecord> {
     let (input, id) = be_u16(input)?;
     let (input, option_scope_length) = be_u16(input)?;
     let (input, option_length) = be_u16(input)?;
-    let (input, scope_fields) = map_parser(
+    let (input, scope) = map_parser(
         take(option_scope_length.to_usize()),
-        many0(parse_scope_field),
+        many0(map(parse_scope_field, OptionsTemplateField::Scope)),
     )
     .parse(input)?;
-    let (input, option_fields) =
-        map_parser(take(option_length.to_usize()), many0(parse_option_field)).parse(input)?;
+    let (input, options) = map_parser(
+        take(option_length.to_usize()),
+        many0(map(parse_template_field, OptionsTemplateField::Option)),
+    )
+    .parse(input)?;
 
     Ok((
         input,
@@ -309,27 +318,29 @@ fn parse_options_template_record(input: &[u8]) -> IResult<&[u8], OptionsTemplate
             id,
             option_scope_length,
             option_length,
-            scope_fields,
-            option_fields,
+            fields: scope.into_iter().chain(options).collect(),
         },
     ))
 }
 
 impl OptionsTemplateRecord {
     fn resolve(&self, registry: &IERegistry) -> Arc<[ResolvedField]> {
-        let scope = self.scope_fields.iter().map(|field| ResolvedField {
-            spec: TemplateField {
-                r#type: field.r#type.clone().into(),
-                length: field.length,
-            },
-            data_type: DataType::Unsigned,
-            name: Arc::from(field.r#type.to_string()),
-        });
-        let options = self
-            .option_fields
+        self.fields
             .iter()
-            .map(|field| ResolvedField::from_registry(registry, field.r#type, field.length));
-        scope.chain(options).collect()
+            .map(|field| match field {
+                OptionsTemplateField::Scope(scope) => ResolvedField {
+                    spec: TemplateField {
+                        r#type: scope.r#type.clone().into(),
+                        length: scope.length,
+                    },
+                    data_type: DataType::Unsigned,
+                    name: Arc::from(scope.r#type.to_string()),
+                },
+                OptionsTemplateField::Option(option) => {
+                    ResolvedField::from_registry(registry, option.r#type, option.length)
+                }
+            })
+            .collect()
     }
 }
 
@@ -356,19 +367,6 @@ fn parse_scope_field(input: &[u8]) -> IResult<&[u8], ScopeField> {
     let (input, length) = be_u16(input)?;
 
     Ok((input, ScopeField { r#type, length }))
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct OptionField {
-    pub r#type: u16,
-    pub length: u16,
-}
-
-fn parse_option_field(input: &[u8]) -> IResult<&[u8], OptionField> {
-    let (input, r#type) = be_u16(input)?;
-    let (input, length) = be_u16(input)?;
-
-    Ok((input, OptionField { r#type, length }))
 }
 
 pub type DataRecord = data_record::DataRecord<TemplateField, FieldValue>;
@@ -584,8 +582,16 @@ mod tests {
         let bytes = packet(7, 1, &[&OPTIONS_DATA]);
         let (_, cached) = parser.parse(&bytes).unwrap();
         assert_eq!(template.id, 257);
-        assert_eq!(template.scope_fields.len(), 1);
-        assert_eq!(template.option_fields.len(), 1);
+        assert!(matches!(
+            template.fields.as_slice(),
+            [
+                OptionsTemplateField::Scope(ScopeField {
+                    r#type: ScopeFieldType::System,
+                    ..
+                }),
+                OptionsTemplateField::Option(_)
+            ]
+        ));
         let fields = parser.options_templates.get(&(7, 257)).unwrap();
         for flow_set in [&parsed.flow_sets[1], &cached.flow_sets[0]] {
             let [Record::OptionsData(data)] = flow_set.records.as_slice() else {

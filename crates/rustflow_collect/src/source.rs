@@ -142,7 +142,8 @@ impl Source for Pcap {
                     };
                     let time_received_ns = i64::try_from(packet.timestamp.as_nanos()).ok();
 
-                    // Copied out, as the borrow of the frame cannot leave the loop.
+                    // Copied out, as the borrow of the frame cannot leave the
+                    // loop.
                     self.payload.clear();
                     self.payload.extend_from_slice(payload);
 
