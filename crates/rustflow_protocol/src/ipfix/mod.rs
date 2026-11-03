@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 pub use list::{BasicList, ListRecords, ListSemantic, SubTemplateList, SubTemplateMultiList};
 pub use parser::Parser;
+pub use writer::write;
 
 use crate::DataSet;
 
@@ -15,6 +16,7 @@ mod parser;
 #[cfg(test)]
 mod tests;
 mod type_records;
+mod writer;
 
 pub const VERSION: u16 = 10;
 pub const TEMPLATE_SET_ID: u16 = 2;
@@ -114,6 +116,13 @@ pub enum TemplateRef {
 }
 
 impl TemplateRef {
+    pub fn template_id(&self) -> u16 {
+        match self {
+            Self::Data(template) => template.template_id,
+            Self::Options(template) => template.template_id,
+        }
+    }
+
     /// Every field in record order: an options template's scope fields
     /// first.
     pub fn fields(&self) -> impl Iterator<Item = &FieldSpecifier> {

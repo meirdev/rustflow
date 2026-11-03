@@ -5,7 +5,7 @@ use std::time::Duration;
 use super::*;
 use crate::information_element::{DataType, DataTypeSemantics, InformationElement, Registry};
 use crate::value::Value;
-use crate::{DataSet, ParseError};
+use crate::{DataSet, ParseError, WriteError};
 
 const DOMAIN: u32 = 7;
 const OCTET_DELTA_COUNT: u16 = 1;
@@ -930,6 +930,248 @@ fn list_semantics_follow_the_iana_registry() {
     );
     for number in 0..=u8::MAX {
         assert_eq!(u8::from(ListSemantic::from(number)), number);
+    }
+}
+
+fn written(packet: &Packet) -> Vec<u8> {
+    let mut buf = Vec::new();
+    write(packet, &mut buf).unwrap();
+    buf
+}
+
+#[test]
+fn writes_what_it_parses() {
+    let template = set(
+        TEMPLATE_SET_ID,
+        &template(
+            256,
+            &[field(SOURCE_IPV4_ADDRESS, 4), field(OCTET_DELTA_COUNT, 8)],
+        ),
+    );
+    let record = [&[192, 0, 2, 1][..], &1500u64.to_be_bytes()].concat();
+    let datagram = message(
+        DOMAIN,
+        &[template, set(256, &[record.clone(), record].concat())],
+    );
+
+    let parsed = Parser::default().parse(&datagram).unwrap();
+    assert_eq!(written(&parsed), datagram);
+}
+
+#[test]
+fn enterprise_fields_and_variable_lengths_write_back_as_parsed() {
+    let template = set(
+        TEMPLATE_SET_ID,
+        &template(
+            256,
+            &[
+                enterprise_field(1, 4, VENDOR_ENTERPRISE_NUMBER),
+                field(INTERFACE_NAME, VARIABLE_LENGTH),
+            ],
+        ),
+    );
+    let data = set(
+        256,
+        &[
+            vec![0, 0, 0, 5],
+            variable(b"eth0"),
+            vec![0, 0, 0, 6],
+            variable(&[b'a'; 300]),
+        ]
+        .concat(),
+    );
+    let datagram = message(DOMAIN, &[template, data]);
+
+    let parsed = Parser::default().parse(&datagram).unwrap();
+    assert_eq!(written(&parsed), datagram);
+}
+
+#[test]
+fn options_templates_and_withdrawals_write_back_as_parsed() {
+    let options = set(
+        OPTIONS_TEMPLATE_SET_ID,
+        &[
+            options_template(
+                257,
+                1,
+                &[field(OBSERVATION_DOMAIN_ID, 4), field(SAMPLING_INTERVAL, 4)],
+            ),
+            template(258, &[]),
+        ]
+        .concat(),
+    );
+    let withdrawals = set(
+        TEMPLATE_SET_ID,
+        &[template(256, &[]), template(TEMPLATE_SET_ID, &[])].concat(),
+    );
+    let data = set(
+        257,
+        &[&DOMAIN.to_be_bytes()[..], &100u32.to_be_bytes()].concat(),
+    );
+    let datagram = message(DOMAIN, &[options, withdrawals, data]);
+
+    let parsed = Parser::default().parse(&datagram).unwrap();
+    assert_eq!(written(&parsed), datagram);
+}
+
+#[test]
+fn lists_round_trip() {
+    let templates = set(
+        TEMPLATE_SET_ID,
+        &[
+            template(256, &[field(OCTET_DELTA_COUNT, 4)]),
+            template(
+                257,
+                &[
+                    field(BASIC_LIST, VARIABLE_LENGTH),
+                    field(SUB_TEMPLATE_LIST, VARIABLE_LENGTH),
+                    field(SUB_TEMPLATE_MULTI_LIST, VARIABLE_LENGTH),
+                ],
+            ),
+        ]
+        .concat(),
+    );
+    let basic_list = [
+        vec![3],
+        field(INTERFACE_NAME, VARIABLE_LENGTH),
+        variable(b"abc"),
+        variable(b""),
+    ]
+    .concat();
+    let sub_template_list = [&[255][..], &256u16.to_be_bytes(), &1u32.to_be_bytes()].concat();
+    let group = |template_id: u16, records: &[u8]| {
+        let length = u16::try_from(LIST_GROUP_HEADER_SIZE + records.len()).unwrap();
+        [
+            &template_id.to_be_bytes()[..],
+            &length.to_be_bytes(),
+            records,
+        ]
+        .concat()
+    };
+    let sub_template_multi_list = [
+        vec![1],
+        group(256, &2u32.to_be_bytes()),
+        group(300, &[9, 9]),
+        group(256, &[]),
+    ]
+    .concat();
+    let data = set(
+        257,
+        &[
+            variable(&basic_list),
+            variable(&sub_template_list),
+            variable(&sub_template_multi_list),
+        ]
+        .concat(),
+    );
+    let parsed = Parser::default()
+        .parse(&message(DOMAIN, &[templates, data]))
+        .unwrap();
+
+    let bytes = written(&parsed);
+
+    // Each list takes the three-octet length form: two octets more each.
+    let mut expected = parsed;
+    expected.header.length += 6;
+    assert_eq!(Parser::default().parse(&bytes), Ok(expected));
+}
+
+#[test]
+fn a_fixed_length_list_must_fill_its_field() {
+    // Semantic, field specifier and three four-octet values.
+    let list = [
+        vec![255],
+        field(OCTET_DELTA_COUNT, 4),
+        [1u32, 2, 3].map(u32::to_be_bytes).concat(),
+    ]
+    .concat();
+    let template = set(TEMPLATE_SET_ID, &template(256, &[field(BASIC_LIST, 17)]));
+    let datagram = message(DOMAIN, &[template, set(256, &list)]);
+    let mut parsed = Parser::default().parse(&datagram).unwrap();
+    assert_eq!(written(&parsed), datagram);
+
+    let Set::Data(data) = &mut parsed.sets[1] else {
+        panic!("expected a data set");
+    };
+    let Value::BasicList(list) = &mut data.records[0][0] else {
+        panic!("expected a basic list");
+    };
+    list.values.pop();
+    let mut buf = Vec::new();
+    assert_eq!(
+        write(&parsed, &mut buf),
+        Err(WriteError::DoesNotFit { length: 17 })
+    );
+    assert!(buf.is_empty());
+}
+
+#[test]
+fn unknown_sets_are_left_out_of_the_message_and_its_length() {
+    let parsed = Parser::default()
+        .parse(&message(
+            DOMAIN,
+            &[set(4, &[1, 2, 3, 4]), octet_count_template()],
+        ))
+        .unwrap();
+
+    let bytes = written(&parsed);
+
+    assert_eq!(bytes, message(DOMAIN, &[octet_count_template()]));
+}
+
+#[test]
+fn a_packet_that_cannot_be_written_writes_nothing() {
+    let header = Parser::default()
+        .parse(&message(DOMAIN, &[]))
+        .unwrap()
+        .header;
+    let field = |information_element_id| FieldSpecifier {
+        information_element_id,
+        field_length: 4,
+        enterprise_number: None,
+    };
+    let template = Arc::new(Template {
+        template_id: 256,
+        fields: vec![field(OCTET_DELTA_COUNT)],
+    });
+    let cases = [
+        (
+            Set::OptionsTemplates(vec![Arc::new(OptionsTemplate {
+                template_id: 257,
+                scope_fields: Vec::new(),
+                option_fields: vec![field(SAMPLING_INTERVAL)],
+            })]),
+            WriteError::NoScopeFields { template_id: 257 },
+        ),
+        (
+            Set::Templates(vec![Arc::new(Template {
+                template_id: 256,
+                fields: vec![field(ENTERPRISE_BIT | 1)],
+            })]),
+            WriteError::TooLarge {
+                field: "information element ID",
+                value: usize::from(ENTERPRISE_BIT | 1),
+            },
+        ),
+        (
+            Set::Data(DataSet {
+                template,
+                records: vec![Vec::new()],
+            }),
+            WriteError::Values {
+                values: 0,
+                fields: 1,
+            },
+        ),
+    ];
+    for (set, error) in cases {
+        let packet = Packet {
+            header: header.clone(),
+            sets: vec![set],
+        };
+        let mut buf = vec![0xaa];
+        assert_eq!(write(&packet, &mut buf), Err(error));
+        assert_eq!(buf, [0xaa]);
     }
 }
 

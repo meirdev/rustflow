@@ -5,7 +5,7 @@
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 pub use decode::decode;
-pub use encode::encode;
+pub use encode::{encode, natural_length};
 
 use crate::ipfix::{BasicList, SubTemplateList, SubTemplateMultiList};
 

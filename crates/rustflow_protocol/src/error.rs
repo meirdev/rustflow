@@ -51,6 +51,8 @@ pub enum WriteError {
     /// A record whose number of values differs from its template's number
     /// of fields.
     Values { values: usize, fields: usize },
+    /// An options template with option fields but no scope fields.
+    NoScopeFields { template_id: u16 },
 }
 
 impl fmt::Display for WriteError {
@@ -62,6 +64,9 @@ impl fmt::Display for WriteError {
             }
             Self::Values { values, fields } => {
                 write!(f, "record has {values} values for {fields} fields")
+            }
+            Self::NoScopeFields { template_id } => {
+                write!(f, "options template {template_id} has no scope fields")
             }
         }
     }
@@ -129,6 +134,10 @@ mod tests {
             }
             .to_string(),
             "record has 1 values for 2 fields"
+        );
+        assert_eq!(
+            WriteError::NoScopeFields { template_id: 257 }.to_string(),
+            "options template 257 has no scope fields"
         );
     }
 }

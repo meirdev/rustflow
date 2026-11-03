@@ -59,6 +59,37 @@ pub fn encode(w: &mut Writer, value: &Value, length: usize) -> Result<(), WriteE
     }
 }
 
+/// The length a value takes in a field of no fixed length: its type's
+/// width, or its own for an octet array or a string. `None` for a list,
+/// whose length is known only once written.
+pub fn natural_length(value: &Value) -> Option<usize> {
+    let length = match value {
+        Value::Null => 0,
+        Value::Unsigned8(_) | Value::Signed8(_) | Value::Boolean(_) => 1,
+        Value::Unsigned16(_) | Value::Signed16(_) => 2,
+        Value::Unsigned32(_)
+        | Value::Signed32(_)
+        | Value::Float32(_)
+        | Value::DateTimeSeconds(_)
+        | Value::Ipv4Address(_) => 4,
+        Value::MacAddress(_) => 6,
+        Value::Unsigned64(_)
+        | Value::Signed64(_)
+        | Value::Float64(_)
+        | Value::DateTimeMilliseconds(_)
+        | Value::DateTimeMicroseconds(_)
+        | Value::DateTimeNanoseconds(_) => 8,
+        Value::Ipv6Address(_) => 16,
+        Value::Unsigned256(_) => 32,
+        Value::OctetArray(bytes) => bytes.len(),
+        Value::String(string) => string.len(),
+        Value::BasicList(_) | Value::SubTemplateList(_) | Value::SubTemplateMultiList(_) => {
+            return None;
+        }
+    };
+    Some(length)
+}
+
 fn exact(w: &mut Writer, bytes: &[u8], length: usize) -> Result<(), WriteError> {
     if bytes.len() != length {
         return Err(WriteError::DoesNotFit { length });
@@ -250,6 +281,27 @@ mod tests {
             assert_eq!(
                 encoded(&value, 7),
                 Err(WriteError::DoesNotFit { length: 7 }),
+                "{value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn values_encode_at_their_natural_length() {
+        for value in [
+            Value::Unsigned16(7),
+            Value::Signed64(-1),
+            Value::Unsigned256(Box::new([1; 32])),
+            Value::MacAddress([1; 6]),
+            Value::OctetArray(vec![1, 2, 3]),
+            Value::String("eth0".to_owned()),
+            Value::Ipv6Address(Ipv6Addr::LOCALHOST),
+            Value::Null,
+        ] {
+            let length = natural_length(&value).unwrap();
+            assert_eq!(
+                encoded(&value, length).map(|b| b.len()),
+                Ok(length),
                 "{value:?}"
             );
         }
