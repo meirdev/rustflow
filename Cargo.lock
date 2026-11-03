@@ -1569,6 +1569,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustflow_bytes"
+version = "0.19.0"
+
+[[package]]
 name = "rustflow_cli"
 version = "0.19.0"
 dependencies = [
@@ -1683,20 +1687,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "rustflow_parser"
+name = "rustflow_protocol"
 version = "0.19.0"
 dependencies = [
  "jiff",
  "num_enum",
  "rustc-hash",
- "rustflow_reader",
+ "rustflow_bytes",
  "serde",
  "serde_json",
 ]
-
-[[package]]
-name = "rustflow_reader"
-version = "0.19.0"
 
 [[package]]
 name = "rustix"

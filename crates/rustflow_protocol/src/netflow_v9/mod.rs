@@ -1,15 +1,18 @@
 //! NetFlow v9 (RFC 3954): a header followed by FlowSets. Template FlowSets
 //! describe the records of later data FlowSets, so the parser keeps the
 //! templates each exporter sent.
+
 use std::sync::Arc;
 
 pub use parser::Parser;
+pub use writer::write;
 
 use crate::DataSet;
 
 mod parser;
 #[cfg(test)]
 mod tests;
+mod writer;
 
 pub const VERSION: u16 = 9;
 pub const TEMPLATE_FLOW_SET_ID: u16 = 0;

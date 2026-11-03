@@ -1,10 +1,10 @@
 [package]
-name = "rustflow_parser"
+name = "rustflow_protocol"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Parsers for flow protocols, built on rustflow_reader"
+description = "NetFlow v5, NetFlow v9 and IPFIX packets, parsed and written"
 
 [features]
 jiff = ["dep:jiff"]
@@ -13,7 +13,7 @@ serde = ["dep:serde"]
 [dependencies]
 jiff = { version = "0.2.21", optional = true, default-features = false, features = ["std"] }
 num_enum = "0.7.5"
-rustflow_reader = { path = "../rustflow_reader" }
+rustflow_bytes = { path = "../rustflow_bytes" }
 rustc-hash.workspace = true
 serde = { workspace = true, optional = true, features = ["rc"] }
 

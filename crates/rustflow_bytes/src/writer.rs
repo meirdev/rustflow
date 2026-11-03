@@ -12,6 +12,31 @@ impl<'a> Writer<'a> {
         Self { buf }
     }
 
+    /// The length of the whole buffer, what it held before included.
+    pub fn len(&self) -> usize {
+        self.buf.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.buf.is_empty()
+    }
+
+    /// Drops everything after the first `len` bytes, such as a packet that
+    /// could not be written in full.
+    pub fn truncate(&mut self, len: usize) {
+        self.buf.truncate(len);
+    }
+
+    /// Overwrites the two bytes at `at`, such as a length known only once
+    /// what it counts is written.
+    ///
+    /// # Panics
+    ///
+    /// If the buffer holds fewer than `at + 2` bytes.
+    pub fn set_u16(&mut self, at: usize, value: u16) {
+        self.buf[at..at + 2].copy_from_slice(&value.to_be_bytes());
+    }
+
     pub fn bytes(&mut self, bytes: &[u8]) {
         self.buf.extend_from_slice(bytes);
     }
@@ -94,6 +119,20 @@ mod tests {
                 0xaa, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0, 0, 0x08, 0x09
             ]
         );
+    }
+
+    #[test]
+    fn written_bytes_can_be_overwritten_and_dropped() {
+        let mut buf = vec![0xaa];
+        let mut w = Writer::new(&mut buf);
+        let start = w.len();
+        w.u16(0);
+        w.u32(0x0102_0304);
+        w.set_u16(start, 0xbeef);
+        assert_eq!(w.len(), 7);
+        w.truncate(start + 2);
+        assert!(!w.is_empty());
+        assert_eq!(buf, [0xaa, 0xbe, 0xef]);
     }
 
     #[test]

@@ -1,9 +1,9 @@
 [package]
-name = "rustflow_reader"
+name = "rustflow_bytes"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "A zero-copy, big-endian cursor for parsing flow protocol datagrams"
+description = "Big-endian reading and writing of byte buffers for flow protocols"
 
 [dependencies]

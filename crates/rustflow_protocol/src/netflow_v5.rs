@@ -3,9 +3,9 @@
 
 use std::net::Ipv4Addr;
 
-use rustflow_reader::{Reader, Writer};
+use rustflow_bytes::{Reader, Writer};
 
-use crate::{Error, WriteError};
+use crate::{ParseError, WriteError};
 
 pub const VERSION: u16 = 5;
 
@@ -127,7 +127,7 @@ pub struct FlowRecord {
 
 /// Parses a NetFlow v5 datagram. Bytes after the last flow record are
 /// ignored.
-pub fn parse(datagram: &[u8]) -> Result<Packet, Error> {
+pub fn parse(datagram: &[u8]) -> Result<Packet, ParseError> {
     let mut r = Reader::new(datagram);
     let header = parse_header(&mut r)?;
     let flow_records = r.repeat(usize::from(header.count), parse_flow_record)?;
@@ -150,10 +150,10 @@ pub fn write(packet: &Packet, buf: &mut Vec<u8>) -> Result<(), WriteError> {
     Ok(())
 }
 
-fn parse_header(r: &mut Reader) -> Result<Header, Error> {
+fn parse_header(r: &mut Reader) -> Result<Header, ParseError> {
     let version = r.u16()?;
     if version != VERSION {
-        return Err(Error::Version(version.into()));
+        return Err(ParseError::Version(version.into()));
     }
     let count = r.u16()?;
     let sys_uptime = r.u32()?;
@@ -177,7 +177,7 @@ fn parse_header(r: &mut Reader) -> Result<Header, Error> {
     })
 }
 
-fn parse_flow_record(r: &mut Reader) -> Result<FlowRecord, Error> {
+fn parse_flow_record(r: &mut Reader) -> Result<FlowRecord, ParseError> {
     let srcaddr = r.ipv4()?;
     let dstaddr = r.ipv4()?;
     let nexthop = r.ipv4()?;
@@ -302,7 +302,7 @@ fn write_flow_record(w: &mut Writer, record: &FlowRecord) {
 
 #[cfg(test)]
 mod tests {
-    use rustflow_reader::Truncated;
+    use rustflow_bytes::Truncated;
 
     use super::*;
 
@@ -428,20 +428,20 @@ mod tests {
     fn another_version_is_rejected() {
         let mut datagram = header_bytes(0);
         datagram[..2].copy_from_slice(&9u16.to_be_bytes());
-        assert_eq!(parse(&datagram), Err(Error::Version(9)));
+        assert_eq!(parse(&datagram), Err(ParseError::Version(9)));
     }
 
     #[test]
     fn fewer_records_than_the_count_is_truncated() {
         let datagram = [header_bytes(2), flow_record_bytes()].concat();
-        assert!(matches!(parse(&datagram), Err(Error::Truncated(_))));
+        assert!(matches!(parse(&datagram), Err(ParseError::Truncated(_))));
     }
 
     #[test]
     fn a_short_header_is_truncated() {
         assert_eq!(
             parse(&header_bytes(0)[..HEADER_SIZE - 1]),
-            Err(Error::Truncated(Truncated {
+            Err(ParseError::Truncated(Truncated {
                 requested: 2,
                 available: 1
             }))

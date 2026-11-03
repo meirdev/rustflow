@@ -1,11 +1,11 @@
-//! A cursor for parsing big-endian binary protocols from a byte slice.
+//! Big-endian reading and writing for binary protocols.
 //!
 //! A parser takes a `&mut Reader` and reads fields in wire order. Each read
 //! either returns the value and moves past it, or fails and leaves the
 //! reader where it was:
 //!
 //! ```
-//! use rustflow_reader::{Reader, Truncated};
+//! use rustflow_bytes::{Reader, Truncated};
 //!
 //! #[derive(Debug, PartialEq)]
 //! enum Error {

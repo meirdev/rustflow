@@ -2,6 +2,7 @@
 //! describe the records of later data sets, so the parser keeps the
 //! templates each exporter sent. A field may be variable-length, and may
 //! hold a list of values or of records (RFC 6313).
+
 use std::sync::Arc;
 
 pub use list::{BasicList, ListRecords, ListSemantic, SubTemplateList, SubTemplateMultiList};

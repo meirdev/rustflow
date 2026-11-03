@@ -1,6 +1,7 @@
-//! Parsers for flow protocol datagrams.
+//! Flow protocol packets: NetFlow v5, NetFlow v9 and IPFIX, parsed from
+//! datagrams and written back.
 
-pub use error::{Error, WriteError};
+pub use error::{ParseError, WriteError};
 pub use template_cache::DataSet;
 
 mod error;

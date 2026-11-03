@@ -5,7 +5,7 @@ use std::time::Duration;
 use super::*;
 use crate::information_element::{DataType, DataTypeSemantics, InformationElement, Registry};
 use crate::value::Value;
-use crate::{DataSet, Error};
+use crate::{DataSet, ParseError};
 
 const DOMAIN: u32 = 7;
 const OCTET_DELTA_COUNT: u16 = 1;
@@ -137,7 +137,10 @@ fn parses_the_header() {
 fn another_version_is_rejected() {
     let mut datagram = message(DOMAIN, &[]);
     datagram[..2].copy_from_slice(&9u16.to_be_bytes());
-    assert_eq!(Parser::default().parse(&datagram), Err(Error::Version(9)));
+    assert_eq!(
+        Parser::default().parse(&datagram),
+        Err(ParseError::Version(9))
+    );
 }
 
 #[test]
@@ -150,14 +153,14 @@ fn the_message_length_bounds_the_sets() {
     short[2..4].copy_from_slice(&15u16.to_be_bytes());
     assert_eq!(
         Parser::default().parse(&short),
-        Err(Error::MessageLength(15))
+        Err(ParseError::MessageLength(15))
     );
 
     let mut long = message(DOMAIN, &[]);
     long[2..4].copy_from_slice(&20u16.to_be_bytes());
     assert!(matches!(
         Parser::default().parse(&long),
-        Err(Error::Truncated(_))
+        Err(ParseError::Truncated(_))
     ));
 }
 

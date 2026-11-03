@@ -1,13 +1,13 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use rustflow_reader::{Reader, Truncated};
+use rustflow_bytes::{Reader, Truncated};
 
 use super::*;
 use crate::information_element::{DataType, Registry};
 use crate::template_cache::TemplateCache;
 use crate::value::{Value, decode};
-use crate::{DataSet, Error};
+use crate::{DataSet, ParseError};
 
 /// Parses NetFlow v9 packets, keeping the templates each exporter sends for
 /// the packets after it. Use one parser per exporter address: templates are
@@ -43,7 +43,7 @@ impl Parser {
 
     /// Parses a NetFlow v9 datagram. Parsing stops at the first FlowSet
     /// that is malformed or truncated; the FlowSets before it are kept.
-    pub fn parse(&mut self, datagram: &[u8]) -> Result<Packet, Error> {
+    pub fn parse(&mut self, datagram: &[u8]) -> Result<Packet, ParseError> {
         let mut r = Reader::new(datagram);
         let header = parse_header(&mut r)?;
         let flow_sets = r.many(|r| self.parse_flow_set(r, header.source_id));
@@ -51,12 +51,12 @@ impl Parser {
         Ok(Packet { header, flow_sets })
     }
 
-    fn parse_flow_set(&mut self, r: &mut Reader, source_id: u32) -> Result<FlowSet, Error> {
+    fn parse_flow_set(&mut self, r: &mut Reader, source_id: u32) -> Result<FlowSet, ParseError> {
         let flow_set_id = r.u16()?;
         let length = r.u16()?;
         let body_length = usize::from(length)
             .checked_sub(FLOW_SET_HEADER_SIZE)
-            .ok_or(Error::SetLength(length))?;
+            .ok_or(ParseError::SetLength(length))?;
         let mut body = r.sub(body_length)?;
 
         let flow_set = match flow_set_id {
@@ -150,10 +150,10 @@ impl Default for Parser {
     }
 }
 
-fn parse_header(r: &mut Reader) -> Result<Header, Error> {
+fn parse_header(r: &mut Reader) -> Result<Header, ParseError> {
     let version = r.u16()?;
     if version != VERSION {
-        return Err(Error::Version(version.into()));
+        return Err(ParseError::Version(version.into()));
     }
     let count = r.u16()?;
     let sys_uptime = r.u32()?;
@@ -173,15 +173,15 @@ fn parse_header(r: &mut Reader) -> Result<Header, Error> {
 
 /// A template ID below [`MIN_TEMPLATE_ID`] is an error, so that padding at
 /// the end of a FlowSet is not read as a template.
-fn parse_template_id(r: &mut Reader) -> Result<u16, Error> {
+fn parse_template_id(r: &mut Reader) -> Result<u16, ParseError> {
     let template_id = r.u16()?;
     if template_id < MIN_TEMPLATE_ID {
-        return Err(Error::TemplateId(template_id));
+        return Err(ParseError::TemplateId(template_id));
     }
     Ok(template_id)
 }
 
-fn parse_template(r: &mut Reader) -> Result<Template, Error> {
+fn parse_template(r: &mut Reader) -> Result<Template, ParseError> {
     let template_id = parse_template_id(r)?;
     let field_count = r.u16()?;
     let fields = r.repeat(usize::from(field_count), parse_field)?;
@@ -192,7 +192,7 @@ fn parse_template(r: &mut Reader) -> Result<Template, Error> {
     })
 }
 
-fn parse_options_template(r: &mut Reader) -> Result<OptionsTemplate, Error> {
+fn parse_options_template(r: &mut Reader) -> Result<OptionsTemplate, ParseError> {
     let template_id = parse_template_id(r)?;
     let option_scope_length = r.u16()?;
     let option_length = r.u16()?;

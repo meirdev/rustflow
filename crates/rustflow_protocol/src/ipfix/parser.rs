@@ -1,14 +1,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use rustflow_reader::{Reader, Truncated};
+use rustflow_bytes::{Reader, Truncated};
 
 use super::type_records::ElementTypes;
 use super::*;
 use crate::information_element::{DataType, InformationElement, Registry};
 use crate::template_cache::TemplateCache;
 use crate::value::{Value, decode};
-use crate::{DataSet, Error};
+use crate::{DataSet, ParseError};
 
 /// Parses IPFIX messages, keeping the templates each exporter sends for the
 /// messages after it. Use one parser per exporter address: templates are
@@ -56,24 +56,24 @@ impl Parser {
     /// Parses an IPFIX message. Parsing stops at the first set that is
     /// malformed or truncated; the sets before it are kept. Bytes after the
     /// message's length are ignored.
-    pub fn parse(&mut self, datagram: &[u8]) -> Result<Packet, Error> {
+    pub fn parse(&mut self, datagram: &[u8]) -> Result<Packet, ParseError> {
         let mut r = Reader::new(datagram);
         let header = parse_header(&mut r)?;
         let body_length = usize::from(header.length)
             .checked_sub(HEADER_SIZE)
-            .ok_or(Error::MessageLength(header.length))?;
+            .ok_or(ParseError::MessageLength(header.length))?;
         let mut body = r.sub(body_length)?;
         let sets = body.many(|r| self.parse_set(r, header.observation_domain_id));
 
         Ok(Packet { header, sets })
     }
 
-    fn parse_set(&mut self, r: &mut Reader, domain: u32) -> Result<Set, Error> {
+    fn parse_set(&mut self, r: &mut Reader, domain: u32) -> Result<Set, ParseError> {
         let set_id = r.u16()?;
         let length = r.u16()?;
         let body_length = usize::from(length)
             .checked_sub(SET_HEADER_SIZE)
-            .ok_or(Error::SetLength(length))?;
+            .ok_or(ParseError::SetLength(length))?;
         let mut body = r.sub(body_length)?;
 
         let set = match set_id {
@@ -306,10 +306,10 @@ fn layout<'f>(
         .collect()
 }
 
-fn parse_header(r: &mut Reader) -> Result<Header, Error> {
+fn parse_header(r: &mut Reader) -> Result<Header, ParseError> {
     let version = r.u16()?;
     if version != VERSION {
-        return Err(Error::Version(version.into()));
+        return Err(ParseError::Version(version.into()));
     }
     let length = r.u16()?;
     let export_time = r.u32()?;
@@ -328,15 +328,15 @@ fn parse_header(r: &mut Reader) -> Result<Header, Error> {
 /// Template IDs start at [`MIN_TEMPLATE_ID`], except that a withdrawal of
 /// every template of a kind carries its set ID. Rejecting the rest keeps
 /// padding at the end of a set from being read as a template.
-fn check_template_id(template_id: u16, field_count: u16, set_id: u16) -> Result<(), Error> {
+fn check_template_id(template_id: u16, field_count: u16, set_id: u16) -> Result<(), ParseError> {
     if template_id >= MIN_TEMPLATE_ID || (field_count == 0 && template_id == set_id) {
         Ok(())
     } else {
-        Err(Error::TemplateId(template_id))
+        Err(ParseError::TemplateId(template_id))
     }
 }
 
-fn parse_template(r: &mut Reader) -> Result<Template, Error> {
+fn parse_template(r: &mut Reader) -> Result<Template, ParseError> {
     let template_id = r.u16()?;
     let field_count = r.u16()?;
     check_template_id(template_id, field_count, TEMPLATE_SET_ID)?;
@@ -348,7 +348,7 @@ fn parse_template(r: &mut Reader) -> Result<Template, Error> {
     })
 }
 
-fn parse_options_template(r: &mut Reader) -> Result<OptionsTemplate, Error> {
+fn parse_options_template(r: &mut Reader) -> Result<OptionsTemplate, ParseError> {
     let template_id = r.u16()?;
     let field_count = r.u16()?;
     check_template_id(template_id, field_count, OPTIONS_TEMPLATE_SET_ID)?;
@@ -362,7 +362,7 @@ fn parse_options_template(r: &mut Reader) -> Result<OptionsTemplate, Error> {
     }
     let scope_field_count = r.u16()?;
     if scope_field_count == 0 || scope_field_count > field_count {
-        return Err(Error::ScopeFieldCount(scope_field_count));
+        return Err(ParseError::ScopeFieldCount(scope_field_count));
     }
     let scope_fields = r.repeat(usize::from(scope_field_count), parse_field_specifier)?;
     let option_fields = r.repeat(

@@ -4,7 +4,7 @@ use std::time::Duration;
 use super::*;
 use crate::information_element::Registry;
 use crate::value::Value;
-use crate::{DataSet, Error};
+use crate::{DataSet, ParseError, WriteError};
 
 const SOURCE_ID: u32 = 7;
 const OCTET_DELTA_COUNT: u16 = 1;
@@ -12,6 +12,9 @@ const PACKET_DELTA_COUNT: u16 = 2;
 const IPV4_SRC_ADDR: u16 = 8;
 const SAMPLING_INTERVAL: u16 = 34;
 const SYSTEM_SCOPE: u16 = 1;
+const PROTOCOL: u16 = 4;
+/// Version, Count, sysUpTime, UNIX Secs, Sequence Number and Source ID.
+const HEADER_SIZE: usize = 20;
 
 fn parser() -> Parser {
     Parser::new(Registry::iana(), Duration::from_mins(10))
@@ -104,7 +107,7 @@ fn parses_the_header() {
 fn another_version_is_rejected() {
     let mut datagram = packet(SOURCE_ID, &[]);
     datagram[..2].copy_from_slice(&10u16.to_be_bytes());
-    assert_eq!(parser().parse(&datagram), Err(Error::Version(10)));
+    assert_eq!(parser().parse(&datagram), Err(ParseError::Version(10)));
 }
 
 #[test]
@@ -350,6 +353,143 @@ fn parsing_stops_at_a_flow_set_shorter_than_its_header() {
         ))
         .unwrap();
     assert_eq!(packet.flow_sets.len(), 1);
+}
+
+fn written(packet: &Packet) -> Vec<u8> {
+    let mut buf = Vec::new();
+    write(packet, &mut buf).unwrap();
+    buf
+}
+
+fn flow_set_lengths(datagram: &[u8]) -> Vec<u16> {
+    let mut lengths = Vec::new();
+    let mut at = HEADER_SIZE;
+    while at < datagram.len() {
+        let length = u16::from_be_bytes([datagram[at + 2], datagram[at + 3]]);
+        lengths.push(length);
+        at += usize::from(length);
+    }
+    lengths
+}
+
+#[test]
+fn writes_what_it_parses() {
+    let template = flow_set(
+        TEMPLATE_FLOW_SET_ID,
+        &template(256, &[(IPV4_SRC_ADDR, 4), (OCTET_DELTA_COUNT, 4)]),
+    );
+    let data = flow_set(
+        256,
+        &[
+            &[192, 0, 2, 1][..],
+            &1500u32.to_be_bytes(),
+            &[198, 51, 100, 1],
+            &10u32.to_be_bytes(),
+        ]
+        .concat(),
+    );
+    // The helper's count of 3 is the template and the two data records.
+    let datagram = packet(SOURCE_ID, &[template, data]);
+
+    let parsed = parser().parse(&datagram).unwrap();
+    assert_eq!(written(&parsed), datagram);
+}
+
+#[test]
+fn options_templates_and_data_round_trip_with_their_count() {
+    let template = flow_set(
+        OPTIONS_TEMPLATE_FLOW_SET_ID,
+        &options_template(257, &[(SYSTEM_SCOPE, 4)], &[(SAMPLING_INTERVAL, 4)]),
+    );
+    let data = flow_set(
+        257,
+        &[&7u32.to_be_bytes()[..], &100u32.to_be_bytes()].concat(),
+    );
+    let parsed = parser()
+        .parse(&packet(SOURCE_ID, &[template, data]))
+        .unwrap();
+
+    let bytes = written(&parsed);
+
+    // 4 + 14 bytes of options template, padded to 20.
+    assert_eq!(flow_set_lengths(&bytes), [20, 12]);
+    let mut expected = parsed;
+    expected.header.count = 2;
+    assert_eq!(parser().parse(&bytes), Ok(expected));
+}
+
+#[test]
+fn data_is_padded_unless_the_padding_could_be_read_as_a_record() {
+    let templates = flow_set(
+        TEMPLATE_FLOW_SET_ID,
+        &[
+            template(256, &[(OCTET_DELTA_COUNT, 4), (PACKET_DELTA_COUNT, 2)]),
+            template(257, &[(PROTOCOL, 1)]),
+        ]
+        .concat(),
+    );
+    let six_byte_records = flow_set(256, &[0, 0, 0, 1, 0, 2]);
+    let one_byte_records = flow_set(257, &[6, 17, 1]);
+    let parsed = parser()
+        .parse(&packet(
+            SOURCE_ID,
+            &[templates, six_byte_records, one_byte_records],
+        ))
+        .unwrap();
+
+    let bytes = written(&parsed);
+
+    // 4 + 6 bytes take 2 of padding; 4 + 3 bytes would take 1, as long as a
+    // record.
+    assert_eq!(flow_set_lengths(&bytes), [24, 12, 7]);
+    assert_eq!(parser().parse(&bytes).unwrap().flow_sets, parsed.flow_sets);
+}
+
+#[test]
+fn unknown_flow_sets_are_left_out_of_the_packet_and_its_count() {
+    let parsed = parser()
+        .parse(&packet(
+            SOURCE_ID,
+            &[flow_set(2, &[1, 2, 3, 4]), octet_count_template()],
+        ))
+        .unwrap();
+
+    let bytes = written(&parsed);
+
+    assert_eq!(bytes[2..4], 1u16.to_be_bytes());
+    assert_eq!(flow_set_lengths(&bytes), [12]);
+}
+
+#[test]
+fn a_record_that_does_not_fit_its_template_writes_nothing() {
+    let mut parsed = parser()
+        .parse(&packet(
+            SOURCE_ID,
+            &[octet_count_template(), octet_count_data(42)],
+        ))
+        .unwrap();
+    let mut set_record = |record| {
+        let FlowSet::Data(data) = &mut parsed.flow_sets[1] else {
+            panic!("expected a data FlowSet");
+        };
+        data.records[0] = record;
+        let mut buf = vec![0xaa];
+        let result = write(&parsed, &mut buf);
+        assert_eq!(buf, [0xaa]);
+        result
+    };
+
+    assert_eq!(
+        set_record(vec![Value::Unsigned64(1 << 40)]),
+        Err(WriteError::DoesNotFit { length: 4 })
+    );
+    assert_eq!(
+        set_record(Vec::new()),
+        Err(WriteError::Values {
+            values: 0,
+            fields: 1
+        })
+    );
 }
 
 #[cfg(feature = "serde")]

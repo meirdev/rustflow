@@ -1,13 +1,16 @@
 //! Field values, decoded the same way for NetFlow v9 and IPFIX: a template
 //! gives each field a length and a type, and the type's data type says how
 //! to read the field's bytes (RFC 7011 section 6.1).
+
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 pub use decode::decode;
+pub use encode::encode;
 
 use crate::ipfix::{BasicList, SubTemplateList, SubTemplateMultiList};
 
 mod decode;
+mod encode;
 #[cfg(feature = "jiff")]
 mod timestamp;
 
