@@ -1645,6 +1645,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustflow_dissect"
+version = "0.19.0"
+dependencies = [
+ "etherparse",
+]
+
+[[package]]
 name = "rustflow_export"
 version = "0.19.0"
 dependencies = [
