@@ -5,7 +5,7 @@
 //! elements; [`information_element`] and [`value`] serve those two alone.
 
 pub use error::{ParseError, WriteError};
-pub use template_cache::DataSet;
+pub use record::{DataSet, Elements, RecordRef};
 
 mod error;
 #[cfg(test)]
@@ -14,6 +14,7 @@ pub mod information_element;
 pub mod ipfix;
 pub mod netflow_v5;
 pub mod netflow_v9;
+mod record;
 pub mod sflow_v5;
 mod template_cache;
 pub mod value;

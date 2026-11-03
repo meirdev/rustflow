@@ -1,6 +1,7 @@
 use num_enum::{FromPrimitive, IntoPrimitive};
 
 use super::{FieldSpecifier, TemplateRef};
+use crate::RecordRef;
 use crate::value::Value;
 
 /// How a list's elements relate to the record holding it, numbered as in
@@ -53,4 +54,19 @@ pub enum ListRecords {
     },
     /// Records of a template the parser does not have, kept as sent.
     Undecoded { template_id: u16, data: Vec<u8> },
+}
+
+impl ListRecords {
+    /// The decoded records; none for undecoded ones.
+    pub fn records(&self) -> impl Iterator<Item = RecordRef<'_, TemplateRef>> {
+        let decoded = match self {
+            Self::Decoded { template, records } => Some((template, records)),
+            Self::Undecoded { .. } => None,
+        };
+        decoded.into_iter().flat_map(|(template, records)| {
+            records
+                .iter()
+                .map(move |values| RecordRef::new(template, values))
+        })
+    }
 }

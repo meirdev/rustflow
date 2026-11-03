@@ -3,7 +3,9 @@ use std::net::Ipv4Addr;
 use std::time::Duration;
 
 use super::*;
-use crate::information_element::{DataType, DataTypeSemantics, InformationElement, Registry};
+use crate::information_element::{
+    DataType, DataTypeSemantics, ElementId, InformationElement, Registry, iana,
+};
 use crate::value::Value;
 use crate::{DataSet, ParseError, WriteError};
 
@@ -1173,6 +1175,113 @@ fn a_packet_that_cannot_be_written_writes_nothing() {
         assert_eq!(write(&packet, &mut buf), Err(error));
         assert_eq!(buf, [0xaa]);
     }
+}
+
+#[test]
+fn values_are_looked_up_by_element() {
+    let template = set(
+        TEMPLATE_SET_ID,
+        &template(
+            256,
+            &[
+                field(SOURCE_IPV4_ADDRESS, 4),
+                field(OCTET_DELTA_COUNT, 4),
+                field(OCTET_DELTA_COUNT, 4),
+                enterprise_field(1, 4, VENDOR_ENTERPRISE_NUMBER),
+            ],
+        ),
+    );
+    let record = [
+        &[192, 0, 2, 1][..],
+        &1u32.to_be_bytes(),
+        &2u32.to_be_bytes(),
+        &5u32.to_be_bytes(),
+    ]
+    .concat();
+    let packet = Parser::default()
+        .parse(&message(DOMAIN, &[template, set(256, &record)]))
+        .unwrap();
+    let data = data_set(&packet.sets[1]);
+    let record = data.records().next().unwrap();
+
+    assert_eq!(
+        record.first(iana::SOURCE_IPV4_ADDRESS),
+        Some(&Value::Ipv4Address(Ipv4Addr::new(192, 0, 2, 1)))
+    );
+    assert_eq!(
+        record.all(iana::OCTET_DELTA_COUNT).collect::<Vec<_>>(),
+        [&Value::Unsigned32(1), &Value::Unsigned32(2)]
+    );
+    assert_eq!(
+        record.first(ElementId::from((VENDOR_ENTERPRISE_NUMBER, 1))),
+        Some(&Value::OctetArray(vec![0, 0, 0, 5]))
+    );
+    assert_eq!(record.first(iana::DESTINATION_IPV4_ADDRESS), None);
+}
+
+#[test]
+fn scope_fields_are_looked_up_as_other_elements() {
+    let template = set(
+        OPTIONS_TEMPLATE_SET_ID,
+        &options_template(
+            257,
+            1,
+            &[field(OBSERVATION_DOMAIN_ID, 4), field(SAMPLING_INTERVAL, 4)],
+        ),
+    );
+    let data = set(
+        257,
+        &[&DOMAIN.to_be_bytes()[..], &100u32.to_be_bytes()].concat(),
+    );
+    let packet = Parser::default()
+        .parse(&message(DOMAIN, &[template, data]))
+        .unwrap();
+    let Set::OptionsData(data) = &packet.sets[1] else {
+        panic!("expected an options data set");
+    };
+    let record = data.records().next().unwrap();
+    assert_eq!(
+        record.first(iana::OBSERVATION_DOMAIN_ID),
+        Some(&Value::Unsigned32(DOMAIN))
+    );
+    assert_eq!(
+        record.first(iana::SAMPLING_INTERVAL),
+        Some(&Value::Unsigned32(100))
+    );
+}
+
+#[test]
+fn list_records_are_looked_up_by_element() {
+    let templates = set(
+        TEMPLATE_SET_ID,
+        &[
+            template(256, &[field(OCTET_DELTA_COUNT, 4)]),
+            template(257, &[field(SUB_TEMPLATE_LIST, VARIABLE_LENGTH)]),
+        ]
+        .concat(),
+    );
+    let list = [
+        &[255][..],
+        &256u16.to_be_bytes(),
+        &1u32.to_be_bytes(),
+        &2u32.to_be_bytes(),
+    ]
+    .concat();
+    let packet = Parser::default()
+        .parse(&message(DOMAIN, &[templates, set(257, &variable(&list))]))
+        .unwrap();
+    let Value::SubTemplateList(list) = only_value(&packet) else {
+        panic!("expected a sub-template list");
+    };
+    let counts: Vec<_> = list
+        .records
+        .records()
+        .map(|record| record.first(iana::OCTET_DELTA_COUNT))
+        .collect();
+    assert_eq!(
+        counts,
+        [Some(&Value::Unsigned32(1)), Some(&Value::Unsigned32(2))]
+    );
 }
 
 #[cfg(feature = "serde")]

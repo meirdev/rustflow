@@ -6,7 +6,7 @@ use std::borrow::Cow;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 pub use registry::Registry;
 
-mod iana;
+pub mod iana;
 mod registry;
 
 /// An abstract data type, numbered as in IANA's IPFIX Information Element
@@ -58,6 +58,36 @@ pub enum DataTypeSemantics {
     SnmpGauge = 8,
 }
 
+/// What an information element is known by: its ID, among IANA's elements
+/// or a vendor's. [`iana`] has a constant for each of IANA's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ElementId {
+    /// The private enterprise number of a vendor's element; `None` for an
+    /// IANA element.
+    pub enterprise_number: Option<u32>,
+    pub id: u16,
+}
+
+impl ElementId {
+    pub const fn iana(id: u16) -> Self {
+        Self {
+            enterprise_number: None,
+            id,
+        }
+    }
+}
+
+/// An enterprise number and an ID, enterprise number 0 standing for IANA.
+impl From<(u32, u16)> for ElementId {
+    fn from((enterprise_number, id): (u32, u16)) -> Self {
+        Self {
+            enterprise_number: (enterprise_number != 0).then_some(enterprise_number),
+            id,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct InformationElement {
@@ -70,9 +100,30 @@ pub struct InformationElement {
     pub semantics: Option<DataTypeSemantics>,
 }
 
+impl InformationElement {
+    pub fn element_id(&self) -> ElementId {
+        ElementId {
+            enterprise_number: self.enterprise_number,
+            id: self.id,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn element_ids_from_pairs_take_enterprise_0_as_iana() {
+        assert_eq!(ElementId::from((0, 8)), iana::SOURCE_IPV4_ADDRESS);
+        assert_eq!(
+            ElementId::from((9, 1)),
+            ElementId {
+                enterprise_number: Some(9),
+                id: 1,
+            }
+        );
+    }
 
     #[test]
     fn data_types_convert_from_their_iana_numbers() {

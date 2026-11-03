@@ -1,20 +1,7 @@
 //! Templates of one transport session, shared by NetFlow v9 and IPFIX.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
-
-use crate::value::Value;
-
-/// The records of a data set, with the template they were decoded by.
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct DataSet<T> {
-    pub template: Arc<T>,
-    /// Each record's values, in template order: for options data, the scope
-    /// values first.
-    pub records: Vec<Vec<Value>>,
-}
 
 /// Fields one cache may hold across its templates, each template counting as
 /// at least one. The exporter decides how many templates it sends and how

@@ -7,7 +7,9 @@ use std::sync::Arc;
 pub use parser::Parser;
 pub use writer::write;
 
-use crate::DataSet;
+use crate::information_element::ElementId;
+use crate::value::Value;
+use crate::{DataSet, Elements, RecordRef};
 
 mod parser;
 #[cfg(test)]
@@ -88,4 +90,37 @@ pub struct OptionsTemplate {
     /// 2 Interface, 3 Line Card, 4 Cache or 5 Template.
     pub scope_fields: Vec<Field>,
     pub option_fields: Vec<Field>,
+}
+
+/// A field's type is the ID of an IANA element.
+impl Elements for Template {
+    fn elements(&self) -> impl Iterator<Item = Option<ElementId>> {
+        self.fields
+            .iter()
+            .map(|field| Some(ElementId::iana(field.field_type)))
+    }
+}
+
+/// A scope field's type is not an element's ID, but a scope type.
+impl Elements for OptionsTemplate {
+    fn elements(&self) -> impl Iterator<Item = Option<ElementId>> {
+        let scope = self.scope_fields.iter().map(|_| None);
+        let options = self
+            .option_fields
+            .iter()
+            .map(|field| Some(ElementId::iana(field.field_type)));
+        scope.chain(options)
+    }
+}
+
+impl<'a> RecordRef<'a, OptionsTemplate> {
+    /// The value of the first scope field of `scope_type`.
+    pub fn scope(&self, scope_type: u16) -> Option<&'a Value> {
+        self.template
+            .scope_fields
+            .iter()
+            .zip(self.values)
+            .find(|(field, _)| field.field_type == scope_type)
+            .map(|(_, value)| value)
+    }
 }

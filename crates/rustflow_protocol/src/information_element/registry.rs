@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
-use super::{InformationElement, iana};
+use super::{ElementId, InformationElement, iana};
 
 /// Information elements by enterprise number and ID. Clones share the
 /// elements until one of them is changed.
@@ -42,6 +42,17 @@ impl Registry {
 
     pub fn get(&self, enterprise_number: Option<u32>, id: u16) -> Option<&InformationElement> {
         self.elements.get(&(enterprise_number, id))
+    }
+
+    /// The element named `name`, for looking up values by a name given at
+    /// run time; names in code are better as [`iana`](super::iana)
+    /// constants.
+    pub fn find(&self, name: &str) -> Option<ElementId> {
+        // Names are looked up rarely, so a scan saves keeping an index.
+        self.elements
+            .values()
+            .find(|element| element.name == name)
+            .map(InformationElement::element_id)
     }
 }
 
@@ -121,5 +132,20 @@ mod tests {
         clone.insert(element(1000, None, "added"));
         assert!(!Arc::ptr_eq(&iana.elements, &clone.elements));
         assert_eq!(iana.get(None, 1000), None);
+    }
+
+    #[test]
+    fn elements_are_found_by_name() {
+        let mut registry = Registry::iana();
+        assert_eq!(
+            registry.find("sourceIPv4Address"),
+            Some(iana::SOURCE_IPV4_ADDRESS)
+        );
+        assert_eq!(registry.find("noSuchElement"), None);
+        registry.insert(element(1, Some(9), "vendorCounter"));
+        assert_eq!(
+            registry.find("vendorCounter"),
+            Some(ElementId::from((9, 1)))
+        );
     }
 }
