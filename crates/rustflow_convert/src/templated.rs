@@ -8,7 +8,7 @@ use rustflow_protocol::{DataSet, Elements};
 
 use crate::domain::Domain;
 use crate::packet_section::{self, Section};
-use crate::record::{Additions, shared};
+use crate::record::Fields;
 use crate::time::uptime_to_unix_millis;
 use crate::{Protocol, Received, Record};
 
@@ -83,7 +83,7 @@ pub(crate) fn convert_data<T: Elements>(
     data: &DataSet<T>,
     records: &mut impl Extend<Record>,
 ) {
-    let base = Additions::new(context.received, Some(context.domain_id));
+    let base = Fields::additions(context.received, Some(context.domain_id));
     let mut last_elements = None;
     records.extend(data.records().map(|record| {
         let mut additions = base.clone();
@@ -91,38 +91,27 @@ pub(crate) fn convert_data<T: Elements>(
             sampling.add_to(&mut additions);
         }
 
-        let mut elements = Vec::with_capacity(record.values.len() + additions.elements.len());
-        let mut values = Vec::with_capacity(elements.capacity());
-        for (element, value) in record.iter() {
-            let Some(element) = element else {
-                continue;
-            };
+        let own = || {
+            record
+                .iter()
+                .filter_map(|(element, value)| Some((element?, value)))
+        };
+        let mut fields = Fields::with_capacity(record.values.len() + additions.elements.len());
+        for (element, value) in own() {
             let (element, value) = context
                 .time
                 .absolute(element, value)
                 .unwrap_or_else(|| (element, value.clone()));
-            elements.push(element);
-            values.push(value);
+            fields.push(element, value);
         }
-        let own = record
-            .iter()
-            .filter_map(|(element, value)| Some((element?, value)));
-        if let Some(section) = Section::of_record(own) {
-            packet_section::dissect(section, &mut |element, value| {
-                if !elements.contains(&element) {
-                    elements.push(element);
-                    values.push(value);
-                }
-            });
+        if let Some(section) = Section::of_record(own()) {
+            packet_section::dissect(section, &mut |element, value| fields.add(element, value));
         }
-        elements.extend(additions.elements);
-        values.extend(additions.values);
-
-        Record {
-            protocol: context.protocol,
-            sequence_number: context.sequence_number,
-            elements: shared(&mut last_elements, elements),
-            values,
-        }
+        fields.append(additions);
+        fields.into_record(
+            context.protocol,
+            context.sequence_number,
+            &mut last_elements,
+        )
     }));
 }

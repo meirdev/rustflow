@@ -5,7 +5,7 @@
 use rustflow_protocol::information_element::{ElementId, iana};
 use rustflow_protocol::value::Value;
 
-use crate::record::Additions;
+use crate::record::Fields;
 
 /// IANA's PSAMP selector algorithm numbers.
 const SYSTEMATIC_COUNT_BASED: u16 = 1;
@@ -33,30 +33,27 @@ impl Sampling {
     /// sampling by a method not given, is one packet then `rate - 1`
     /// skipped (samplingPacketInterval and samplingPacketSpace), without a
     /// selector algorithm to claim a method for the latter.
-    pub(crate) fn add_to(self, additions: &mut Additions) {
-        match self.method {
-            Some(Method::Random) => {
-                additions.push(
-                    iana::SELECTOR_ALGORITHM,
-                    Value::Unsigned16(RANDOM_N_OUT_OF_N),
-                );
-                additions.push(iana::SAMPLING_SIZE, Value::Unsigned32(1));
-                additions.push(iana::SAMPLING_POPULATION, Value::Unsigned32(self.rate));
-            }
-            method => {
-                if method == Some(Method::Systematic) {
-                    additions.push(
-                        iana::SELECTOR_ALGORITHM,
-                        Value::Unsigned16(SYSTEMATIC_COUNT_BASED),
-                    );
-                }
-                additions.push(iana::SAMPLING_PACKET_INTERVAL, Value::Unsigned32(1));
-                additions.push(
-                    iana::SAMPLING_PACKET_SPACE,
-                    Value::Unsigned32(self.rate.saturating_sub(1)),
-                );
-            }
+    pub(crate) fn add_to(self, fields: &mut Fields) {
+        if self.method == Some(Method::Random) {
+            fields.push(
+                iana::SELECTOR_ALGORITHM,
+                Value::Unsigned16(RANDOM_N_OUT_OF_N),
+            );
+            fields.push(iana::SAMPLING_SIZE, Value::Unsigned32(1));
+            fields.push(iana::SAMPLING_POPULATION, Value::Unsigned32(self.rate));
+            return;
         }
+        if self.method == Some(Method::Systematic) {
+            fields.push(
+                iana::SELECTOR_ALGORITHM,
+                Value::Unsigned16(SYSTEMATIC_COUNT_BASED),
+            );
+        }
+        fields.push(iana::SAMPLING_PACKET_INTERVAL, Value::Unsigned32(1));
+        fields.push(
+            iana::SAMPLING_PACKET_SPACE,
+            Value::Unsigned32(self.rate.saturating_sub(1)),
+        );
     }
 }
 
@@ -153,7 +150,7 @@ mod tests {
             exporter: IpAddr::V4(Ipv4Addr::LOCALHOST),
             time: None,
         };
-        let mut additions = Additions::new(&received, None);
+        let mut additions = Fields::additions(&received, None);
         sampling.add_to(&mut additions);
         additions
             .elements

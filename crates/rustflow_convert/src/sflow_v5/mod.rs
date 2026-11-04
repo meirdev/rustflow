@@ -7,7 +7,7 @@
 
 use std::net::IpAddr;
 
-use rustflow_protocol::information_element::{ElementId, iana};
+use rustflow_protocol::information_element::iana;
 use rustflow_protocol::sflow_v5::{
     AsPathSegment, ExtendedGateway, ExtendedRouter, ExtendedSwitch, FlowRecord, FlowSample,
     HeaderProtocol, Interface, Packet, Sample, SampledEthernet, SampledHeader, SampledIpv4,
@@ -16,7 +16,7 @@ use rustflow_protocol::sflow_v5::{
 use rustflow_protocol::value::Value;
 
 use crate::packet_section::{self, IPV4_ETHERNET_TYPE, IPV6_ETHERNET_TYPE, Section};
-use crate::record::{Additions, shared};
+use crate::record::Fields;
 use crate::sampling::{Method, Sampling};
 use crate::{Protocol, Received, Record};
 
@@ -33,7 +33,7 @@ const INTERNAL_INTERFACE: u32 = 0x3fff_ffff;
 /// many, chosen at random as sFlow samples.
 pub fn convert(packet: &Packet, received: &Received, records: &mut impl Extend<Record>) {
     let header = &packet.header;
-    let mut base = Additions::new(received, Some(header.sub_agent_id));
+    let mut base = Fields::additions(received, Some(header.sub_agent_id));
     match header.agent_address {
         Some(IpAddr::V4(address)) => {
             base.push(iana::EXPORTER_IPV4_ADDRESS, Value::Ipv4Address(address));
@@ -58,37 +58,13 @@ pub fn convert(packet: &Packet, received: &Received, records: &mut impl Extend<R
             method: Some(Method::Random),
         }
         .add_to(&mut additions);
-        fields.elements.extend(additions.elements);
-        fields.values.extend(additions.values);
-        Some(Record {
-            protocol: Protocol::SflowV5,
-            sequence_number: header.sequence_number,
-            elements: shared(&mut last_elements, fields.elements),
-            values: fields.values,
-        })
+        fields.append(additions);
+        Some(fields.into_record(
+            Protocol::SflowV5,
+            header.sequence_number,
+            &mut last_elements,
+        ))
     }));
-}
-
-/// A record's fields, at most one of each element.
-#[derive(Default)]
-struct Fields {
-    elements: Vec<ElementId>,
-    values: Vec<Value>,
-}
-
-impl Fields {
-    /// Adds a field unless there is one of that element already: of two
-    /// records that describe the packet alike, the first one wins.
-    fn add(&mut self, element: ElementId, value: Value) {
-        if !self.elements.contains(&element) {
-            self.elements.push(element);
-            self.values.push(value);
-        }
-    }
-
-    fn has(&self, element: ElementId) -> bool {
-        self.elements.contains(&element)
-    }
 }
 
 fn flow_fields(sample: &FlowSample, compact: bool) -> Fields {

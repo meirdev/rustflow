@@ -7,7 +7,7 @@ use rustflow_protocol::information_element::{ElementId, iana};
 use rustflow_protocol::netflow_v5::{FlowRecord, Packet};
 use rustflow_protocol::value::Value;
 
-use crate::record::Additions;
+use crate::record::Fields;
 use crate::sampling::Sampling;
 use crate::time::uptime_to_unix_millis;
 use crate::{Protocol, Received, Record};
@@ -48,7 +48,7 @@ pub fn convert(packet: &Packet, received: &Received, records: &mut impl Extend<R
             .map_or(Value::Null, Value::DateTimeMilliseconds)
     };
 
-    let mut additions = Additions::new(received, None);
+    let mut additions = Fields::additions(received, None);
     additions.push(iana::ENGINE_TYPE, Value::Unsigned8(header.engine_type));
     additions.push(iana::ENGINE_ID, Value::Unsigned8(header.engine_id));
     Sampling {

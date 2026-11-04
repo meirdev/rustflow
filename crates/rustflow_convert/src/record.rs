@@ -62,22 +62,27 @@ pub struct Received {
     pub time: Option<SystemTime>,
 }
 
-/// The elements conversion adds to every record of a packet, and their
-/// values, kept apart until each record's own are known.
-#[derive(Clone)]
-pub(crate) struct Additions {
+/// A record's fields as conversion gathers them, elements and values side
+/// by side.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Fields {
     pub(crate) elements: Vec<ElementId>,
     pub(crate) values: Vec<Value>,
 }
 
-impl Additions {
-    /// The exporter, its observation domain if the protocol has one, and
-    /// when the packet was received (RFC 6183 section 7).
-    pub(crate) fn new(received: &Received, observation_domain_id: Option<u32>) -> Self {
-        let mut additions = Self {
-            elements: Vec::new(),
-            values: Vec::new(),
-        };
+impl Fields {
+    pub(crate) fn with_capacity(capacity: usize) -> Self {
+        Self {
+            elements: Vec::with_capacity(capacity),
+            values: Vec::with_capacity(capacity),
+        }
+    }
+
+    /// The fields conversion adds to every record of a packet: the
+    /// exporter, its observation domain if the protocol has one, and when
+    /// the packet was received (RFC 6183 section 7).
+    pub(crate) fn additions(received: &Received, observation_domain_id: Option<u32>) -> Self {
+        let mut additions = Self::default();
         match received.exporter {
             IpAddr::V4(address) => {
                 additions.push(
@@ -111,16 +116,42 @@ impl Additions {
         self.elements.push(element);
         self.values.push(value);
     }
-}
 
-/// `elements` as an `Arc`, the last record's if they are the same, so that
-/// records of one shape share them.
-pub(crate) fn shared(
-    last: &mut Option<Arc<[ElementId]>>,
-    elements: Vec<ElementId>,
-) -> Arc<[ElementId]> {
-    match last {
-        Some(last) if last[..] == elements[..] => Arc::clone(last),
-        _ => Arc::clone(last.insert(elements.into())),
+    /// Adds a field unless there is one of that element already: of two
+    /// sources that describe a packet alike, the first one wins.
+    pub(crate) fn add(&mut self, element: ElementId, value: Value) {
+        if !self.has(element) {
+            self.push(element, value);
+        }
+    }
+
+    pub(crate) fn has(&self, element: ElementId) -> bool {
+        self.elements.contains(&element)
+    }
+
+    pub(crate) fn append(&mut self, mut other: Self) {
+        self.elements.append(&mut other.elements);
+        self.values.append(&mut other.values);
+    }
+
+    /// The record of these fields. Its elements are the last record's when
+    /// they are the same, so that records of one shape, such as those of
+    /// one packet, share them.
+    pub(crate) fn into_record(
+        self,
+        protocol: Protocol,
+        sequence_number: u32,
+        last_elements: &mut Option<Arc<[ElementId]>>,
+    ) -> Record {
+        let elements = match last_elements {
+            Some(last) if last[..] == self.elements[..] => Arc::clone(last),
+            _ => Arc::clone(last_elements.insert(self.elements.into())),
+        };
+        Record {
+            protocol,
+            sequence_number,
+            elements,
+            values: self.values,
+        }
     }
 }
