@@ -2,6 +2,7 @@ use rustflow_bytes::Writer;
 
 use super::*;
 use crate::WriteError;
+use crate::error::fit_u16;
 
 pub fn write(packet: &Packet, buf: &mut Vec<u8>) -> Result<(), WriteError> {
     let mut w = Writer::new(buf);
@@ -24,10 +25,7 @@ fn write_header(w: &mut Writer, header: &Header, records: usize) -> Result<(), W
         engine_id,
         sampling_interval,
     } = *header;
-    let count = u16::try_from(records).map_err(|_| WriteError::TooLarge {
-        field: "count",
-        value: records,
-    })?;
+    let count = fit_u16(records, "count")?;
     let sampling_interval = u16::try_from(sampling_interval)?;
 
     w.u16(version);

@@ -5,7 +5,9 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use super::OptionsTemplate;
-use crate::information_element::{DataType, DataTypeSemantics, InformationElement, Registry, iana};
+use crate::information_element::{
+    DataType, DataTypeSemantics, ElementId, InformationElement, Registry, iana,
+};
 use crate::value::Value;
 
 /// Elements one exporter may describe across its domains; it decides how
@@ -19,7 +21,7 @@ const MAX_NAME_LENGTH: usize = 256;
 /// What type records said about the elements of each observation domain.
 #[derive(Default)]
 pub(super) struct ElementTypes {
-    domains: HashMap<u32, HashMap<(Option<u32>, u16), Learned>>,
+    domains: HashMap<u32, HashMap<ElementId, Learned>>,
     len: usize,
 }
 
@@ -31,13 +33,8 @@ enum Learned {
 }
 
 impl ElementTypes {
-    pub(super) fn get(
-        &self,
-        domain: u32,
-        enterprise_number: Option<u32>,
-        id: u16,
-    ) -> Option<&InformationElement> {
-        match self.domains.get(&domain)?.get(&(enterprise_number, id))? {
+    pub(super) fn get(&self, domain: u32, element: ElementId) -> Option<&InformationElement> {
+        match self.domains.get(&domain)?.get(&element)? {
             Learned::Defined(element) => Some(element),
             Learned::Conflicting => None,
         }
@@ -56,9 +53,7 @@ impl ElementTypes {
         let mut changed = false;
         for record in records {
             if let Some(element) = describe(template, record)
-                && registry
-                    .get(element.enterprise_number, element.id)
-                    .is_none()
+                && registry.get(element.element_id()).is_none()
             {
                 changed |= self.insert(domain, element);
             }
@@ -69,7 +64,7 @@ impl ElementTypes {
     fn insert(&mut self, domain: u32, element: InformationElement) -> bool {
         let full = self.len >= MAX_ELEMENTS;
         let elements = self.domains.entry(domain).or_default();
-        let key = (element.enterprise_number, element.id);
+        let key = element.element_id();
         match elements.get_mut(&key) {
             Some(Learned::Defined(known)) if *known == element => false,
             Some(Learned::Conflicting) => false,
@@ -106,17 +101,17 @@ fn describe(template: &OptionsTemplate, record: &[Value]) -> Option<InformationE
         match field.element_id() {
             // The enterprise bit must be ignored (RFC 5610 section 3.8).
             iana::INFORMATION_ELEMENT_ID => {
-                id = Some(u16::try_from(unsigned(value)?).ok()? & 0x7fff);
+                id = Some(u16::try_from(value.as_u64()?).ok()? & 0x7fff);
             }
             iana::PRIVATE_ENTERPRISE_NUMBER => {
-                enterprise_number = Some(u32::try_from(unsigned(value)?).ok()?);
+                enterprise_number = Some(u32::try_from(value.as_u64()?).ok()?);
             }
             iana::INFORMATION_ELEMENT_DATA_TYPE => {
-                data_type = Some(DataType::try_from(u8::try_from(unsigned(value)?).ok()?).ok()?);
+                data_type = Some(DataType::try_from(u8::try_from(value.as_u64()?).ok()?).ok()?);
             }
             iana::INFORMATION_ELEMENT_SEMANTICS => {
                 semantics =
-                    Some(DataTypeSemantics::try_from(u8::try_from(unsigned(value)?).ok()?).ok()?);
+                    Some(DataTypeSemantics::try_from(u8::try_from(value.as_u64()?).ok()?).ok()?);
             }
             // A name holding a null character must be ignored (RFC 5610
             // section 4).
@@ -187,20 +182,9 @@ fn semantics_fit(data_type: DataType, semantics: Option<DataTypeSemantics>) -> b
     }
 }
 
-fn unsigned(value: &Value) -> Option<u64> {
-    match *value {
-        Value::Unsigned8(v) => Some(v.into()),
-        Value::Unsigned16(v) => Some(v.into()),
-        Value::Unsigned32(v) => Some(v.into()),
-        Value::Unsigned64(v) => Some(v),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::information_element::ElementId;
     use crate::ipfix::FieldSpecifier;
 
     fn type_template() -> OptionsTemplate {
@@ -240,8 +224,8 @@ mod tests {
         assert!(types.learn(7, &type_template(), &records, &Registry::empty()));
 
         let last = u16::try_from(MAX_ELEMENTS).unwrap();
-        assert!(types.get(7, Some(9), last - 1).is_some());
-        assert!(types.get(7, Some(9), last).is_none());
+        assert!(types.get(7, ElementId::from((9, last - 1))).is_some());
+        assert!(types.get(7, ElementId::from((9, last))).is_none());
     }
 
     #[test]
@@ -253,10 +237,10 @@ mod tests {
         ];
         types.learn(7, &type_template(), &records, &Registry::empty());
         assert_eq!(
-            types.get(7, Some(9), 1).unwrap().name.len(),
+            types.get(7, ElementId::from((9, 1))).unwrap().name.len(),
             MAX_NAME_LENGTH
         );
-        assert_eq!(types.get(7, Some(9), 2).unwrap().name, "9.2");
+        assert_eq!(types.get(7, ElementId::from((9, 2))).unwrap().name, "9.2");
     }
 
     #[test]

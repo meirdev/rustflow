@@ -4,6 +4,7 @@ use rustflow_bytes::{Wire, Writer};
 
 use super::*;
 use crate::WriteError;
+use crate::error::fit_u32;
 
 /// Writes `packet` as an sFlow v5 datagram at the end of `buf`. The counts
 /// and lengths written are those of what is written. On error, nothing is
@@ -32,10 +33,6 @@ fn write_datagram(w: &mut Writer, packet: &Packet) -> Result<(), WriteError> {
     w.u32(sequence_number);
     w.u32(uptime);
     write_array(w, &packet.samples, "sample count", write_sample)
-}
-
-fn fit_u32(value: usize, field: &'static str) -> Result<u32, WriteError> {
-    u32::try_from(value).map_err(|_| WriteError::TooLarge { field, value })
 }
 
 /// An XDR variable-length array: its length, then its elements.
@@ -105,6 +102,13 @@ fn write_formatted(
 fn write_unknown(w: &mut Writer, format: DataFormat, data: &[u8]) -> Result<(), WriteError> {
     write_formatted(w, format, |w| {
         w.bytes(data);
+        Ok(())
+    })
+}
+
+fn write_wire(w: &mut Writer, format: DataFormat, record: &impl Wire) -> Result<(), WriteError> {
+    write_formatted(w, format, |w| {
+        record.write(w);
         Ok(())
     })
 }
@@ -247,18 +251,9 @@ fn write_flow_record(w: &mut Writer, record: &FlowRecord) -> Result<(), WriteErr
                 Ok(())
             })
         }
-        FlowRecord::SampledIpv4(record) => write_formatted(w, standard(SAMPLED_IPV4), |w| {
-            record.write(w);
-            Ok(())
-        }),
-        FlowRecord::SampledIpv6(record) => write_formatted(w, standard(SAMPLED_IPV6), |w| {
-            record.write(w);
-            Ok(())
-        }),
-        FlowRecord::ExtendedSwitch(record) => write_formatted(w, standard(EXTENDED_SWITCH), |w| {
-            record.write(w);
-            Ok(())
-        }),
+        FlowRecord::SampledIpv4(record) => write_wire(w, standard(SAMPLED_IPV4), record),
+        FlowRecord::SampledIpv6(record) => write_wire(w, standard(SAMPLED_IPV6), record),
+        FlowRecord::ExtendedSwitch(record) => write_wire(w, standard(EXTENDED_SWITCH), record),
         FlowRecord::ExtendedRouter(record) => write_formatted(w, standard(EXTENDED_ROUTER), |w| {
             write_extended_router(w, record);
             Ok(())
@@ -295,34 +290,16 @@ fn write_flow_record(w: &mut Writer, record: &FlowRecord) -> Result<(), WriteErr
 fn write_counter_record(w: &mut Writer, record: &CounterRecord) -> Result<(), WriteError> {
     let standard = DataFormat::standard;
     match record {
-        CounterRecord::IfCounters(record) => write_formatted(w, standard(IF_COUNTERS), |w| {
-            record.write(w);
-            Ok(())
-        }),
+        CounterRecord::IfCounters(record) => write_wire(w, standard(IF_COUNTERS), record),
         CounterRecord::EthernetCounters(record) => {
-            write_formatted(w, standard(ETHERNET_COUNTERS), |w| {
-                record.write(w);
-                Ok(())
-            })
+            write_wire(w, standard(ETHERNET_COUNTERS), record)
         }
         CounterRecord::TokenringCounters(record) => {
-            write_formatted(w, standard(TOKENRING_COUNTERS), |w| {
-                record.write(w);
-                Ok(())
-            })
+            write_wire(w, standard(TOKENRING_COUNTERS), record)
         }
-        CounterRecord::VgCounters(record) => write_formatted(w, standard(VG_COUNTERS), |w| {
-            record.write(w);
-            Ok(())
-        }),
-        CounterRecord::VlanCounters(record) => write_formatted(w, standard(VLAN_COUNTERS), |w| {
-            record.write(w);
-            Ok(())
-        }),
-        CounterRecord::Processor(record) => write_formatted(w, standard(PROCESSOR), |w| {
-            record.write(w);
-            Ok(())
-        }),
+        CounterRecord::VgCounters(record) => write_wire(w, standard(VG_COUNTERS), record),
+        CounterRecord::VlanCounters(record) => write_wire(w, standard(VLAN_COUNTERS), record),
+        CounterRecord::Processor(record) => write_wire(w, standard(PROCESSOR), record),
         CounterRecord::Unknown { format, data } => write_unknown(w, *format, data),
     }
 }

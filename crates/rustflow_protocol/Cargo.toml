@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "NetFlow v5, NetFlow v9 and IPFIX packets, parsed and written"
+description = "NetFlow v5, NetFlow v9, IPFIX and sFlow v5 packets, parsed and written"
 
 [features]
 jiff = ["dep:jiff"]

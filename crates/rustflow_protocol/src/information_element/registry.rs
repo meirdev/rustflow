@@ -9,7 +9,7 @@ use super::{ElementId, InformationElement, iana};
 /// elements until one of them is changed.
 #[derive(Debug, Clone)]
 pub struct Registry {
-    elements: Arc<FxHashMap<(Option<u32>, u16), InformationElement>>,
+    elements: Arc<FxHashMap<ElementId, InformationElement>>,
 }
 
 impl Registry {
@@ -37,11 +37,11 @@ impl Registry {
     /// Adds an element, replacing any with the same enterprise number and
     /// ID.
     pub fn insert(&mut self, element: InformationElement) {
-        Arc::make_mut(&mut self.elements).insert((element.enterprise_number, element.id), element);
+        Arc::make_mut(&mut self.elements).insert(element.element_id(), element);
     }
 
-    pub fn get(&self, enterprise_number: Option<u32>, id: u16) -> Option<&InformationElement> {
-        self.elements.get(&(enterprise_number, id))
+    pub fn get(&self, element: ElementId) -> Option<&InformationElement> {
+        self.elements.get(&element)
     }
 
     /// The element named `name`, for looking up values by a name given at
@@ -81,7 +81,7 @@ mod tests {
     fn iana_elements_carry_their_data_type_and_semantics() {
         let iana = Registry::iana();
         assert_eq!(
-            iana.get(None, 1),
+            iana.get(ElementId::iana(1)),
             Some(&InformationElement {
                 id: 1,
                 enterprise_number: None,
@@ -90,30 +90,42 @@ mod tests {
                 semantics: Some(DataTypeSemantics::DeltaCounter),
             })
         );
-        let semantics = |id| iana.get(None, id).unwrap().semantics;
+        let semantics = |id| iana.get(ElementId::iana(id)).unwrap().semantics;
         assert_eq!(semantics(6), Some(DataTypeSemantics::Flags));
         assert_eq!(semantics(85), Some(DataTypeSemantics::TotalCounter));
         assert_eq!(semantics(291), Some(DataTypeSemantics::List));
         assert_eq!(semantics(36), None);
-        assert_eq!(iana.get(None, 291).unwrap().data_type, DataType::BasicList);
+        assert_eq!(
+            iana.get(ElementId::iana(291)).unwrap().data_type,
+            DataType::BasicList
+        );
     }
 
     #[test]
     fn deprecated_elements_are_kept_and_unassigned_ids_are_not() {
         let iana = Registry::iana();
-        assert_eq!(iana.get(None, 34).unwrap().name, "samplingInterval");
-        assert_eq!(iana.get(None, 0), None);
-        assert_eq!(iana.get(None, 416), None);
-        assert_eq!(iana.get(None, 32767), None);
+        assert_eq!(
+            iana.get(ElementId::iana(34)).unwrap().name,
+            "samplingInterval"
+        );
+        assert_eq!(iana.get(ElementId::iana(0)), None);
+        assert_eq!(iana.get(ElementId::iana(416)), None);
+        assert_eq!(iana.get(ElementId::iana(32767)), None);
     }
 
     #[test]
     fn enterprise_elements_are_kept_apart_from_iana_ones() {
         let mut registry = Registry::iana();
         registry.insert(element(1, Some(9), "vendorCounter"));
-        assert_eq!(registry.get(Some(9), 1).unwrap().name, "vendorCounter");
-        assert_eq!(registry.get(None, 1).unwrap().name, "octetDeltaCount");
-        assert_eq!(registry.get(Some(10), 1), None);
+        assert_eq!(
+            registry.get(ElementId::from((9, 1))).unwrap().name,
+            "vendorCounter"
+        );
+        assert_eq!(
+            registry.get(ElementId::iana(1)).unwrap().name,
+            "octetDeltaCount"
+        );
+        assert_eq!(registry.get(ElementId::from((10, 1))), None);
     }
 
     #[test]
@@ -121,7 +133,7 @@ mod tests {
         let mut registry = Registry::empty();
         registry.insert(element(1000, None, "first"));
         registry.insert(element(1000, None, "second"));
-        assert_eq!(registry.get(None, 1000).unwrap().name, "second");
+        assert_eq!(registry.get(ElementId::iana(1000)).unwrap().name, "second");
     }
 
     #[test]
@@ -131,7 +143,7 @@ mod tests {
         assert!(Arc::ptr_eq(&iana.elements, &clone.elements));
         clone.insert(element(1000, None, "added"));
         assert!(!Arc::ptr_eq(&iana.elements, &clone.elements));
-        assert_eq!(iana.get(None, 1000), None);
+        assert_eq!(iana.get(ElementId::iana(1000)), None);
     }
 
     #[test]

@@ -85,6 +85,14 @@ impl fmt::Display for WriteError {
 
 impl error::Error for WriteError {}
 
+pub(crate) fn fit_u16(value: usize, field: &'static str) -> Result<u16, WriteError> {
+    u16::try_from(value).map_err(|_| WriteError::TooLarge { field, value })
+}
+
+pub(crate) fn fit_u32(value: usize, field: &'static str) -> Result<u32, WriteError> {
+    u32::try_from(value).map_err(|_| WriteError::TooLarge { field, value })
+}
+
 impl error::Error for ParseError {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match self {

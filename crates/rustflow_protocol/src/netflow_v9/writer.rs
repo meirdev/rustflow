@@ -2,6 +2,7 @@ use rustflow_bytes::Writer;
 
 use super::*;
 use crate::WriteError;
+use crate::error::fit_u16;
 use crate::value::{Value, encode};
 
 /// Field Type and Field Length.
@@ -35,11 +36,7 @@ fn write_packet(w: &mut Writer, packet: &Packet) -> Result<(), WriteError> {
         sequence_number,
         source_id,
     } = packet.header;
-    let records: usize = packet.flow_sets.iter().map(record_count).sum();
-    let count = u16::try_from(records).map_err(|_| WriteError::TooLarge {
-        field: "count",
-        value: records,
-    })?;
+    let count = fit_u16(packet.flow_sets.iter().map(record_count).sum(), "count")?;
 
     w.u16(version);
     w.u16(count);
@@ -108,23 +105,14 @@ fn write_flow_set(
     if padding < record_size {
         w.zeros(padding);
     }
-    let length = w.len() - start;
-    let length = u16::try_from(length).map_err(|_| WriteError::TooLarge {
-        field: "FlowSet length",
-        value: length,
-    })?;
+    let length = fit_u16(w.len() - start, "FlowSet length")?;
     w.set_u16(start + 2, length);
     Ok(())
 }
 
 fn write_template(w: &mut Writer, template: &Template) -> Result<(), WriteError> {
-    let fields = template.fields.len();
-    let field_count = u16::try_from(fields).map_err(|_| WriteError::TooLarge {
-        field: "field count",
-        value: fields,
-    })?;
     w.u16(template.template_id);
-    w.u16(field_count);
+    w.u16(fit_u16(template.fields.len(), "field count")?);
     template
         .fields
         .iter()
@@ -150,11 +138,7 @@ fn write_options_template(w: &mut Writer, template: &OptionsTemplate) -> Result<
 }
 
 fn fields_length(fields: &[Field], name: &'static str) -> Result<u16, WriteError> {
-    let length = fields.len() * FIELD_SIZE;
-    u16::try_from(length).map_err(|_| WriteError::TooLarge {
-        field: name,
-        value: length,
-    })
+    fit_u16(fields.len() * FIELD_SIZE, name)
 }
 
 fn write_field(w: &mut Writer, field: &Field) {

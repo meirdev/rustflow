@@ -4,7 +4,7 @@ use std::time::Duration;
 use rustflow_bytes::{Reader, Truncated};
 
 use super::*;
-use crate::information_element::{DataType, Registry};
+use crate::information_element::{DataType, ElementId, Registry};
 use crate::template_cache::TemplateCache;
 use crate::value::{Value, decode};
 use crate::{DataSet, ParseError};
@@ -124,7 +124,7 @@ impl Parser {
         fields.iter().map(|field| {
             let data_type = self
                 .registry
-                .get(None, field.field_type)
+                .get(ElementId::iana(field.field_type))
                 .map_or(DataType::OctetArray, |element| element.data_type);
             (usize::from(field.length), data_type)
         })

@@ -10,19 +10,6 @@ use crate::value::Value;
 use crate::{DataSet, ParseError, WriteError};
 
 const DOMAIN: u32 = 7;
-const OCTET_DELTA_COUNT: u16 = 1;
-const SOURCE_IPV4_ADDRESS: u16 = 8;
-const SAMPLING_INTERVAL: u16 = 34;
-const INTERFACE_NAME: u16 = 82;
-const OBSERVATION_DOMAIN_ID: u16 = 149;
-const BASIC_LIST: u16 = 291;
-const SUB_TEMPLATE_LIST: u16 = 292;
-const SUB_TEMPLATE_MULTI_LIST: u16 = 293;
-const INFORMATION_ELEMENT_ID: u16 = 303;
-const INFORMATION_ELEMENT_DATA_TYPE: u16 = 339;
-const INFORMATION_ELEMENT_NAME: u16 = 341;
-const INFORMATION_ELEMENT_SEMANTICS: u16 = 344;
-const PRIVATE_ENTERPRISE_NUMBER: u16 = 346;
 const TYPE_TEMPLATE_ID: u16 = 400;
 const VENDOR_ENTERPRISE_NUMBER: u32 = 9;
 const VENDOR_FIELD: FieldSpecifier = FieldSpecifier {
@@ -50,8 +37,8 @@ fn set(id: u16, body: &[u8]) -> Vec<u8> {
     [&id.to_be_bytes()[..], &length.to_be_bytes(), body].concat()
 }
 
-fn field(id: u16, length: u16) -> Vec<u8> {
-    [id.to_be_bytes(), length.to_be_bytes()].concat()
+fn field(element: ElementId, length: u16) -> Vec<u8> {
+    [element.id.to_be_bytes(), length.to_be_bytes()].concat()
 }
 
 fn enterprise_field(id: u16, length: u16, enterprise_number: u32) -> Vec<u8> {
@@ -99,7 +86,7 @@ fn variable(value: &[u8]) -> Vec<u8> {
 fn octet_count_template() -> Vec<u8> {
     set(
         TEMPLATE_SET_ID,
-        &template(256, &[field(OCTET_DELTA_COUNT, 4)]),
+        &template(256, &[field(iana::OCTET_DELTA_COUNT, 4)]),
     )
 }
 
@@ -172,7 +159,10 @@ fn data_decodes_by_the_template_sent_before_it() {
         TEMPLATE_SET_ID,
         &template(
             256,
-            &[field(SOURCE_IPV4_ADDRESS, 4), field(OCTET_DELTA_COUNT, 8)],
+            &[
+                field(iana::SOURCE_IPV4_ADDRESS, 4),
+                field(iana::OCTET_DELTA_COUNT, 8),
+            ],
         ),
     );
     let record = [&[192, 0, 2, 1][..], &1500u64.to_be_bytes()].concat();
@@ -201,7 +191,7 @@ fn enterprise_fields_are_looked_up_by_their_enterprise_number() {
         TEMPLATE_SET_ID,
         &template(
             256,
-            &[enterprise_field(1, 4, 9), field(OCTET_DELTA_COUNT, 4)],
+            &[enterprise_field(1, 4, 9), field(iana::OCTET_DELTA_COUNT, 4)],
         ),
     );
     let data = set(256, &[0, 0, 0, 5, 0, 0, 0, 6]);
@@ -220,7 +210,7 @@ fn enterprise_fields_are_looked_up_by_their_enterprise_number() {
                 enterprise_number: Some(9),
             },
             FieldSpecifier {
-                information_element_id: OCTET_DELTA_COUNT,
+                information_element_id: iana::OCTET_DELTA_COUNT.id,
                 field_length: 4,
                 enterprise_number: None,
             },
@@ -255,8 +245,8 @@ fn variable_length_values_carry_their_length() {
         &template(
             256,
             &[
-                field(INTERFACE_NAME, VARIABLE_LENGTH),
-                field(OCTET_DELTA_COUNT, 4),
+                field(iana::INTERFACE_NAME, VARIABLE_LENGTH),
+                field(iana::OCTET_DELTA_COUNT, 4),
             ],
         ),
     );
@@ -297,7 +287,10 @@ fn options_data_decodes_scope_values_before_option_values() {
         &options_template(
             257,
             1,
-            &[field(OBSERVATION_DOMAIN_ID, 4), field(SAMPLING_INTERVAL, 4)],
+            &[
+                field(iana::OBSERVATION_DOMAIN_ID, 4),
+                field(iana::SAMPLING_INTERVAL, 4),
+            ],
         ),
     );
     let data = set(
@@ -312,8 +305,8 @@ fn options_data_decodes_scope_values_before_option_values() {
     let Set::OptionsTemplates(templates) = &packet.sets[0] else {
         panic!("expected an options template set");
     };
-    let field = |id| FieldSpecifier {
-        information_element_id: id,
+    let field = |element: ElementId| FieldSpecifier {
+        information_element_id: element.id,
         field_length: 4,
         enterprise_number: None,
     };
@@ -321,8 +314,8 @@ fn options_data_decodes_scope_values_before_option_values() {
         *templates[0],
         OptionsTemplate {
             template_id: 257,
-            scope_fields: vec![field(OBSERVATION_DOMAIN_ID)],
-            option_fields: vec![field(SAMPLING_INTERVAL)],
+            scope_fields: vec![field(iana::OBSERVATION_DOMAIN_ID)],
+            option_fields: vec![field(iana::SAMPLING_INTERVAL)],
         }
     );
     let Set::OptionsData(data) = &packet.sets[1] else {
@@ -337,7 +330,10 @@ fn options_data_decodes_scope_values_before_option_values() {
 
 #[test]
 fn an_options_template_needs_one_to_all_of_its_fields_in_scope() {
-    let fields = [field(OBSERVATION_DOMAIN_ID, 4), field(SAMPLING_INTERVAL, 4)];
+    let fields = [
+        field(iana::OBSERVATION_DOMAIN_ID, 4),
+        field(iana::SAMPLING_INTERVAL, 4),
+    ];
     for scope_field_count in [0, 3] {
         let template = set(
             OPTIONS_TEMPLATE_SET_ID,
@@ -367,7 +363,7 @@ fn withdrawals_are_parsed_but_not_applied() {
         OPTIONS_TEMPLATE_SET_ID,
         &[
             template(258, &[]),
-            options_template(259, 1, &[field(OBSERVATION_DOMAIN_ID, 4)]),
+            options_template(259, 1, &[field(iana::OBSERVATION_DOMAIN_ID, 4)]),
         ]
         .concat(),
     );
@@ -400,8 +396,8 @@ fn reserved_template_ids_end_the_template_set() {
     let templates = set(
         TEMPLATE_SET_ID,
         &[
-            template(255, &[field(OCTET_DELTA_COUNT, 4)]),
-            template(256, &[field(OCTET_DELTA_COUNT, 4)]),
+            template(255, &[field(iana::OCTET_DELTA_COUNT, 4)]),
+            template(256, &[field(iana::OCTET_DELTA_COUNT, 4)]),
         ]
         .concat(),
     );
@@ -457,11 +453,11 @@ fn templates_are_kept_per_domain_until_they_expire() {
 fn basic_lists_hold_values_of_one_element() {
     let template = set(
         TEMPLATE_SET_ID,
-        &template(256, &[field(BASIC_LIST, VARIABLE_LENGTH)]),
+        &template(256, &[field(iana::BASIC_LIST, VARIABLE_LENGTH)]),
     );
     let list = [
         vec![3],
-        field(INTERFACE_NAME, VARIABLE_LENGTH),
+        field(iana::INTERFACE_NAME, VARIABLE_LENGTH),
         variable(b"abc"),
         variable(b""),
         variable(b"def"),
@@ -479,7 +475,7 @@ fn basic_lists_hold_values_of_one_element() {
         Value::BasicList(Box::new(BasicList {
             semantic: ListSemantic::AllOf,
             field: FieldSpecifier {
-                information_element_id: INTERFACE_NAME,
+                information_element_id: iana::INTERFACE_NAME.id,
                 field_length: VARIABLE_LENGTH,
                 enterprise_number: None,
             },
@@ -492,9 +488,9 @@ fn basic_lists_hold_values_of_one_element() {
 fn a_basic_list_of_zero_length_elements_ends() {
     let template = set(
         TEMPLATE_SET_ID,
-        &template(256, &[field(BASIC_LIST, VARIABLE_LENGTH)]),
+        &template(256, &[field(iana::BASIC_LIST, VARIABLE_LENGTH)]),
     );
-    let list = [vec![255], field(OCTET_DELTA_COUNT, 0), vec![1, 2]].concat();
+    let list = [vec![255], field(iana::OCTET_DELTA_COUNT, 0), vec![1, 2]].concat();
     let data = set(256, &variable(&list));
 
     let packet = Parser::default()
@@ -512,8 +508,8 @@ fn sub_template_lists_hold_records_of_one_template() {
     let templates = set(
         TEMPLATE_SET_ID,
         &[
-            template(256, &[field(OCTET_DELTA_COUNT, 4)]),
-            template(257, &[field(SUB_TEMPLATE_LIST, VARIABLE_LENGTH)]),
+            template(256, &[field(iana::OCTET_DELTA_COUNT, 4)]),
+            template(257, &[field(iana::SUB_TEMPLATE_LIST, VARIABLE_LENGTH)]),
         ]
         .concat(),
     );
@@ -562,8 +558,11 @@ fn sub_template_multi_lists_hold_groups_of_records() {
     let templates = set(
         TEMPLATE_SET_ID,
         &[
-            template(256, &[field(OCTET_DELTA_COUNT, 4)]),
-            template(257, &[field(SUB_TEMPLATE_MULTI_LIST, VARIABLE_LENGTH)]),
+            template(256, &[field(iana::OCTET_DELTA_COUNT, 4)]),
+            template(
+                257,
+                &[field(iana::SUB_TEMPLATE_MULTI_LIST, VARIABLE_LENGTH)],
+            ),
         ]
         .concat(),
     );
@@ -616,18 +615,18 @@ fn sub_template_multi_lists_hold_groups_of_records() {
 fn lists_nested_too_deep_keep_their_bytes() {
     let template = set(
         TEMPLATE_SET_ID,
-        &template(256, &[field(BASIC_LIST, VARIABLE_LENGTH)]),
+        &template(256, &[field(iana::BASIC_LIST, VARIABLE_LENGTH)]),
     );
     let mut list = [
         vec![255],
-        field(OCTET_DELTA_COUNT, 4),
+        field(iana::OCTET_DELTA_COUNT, 4),
         5u32.to_be_bytes().to_vec(),
     ]
     .concat();
     for _ in 0..MAX_LIST_DEPTH + 2 {
         list = [
             vec![255],
-            field(BASIC_LIST, VARIABLE_LENGTH),
+            field(iana::BASIC_LIST, VARIABLE_LENGTH),
             variable(&list),
         ]
         .concat();
@@ -655,11 +654,11 @@ fn type_template() -> Vec<u8> {
             TYPE_TEMPLATE_ID,
             2,
             &[
-                field(INFORMATION_ELEMENT_ID, 2),
-                field(PRIVATE_ENTERPRISE_NUMBER, 4),
-                field(INFORMATION_ELEMENT_DATA_TYPE, 1),
-                field(INFORMATION_ELEMENT_SEMANTICS, 1),
-                field(INFORMATION_ELEMENT_NAME, VARIABLE_LENGTH),
+                field(iana::INFORMATION_ELEMENT_ID, 2),
+                field(iana::PRIVATE_ENTERPRISE_NUMBER, 4),
+                field(iana::INFORMATION_ELEMENT_DATA_TYPE, 1),
+                field(iana::INFORMATION_ELEMENT_SEMANTICS, 1),
+                field(iana::INFORMATION_ELEMENT_NAME, VARIABLE_LENGTH),
             ],
         ),
     )
@@ -759,7 +758,7 @@ fn templates_received_before_a_type_record_decode_by_it() {
 #[test]
 fn type_records_never_redefine_a_known_element() {
     let as_string = type_record(
-        OCTET_DELTA_COUNT,
+        iana::OCTET_DELTA_COUNT.id,
         0,
         DataType::String,
         DataTypeSemantics::Default,
@@ -894,10 +893,10 @@ fn a_type_record_has_the_element_id_in_scope() {
             TYPE_TEMPLATE_ID,
             1,
             &[
-                field(OBSERVATION_DOMAIN_ID, 4),
-                field(INFORMATION_ELEMENT_ID, 2),
-                field(PRIVATE_ENTERPRISE_NUMBER, 4),
-                field(INFORMATION_ELEMENT_DATA_TYPE, 1),
+                field(iana::OBSERVATION_DOMAIN_ID, 4),
+                field(iana::INFORMATION_ELEMENT_ID, 2),
+                field(iana::PRIVATE_ENTERPRISE_NUMBER, 4),
+                field(iana::INFORMATION_ELEMENT_DATA_TYPE, 1),
             ],
         ),
     );
@@ -947,7 +946,10 @@ fn writes_what_it_parses() {
         TEMPLATE_SET_ID,
         &template(
             256,
-            &[field(SOURCE_IPV4_ADDRESS, 4), field(OCTET_DELTA_COUNT, 8)],
+            &[
+                field(iana::SOURCE_IPV4_ADDRESS, 4),
+                field(iana::OCTET_DELTA_COUNT, 8),
+            ],
         ),
     );
     let record = [&[192, 0, 2, 1][..], &1500u64.to_be_bytes()].concat();
@@ -968,7 +970,7 @@ fn enterprise_fields_and_variable_lengths_write_back_as_parsed() {
             256,
             &[
                 enterprise_field(1, 4, VENDOR_ENTERPRISE_NUMBER),
-                field(INTERFACE_NAME, VARIABLE_LENGTH),
+                field(iana::INTERFACE_NAME, VARIABLE_LENGTH),
             ],
         ),
     );
@@ -996,7 +998,10 @@ fn options_templates_and_withdrawals_write_back_as_parsed() {
             options_template(
                 257,
                 1,
-                &[field(OBSERVATION_DOMAIN_ID, 4), field(SAMPLING_INTERVAL, 4)],
+                &[
+                    field(iana::OBSERVATION_DOMAIN_ID, 4),
+                    field(iana::SAMPLING_INTERVAL, 4),
+                ],
             ),
             template(258, &[]),
         ]
@@ -1021,13 +1026,13 @@ fn lists_round_trip() {
     let templates = set(
         TEMPLATE_SET_ID,
         &[
-            template(256, &[field(OCTET_DELTA_COUNT, 4)]),
+            template(256, &[field(iana::OCTET_DELTA_COUNT, 4)]),
             template(
                 257,
                 &[
-                    field(BASIC_LIST, VARIABLE_LENGTH),
-                    field(SUB_TEMPLATE_LIST, VARIABLE_LENGTH),
-                    field(SUB_TEMPLATE_MULTI_LIST, VARIABLE_LENGTH),
+                    field(iana::BASIC_LIST, VARIABLE_LENGTH),
+                    field(iana::SUB_TEMPLATE_LIST, VARIABLE_LENGTH),
+                    field(iana::SUB_TEMPLATE_MULTI_LIST, VARIABLE_LENGTH),
                 ],
             ),
         ]
@@ -1035,7 +1040,7 @@ fn lists_round_trip() {
     );
     let basic_list = [
         vec![3],
-        field(INTERFACE_NAME, VARIABLE_LENGTH),
+        field(iana::INTERFACE_NAME, VARIABLE_LENGTH),
         variable(b"abc"),
         variable(b""),
     ]
@@ -1083,11 +1088,14 @@ fn a_fixed_length_list_must_fill_its_field() {
     // Semantic, field specifier and three four-octet values.
     let list = [
         vec![255],
-        field(OCTET_DELTA_COUNT, 4),
+        field(iana::OCTET_DELTA_COUNT, 4),
         [1u32, 2, 3].map(u32::to_be_bytes).concat(),
     ]
     .concat();
-    let template = set(TEMPLATE_SET_ID, &template(256, &[field(BASIC_LIST, 17)]));
+    let template = set(
+        TEMPLATE_SET_ID,
+        &template(256, &[field(iana::BASIC_LIST, 17)]),
+    );
     let datagram = message(DOMAIN, &[template, set(256, &list)]);
     let mut parsed = Parser::default().parse(&datagram).unwrap();
     assert_eq!(written(&parsed), datagram);
@@ -1127,28 +1135,28 @@ fn a_packet_that_cannot_be_written_writes_nothing() {
         .parse(&message(DOMAIN, &[]))
         .unwrap()
         .header;
-    let field = |information_element_id| FieldSpecifier {
-        information_element_id,
+    let field = |element: ElementId| FieldSpecifier {
+        information_element_id: element.id,
         field_length: 4,
         enterprise_number: None,
     };
     let template = Arc::new(Template {
         template_id: 256,
-        fields: vec![field(OCTET_DELTA_COUNT)],
+        fields: vec![field(iana::OCTET_DELTA_COUNT)],
     });
     let cases = [
         (
             Set::OptionsTemplates(vec![Arc::new(OptionsTemplate {
                 template_id: 257,
                 scope_fields: Vec::new(),
-                option_fields: vec![field(SAMPLING_INTERVAL)],
+                option_fields: vec![field(iana::SAMPLING_INTERVAL)],
             })]),
             WriteError::NoScopeFields { template_id: 257 },
         ),
         (
             Set::Templates(vec![Arc::new(Template {
                 template_id: 256,
-                fields: vec![field(ENTERPRISE_BIT | 1)],
+                fields: vec![field(ElementId::iana(ENTERPRISE_BIT | 1))],
             })]),
             WriteError::TooLarge {
                 field: "information element ID",
@@ -1184,9 +1192,9 @@ fn values_are_looked_up_by_element() {
         &template(
             256,
             &[
-                field(SOURCE_IPV4_ADDRESS, 4),
-                field(OCTET_DELTA_COUNT, 4),
-                field(OCTET_DELTA_COUNT, 4),
+                field(iana::SOURCE_IPV4_ADDRESS, 4),
+                field(iana::OCTET_DELTA_COUNT, 4),
+                field(iana::OCTET_DELTA_COUNT, 4),
                 enterprise_field(1, 4, VENDOR_ENTERPRISE_NUMBER),
             ],
         ),
@@ -1226,7 +1234,10 @@ fn scope_fields_are_looked_up_as_other_elements() {
         &options_template(
             257,
             1,
-            &[field(OBSERVATION_DOMAIN_ID, 4), field(SAMPLING_INTERVAL, 4)],
+            &[
+                field(iana::OBSERVATION_DOMAIN_ID, 4),
+                field(iana::SAMPLING_INTERVAL, 4),
+            ],
         ),
     );
     let data = set(
@@ -1255,8 +1266,8 @@ fn list_records_are_looked_up_by_element() {
     let templates = set(
         TEMPLATE_SET_ID,
         &[
-            template(256, &[field(OCTET_DELTA_COUNT, 4)]),
-            template(257, &[field(SUB_TEMPLATE_LIST, VARIABLE_LENGTH)]),
+            template(256, &[field(iana::OCTET_DELTA_COUNT, 4)]),
+            template(257, &[field(iana::SUB_TEMPLATE_LIST, VARIABLE_LENGTH)]),
         ]
         .concat(),
     );
@@ -1289,11 +1300,11 @@ fn list_records_are_looked_up_by_element() {
 fn round_trips_through_serde() {
     let template = set(
         TEMPLATE_SET_ID,
-        &template(256, &[field(BASIC_LIST, VARIABLE_LENGTH)]),
+        &template(256, &[field(iana::BASIC_LIST, VARIABLE_LENGTH)]),
     );
     let list = [
         vec![4],
-        field(OCTET_DELTA_COUNT, 4),
+        field(iana::OCTET_DELTA_COUNT, 4),
         7u32.to_be_bytes().to_vec(),
     ]
     .concat();

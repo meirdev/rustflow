@@ -1,5 +1,6 @@
 //! NetFlow v5: a fixed 24-byte header followed by `count` fixed 48-byte flow
 //! records.
+
 use std::net::Ipv4Addr;
 
 pub use parser::parse;

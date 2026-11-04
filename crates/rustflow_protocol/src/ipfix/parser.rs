@@ -138,8 +138,7 @@ impl Parser {
     }
 
     fn data_type(&self, domain: u32, field: &FieldSpecifier) -> DataType {
-        self.element(domain, field)
-            .map_or(DataType::OctetArray, |element| element.data_type)
+        data_type(&self.registry, &self.element_types, domain, field)
     }
 
     /// Stores a template, replacing any earlier one with its ID right away.
@@ -284,10 +283,20 @@ fn element<'a>(
     domain: u32,
     field: &FieldSpecifier,
 ) -> Option<&'a InformationElement> {
-    let (enterprise_number, id) = (field.enterprise_number, field.information_element_id);
+    let element = field.element_id();
     registry
-        .get(enterprise_number, id)
-        .or_else(|| element_types.get(domain, enterprise_number, id))
+        .get(element)
+        .or_else(|| element_types.get(domain, element))
+}
+
+fn data_type(
+    registry: &Registry,
+    element_types: &ElementTypes,
+    domain: u32,
+    field: &FieldSpecifier,
+) -> DataType {
+    element(registry, element_types, domain, field)
+        .map_or(DataType::OctetArray, |element| element.data_type)
 }
 
 fn layout<'f>(
@@ -300,8 +309,7 @@ fn layout<'f>(
         .into_iter()
         .map(|field| Slot {
             field_length: field.field_length,
-            data_type: element(registry, element_types, domain, field)
-                .map_or(DataType::OctetArray, |element| element.data_type),
+            data_type: data_type(registry, element_types, domain, field),
         })
         .collect()
 }

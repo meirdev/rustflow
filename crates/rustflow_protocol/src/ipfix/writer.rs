@@ -2,6 +2,7 @@ use rustflow_bytes::Writer;
 
 use super::*;
 use crate::WriteError;
+use crate::error::fit_u16;
 use crate::value::{Value, encode, natural_length};
 
 /// Writes `packet` as an IPFIX message at the end of `buf`. The lengths
@@ -63,10 +64,6 @@ fn fill_length(w: &mut Writer, start: usize, field: &'static str) -> Result<(), 
     let length = fit_u16(w.len() - start, field)?;
     w.set_u16(start + 2, length);
     Ok(())
-}
-
-fn fit_u16(value: usize, field: &'static str) -> Result<u16, WriteError> {
-    u16::try_from(value).map_err(|_| WriteError::TooLarge { field, value })
 }
 
 fn write_set(

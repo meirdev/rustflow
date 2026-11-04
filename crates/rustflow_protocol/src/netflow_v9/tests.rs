@@ -8,12 +8,7 @@ use crate::value::Value;
 use crate::{DataSet, ParseError, WriteError};
 
 const SOURCE_ID: u32 = 7;
-const OCTET_DELTA_COUNT: u16 = 1;
-const PACKET_DELTA_COUNT: u16 = 2;
-const IPV4_SRC_ADDR: u16 = 8;
-const SAMPLING_INTERVAL: u16 = 34;
 const SYSTEM_SCOPE: u16 = 1;
-const PROTOCOL: u16 = 4;
 /// Version, Count, sysUpTime, UNIX Secs, Sequence Number and Source ID.
 const HEADER_SIZE: usize = 20;
 
@@ -72,7 +67,7 @@ fn options_template(template_id: u16, scope: &[(u16, u16)], options: &[(u16, u16
 fn octet_count_template() -> Vec<u8> {
     flow_set(
         TEMPLATE_FLOW_SET_ID,
-        &template(256, &[(OCTET_DELTA_COUNT, 4)]),
+        &template(256, &[(iana::OCTET_DELTA_COUNT.id, 4)]),
     )
 }
 
@@ -118,9 +113,9 @@ fn data_decodes_by_the_template_sent_before_it() {
         &template(
             256,
             &[
-                (IPV4_SRC_ADDR, 4),
-                (OCTET_DELTA_COUNT, 4),
-                (PACKET_DELTA_COUNT, 8),
+                (iana::SOURCE_IPV4_ADDRESS.id, 4),
+                (iana::OCTET_DELTA_COUNT.id, 4),
+                (iana::PACKET_DELTA_COUNT.id, 8),
             ],
         ),
     );
@@ -193,15 +188,15 @@ fn a_resent_template_replaces_the_old_one_at_once() {
         .unwrap();
     let replacement = flow_set(
         TEMPLATE_FLOW_SET_ID,
-        &template(256, &[(PACKET_DELTA_COUNT, 4)]),
+        &template(256, &[(iana::PACKET_DELTA_COUNT.id, 4)]),
     );
     let second = parser
         .parse(&packet(SOURCE_ID, &[replacement, octet_count_data(42)]))
         .unwrap();
 
     let field_type = |packet: &Packet| data_set(&packet.flow_sets[1]).template.fields[0].field_type;
-    assert_eq!(field_type(&first), OCTET_DELTA_COUNT);
-    assert_eq!(field_type(&second), PACKET_DELTA_COUNT);
+    assert_eq!(field_type(&first), iana::OCTET_DELTA_COUNT.id);
+    assert_eq!(field_type(&second), iana::PACKET_DELTA_COUNT.id);
 }
 
 #[test]
@@ -221,7 +216,11 @@ fn options_data_decodes_scope_values_before_option_values() {
     let template = flow_set(
         OPTIONS_TEMPLATE_FLOW_SET_ID,
         &[
-            options_template(257, &[(SYSTEM_SCOPE, 4)], &[(SAMPLING_INTERVAL, 4)]),
+            options_template(
+                257,
+                &[(SYSTEM_SCOPE, 4)],
+                &[(iana::SAMPLING_INTERVAL.id, 4)],
+            ),
             vec![0; 2],
         ]
         .concat(),
@@ -247,7 +246,7 @@ fn options_data_decodes_scope_values_before_option_values() {
                 length: 4
             }],
             option_fields: vec![Field {
-                field_type: SAMPLING_INTERVAL,
+                field_type: iana::SAMPLING_INTERVAL.id,
                 length: 4
             }],
         }
@@ -282,7 +281,11 @@ fn a_template_id_can_move_between_template_kinds() {
 fn padding_does_not_become_records_or_templates() {
     let template = flow_set(
         TEMPLATE_FLOW_SET_ID,
-        &[template(256, &[(OCTET_DELTA_COUNT, 8)]), vec![0; 4]].concat(),
+        &[
+            template(256, &[(iana::OCTET_DELTA_COUNT.id, 8)]),
+            vec![0; 4],
+        ]
+        .concat(),
     );
     let data = flow_set(
         256,
@@ -377,7 +380,13 @@ fn flow_set_lengths(datagram: &[u8]) -> Vec<u16> {
 fn writes_what_it_parses() {
     let template = flow_set(
         TEMPLATE_FLOW_SET_ID,
-        &template(256, &[(IPV4_SRC_ADDR, 4), (OCTET_DELTA_COUNT, 4)]),
+        &template(
+            256,
+            &[
+                (iana::SOURCE_IPV4_ADDRESS.id, 4),
+                (iana::OCTET_DELTA_COUNT.id, 4),
+            ],
+        ),
     );
     let data = flow_set(
         256,
@@ -400,7 +409,11 @@ fn writes_what_it_parses() {
 fn options_templates_and_data_round_trip_with_their_count() {
     let template = flow_set(
         OPTIONS_TEMPLATE_FLOW_SET_ID,
-        &options_template(257, &[(SYSTEM_SCOPE, 4)], &[(SAMPLING_INTERVAL, 4)]),
+        &options_template(
+            257,
+            &[(SYSTEM_SCOPE, 4)],
+            &[(iana::SAMPLING_INTERVAL.id, 4)],
+        ),
     );
     let data = flow_set(
         257,
@@ -424,8 +437,14 @@ fn data_is_padded_unless_the_padding_could_be_read_as_a_record() {
     let templates = flow_set(
         TEMPLATE_FLOW_SET_ID,
         &[
-            template(256, &[(OCTET_DELTA_COUNT, 4), (PACKET_DELTA_COUNT, 2)]),
-            template(257, &[(PROTOCOL, 1)]),
+            template(
+                256,
+                &[
+                    (iana::OCTET_DELTA_COUNT.id, 4),
+                    (iana::PACKET_DELTA_COUNT.id, 2),
+                ],
+            ),
+            template(257, &[(iana::PROTOCOL_IDENTIFIER.id, 1)]),
         ]
         .concat(),
     );
@@ -521,7 +540,11 @@ fn values_of_a_real_record_are_looked_up_by_element() {
 fn scope_fields_are_looked_up_by_scope_type_not_as_elements() {
     let template = flow_set(
         OPTIONS_TEMPLATE_FLOW_SET_ID,
-        &options_template(257, &[(SYSTEM_SCOPE, 4)], &[(SAMPLING_INTERVAL, 4)]),
+        &options_template(
+            257,
+            &[(SYSTEM_SCOPE, 4)],
+            &[(iana::SAMPLING_INTERVAL.id, 4)],
+        ),
     );
     let data = flow_set(
         257,
