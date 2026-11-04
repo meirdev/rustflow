@@ -5,14 +5,8 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use super::OptionsTemplate;
-use crate::information_element::{DataType, DataTypeSemantics, InformationElement, Registry};
+use crate::information_element::{DataType, DataTypeSemantics, InformationElement, Registry, iana};
 use crate::value::Value;
-
-const INFORMATION_ELEMENT_ID: u16 = 303;
-const INFORMATION_ELEMENT_DATA_TYPE: u16 = 339;
-const INFORMATION_ELEMENT_NAME: u16 = 341;
-const INFORMATION_ELEMENT_SEMANTICS: u16 = 344;
-const PRIVATE_ENTERPRISE_NUMBER: u16 = 346;
 
 /// Elements one exporter may describe across its domains; it decides how
 /// many it sends.
@@ -97,15 +91,10 @@ impl ElementTypes {
 /// type record, or one to ignore. A type record's informationElementId is a
 /// scope field (RFC 5610 section 3.9).
 fn describe(template: &OptionsTemplate, record: &[Value]) -> Option<InformationElement> {
-    let is_iana = |id| {
-        move |field: &super::FieldSpecifier| {
-            field.enterprise_number.is_none() && field.information_element_id == id
-        }
-    };
     if !template
         .scope_fields
         .iter()
-        .any(is_iana(INFORMATION_ELEMENT_ID))
+        .any(|field| field.element_id() == iana::INFORMATION_ELEMENT_ID)
     {
         return None;
     }
@@ -114,25 +103,24 @@ fn describe(template: &OptionsTemplate, record: &[Value]) -> Option<InformationE
     let (mut semantics, mut name) = (None, None);
     let fields = template.scope_fields.iter().chain(&template.option_fields);
     for (field, value) in fields.zip(record) {
-        if field.enterprise_number.is_some() {
-            continue;
-        }
-        match field.information_element_id {
+        match field.element_id() {
             // The enterprise bit must be ignored (RFC 5610 section 3.8).
-            INFORMATION_ELEMENT_ID => id = Some(u16::try_from(unsigned(value)?).ok()? & 0x7fff),
-            PRIVATE_ENTERPRISE_NUMBER => {
+            iana::INFORMATION_ELEMENT_ID => {
+                id = Some(u16::try_from(unsigned(value)?).ok()? & 0x7fff);
+            }
+            iana::PRIVATE_ENTERPRISE_NUMBER => {
                 enterprise_number = Some(u32::try_from(unsigned(value)?).ok()?);
             }
-            INFORMATION_ELEMENT_DATA_TYPE => {
+            iana::INFORMATION_ELEMENT_DATA_TYPE => {
                 data_type = Some(DataType::try_from(u8::try_from(unsigned(value)?).ok()?).ok()?);
             }
-            INFORMATION_ELEMENT_SEMANTICS => {
+            iana::INFORMATION_ELEMENT_SEMANTICS => {
                 semantics =
                     Some(DataTypeSemantics::try_from(u8::try_from(unsigned(value)?).ok()?).ok()?);
             }
             // A name holding a null character must be ignored (RFC 5610
             // section 4).
-            INFORMATION_ELEMENT_NAME => {
+            iana::INFORMATION_ELEMENT_NAME => {
                 name = match value {
                     Value::String(name)
                         if !name.is_empty()
@@ -212,23 +200,24 @@ fn unsigned(value: &Value) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::information_element::ElementId;
     use crate::ipfix::FieldSpecifier;
 
     fn type_template() -> OptionsTemplate {
-        let field = |information_element_id, field_length| FieldSpecifier {
-            information_element_id,
+        let field = |element: ElementId, field_length| FieldSpecifier {
+            information_element_id: element.id,
             field_length,
-            enterprise_number: None,
+            enterprise_number: element.enterprise_number,
         };
         OptionsTemplate {
             template_id: 400,
             scope_fields: vec![
-                field(INFORMATION_ELEMENT_ID, 2),
-                field(PRIVATE_ENTERPRISE_NUMBER, 4),
+                field(iana::INFORMATION_ELEMENT_ID, 2),
+                field(iana::PRIVATE_ENTERPRISE_NUMBER, 4),
             ],
             option_fields: vec![
-                field(INFORMATION_ELEMENT_DATA_TYPE, 1),
-                field(INFORMATION_ELEMENT_NAME, 65535),
+                field(iana::INFORMATION_ELEMENT_DATA_TYPE, 1),
+                field(iana::INFORMATION_ELEMENT_NAME, 65535),
             ],
         }
     }
