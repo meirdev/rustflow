@@ -47,7 +47,7 @@ fn converted(samples: Vec<Sample>) -> Vec<Record> {
         time: None,
     };
     let mut records = Vec::new();
-    convert(&packet, &received, &mut records);
+    convert(packet, &received, &mut records);
     records
 }
 
@@ -370,7 +370,7 @@ fn real_datagrams_convert_their_flow_samples() {
             .iter()
             .filter(|sample| matches!(sample, Sample::Flow(_) | Sample::ExpandedFlow(_)))
             .count();
-        convert(&packet, &received, &mut records);
+        convert(packet, &received, &mut records);
     }
 
     assert!(flow_samples > 0);

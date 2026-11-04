@@ -1,9 +1,9 @@
 //! IPFIX data records, copied with their relative times made absolute.
 
-use rustflow_protocol::ipfix::{Packet, Set};
+use rustflow_protocol::ipfix::{self, Packet, Set};
 
 use crate::domain::Domains;
-use crate::templated::{Context, TimeBase, Uptime, convert_data};
+use crate::templated::{Context, Plans, TimeBase, Uptime, convert_data};
 use crate::{Protocol, Received, Record};
 
 /// Converts one exporter's IPFIX messages, keeping what its options records
@@ -12,6 +12,7 @@ use crate::{Protocol, Received, Record};
 #[derive(Default)]
 pub struct Converter {
     domains: Domains,
+    plans: Plans<ipfix::Template>,
 }
 
 impl Converter {
@@ -25,7 +26,7 @@ impl Converter {
     /// it, and are kept as they are until then.
     pub fn convert(
         &mut self,
-        packet: &Packet,
+        packet: Packet,
         received: &Received,
         records: &mut impl Extend<Record>,
     ) {
@@ -50,9 +51,9 @@ impl Converter {
                 uptime: Uptime::BootedAt(domain.and_then(|domain| domain.system_init_time_ms)),
             },
         };
-        for set in &packet.sets {
+        for set in packet.sets {
             if let Set::Data(data) = set {
-                convert_data(&context, domain, data, records);
+                convert_data(&context, domain, &mut self.plans, data, records);
             }
         }
     }
@@ -122,7 +123,7 @@ mod tests {
             time: None,
         };
         let mut records = Vec::new();
-        converter.convert(&packet, &received, &mut records);
+        converter.convert(packet, &received, &mut records);
         records
     }
 
@@ -242,7 +243,7 @@ mod tests {
             time: None,
         };
         let mut records = Vec::new();
-        crate::sflow_v5::convert(&packet, &received, &mut records);
+        crate::sflow_v5::convert(packet, &received, &mut records);
         let by_sflow = records.remove(0);
 
         for element in [
@@ -264,6 +265,70 @@ mod tests {
                 "{element:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_resent_template_converts_by_its_new_fields() {
+        let mut converter = Converter::default();
+        let before = converted(
+            &mut converter,
+            vec![data(&[(iana::OCTET_DELTA_COUNT, Value::Unsigned64(1))])],
+        );
+        let after = converted(
+            &mut converter,
+            vec![data(&[
+                (iana::PACKET_DELTA_COUNT, Value::Unsigned64(2)),
+                (iana::OCTET_DELTA_COUNT, Value::Unsigned64(3)),
+            ])],
+        );
+        assert_eq!(
+            before[0].first(iana::OCTET_DELTA_COUNT),
+            Some(&Value::Unsigned64(1))
+        );
+        assert_eq!(before[0].first(iana::PACKET_DELTA_COUNT), None);
+        assert_eq!(
+            after[0].first(iana::PACKET_DELTA_COUNT),
+            Some(&Value::Unsigned64(2))
+        );
+        assert_eq!(
+            after[0].first(iana::OCTET_DELTA_COUNT),
+            Some(&Value::Unsigned64(3))
+        );
+        assert_eq!(after[0].elements.len(), before[0].elements.len() + 1);
+    }
+
+    #[test]
+    fn a_time_that_cannot_be_made_absolute_keeps_its_element() {
+        let records = converted(
+            &mut Converter::default(),
+            vec![Set::Data(DataSet {
+                template: Arc::new(Template {
+                    template_id: 256,
+                    fields: vec![
+                        field(iana::FLOW_START_DELTA_MICROSECONDS),
+                        field(iana::OCTET_DELTA_COUNT),
+                    ],
+                }),
+                records: vec![
+                    vec![Value::Unsigned32(1_500_000), Value::Unsigned64(1)],
+                    vec![Value::OctetArray(vec![1, 2, 3]), Value::Unsigned64(2)],
+                ],
+            })],
+        );
+        assert_eq!(
+            records[0].first(iana::FLOW_START_MILLISECONDS),
+            Some(&Value::DateTimeMilliseconds(EXPORT_TIME_MS - 1_500))
+        );
+        assert_eq!(records[0].first(iana::FLOW_START_DELTA_MICROSECONDS), None);
+        assert_eq!(records[1].first(iana::FLOW_START_MILLISECONDS), None);
+        assert_eq!(
+            records[1].first(iana::FLOW_START_DELTA_MICROSECONDS),
+            Some(&Value::OctetArray(vec![1, 2, 3]))
+        );
+        assert_eq!(
+            records[1].first(iana::OCTET_DELTA_COUNT),
+            Some(&Value::Unsigned64(2))
+        );
     }
 
     fn uptimes() -> Set {

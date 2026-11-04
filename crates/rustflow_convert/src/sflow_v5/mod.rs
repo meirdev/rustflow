@@ -15,7 +15,7 @@ use rustflow_protocol::sflow_v5::{
 };
 use rustflow_protocol::value::Value;
 
-use crate::packet_section::{self, IPV4_ETHERNET_TYPE, IPV6_ETHERNET_TYPE, Section};
+use crate::packet_section::{self, IPV4_ETHERNET_TYPE, IPV6_ETHERNET_TYPE, Layer};
 use crate::record::Fields;
 use crate::sampling::{Method, Sampling};
 use crate::{Protocol, Received, Record};
@@ -31,7 +31,7 @@ const INTERNAL_INTERFACE: u32 = 0x3fff_ffff;
 /// sub-agent ID the original observation domain, as the scope of the
 /// datagrams' sequence numbers. The sampling rate is one packet in that
 /// many, chosen at random as sFlow samples.
-pub fn convert(packet: &Packet, received: &Received, records: &mut impl Extend<Record>) {
+pub fn convert(packet: Packet, received: &Received, records: &mut impl Extend<Record>) {
     let header = &packet.header;
     let mut base = Fields::additions(received, Some(header.sub_agent_id));
     match header.agent_address {
@@ -45,8 +45,8 @@ pub fn convert(packet: &Packet, received: &Received, records: &mut impl Extend<R
     }
 
     let mut last_elements = None;
-    records.extend(packet.samples.iter().filter_map(|sample| {
-        let (sample, compact) = match sample {
+    records.extend(packet.samples.into_iter().filter_map(|sample| {
+        let (sample, compact) = match &sample {
             Sample::Flow(sample) => (sample, true),
             Sample::ExpandedFlow(sample) => (sample, false),
             _ => return None,
@@ -110,21 +110,23 @@ fn if_index(interface: Interface, compact: bool) -> Option<u32> {
 /// octets but for a header that starts at the IP header.
 fn add_sampled_header(fields: &mut Fields, header: &SampledHeader) {
     let length = Value::Unsigned64(header.frame_length.into());
-    let section = match header.protocol {
+    let layer = match header.protocol {
         HeaderProtocol::Ipv4 | HeaderProtocol::Ipv6 => {
             fields.add(iana::OCTET_DELTA_COUNT, length);
-            Section::Ip(&header.header)
+            Layer::Ip
         }
         HeaderProtocol::EthernetIso88023 => {
             fields.add(iana::LAYER2_OCTET_DELTA_COUNT, length);
-            Section::Ethernet(&header.header)
+            Layer::Ethernet
         }
         _ => {
             fields.add(iana::LAYER2_OCTET_DELTA_COUNT, length);
             return;
         }
     };
-    packet_section::dissect(section, &mut |element, value| fields.add(element, value));
+    packet_section::dissect(layer, &header.header, &mut |element, value| {
+        fields.add(element, value);
+    });
 }
 
 fn add_sampled_ethernet(fields: &mut Fields, ethernet: &SampledEthernet) {

@@ -2,15 +2,24 @@
 //! already: copied, with relative times made absolute and what conversion
 //! adds appended.
 
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
+use std::mem;
+use std::sync::Arc;
+
 use rustflow_protocol::information_element::{ElementId, iana};
 use rustflow_protocol::value::Value;
-use rustflow_protocol::{DataSet, Elements};
+use rustflow_protocol::{DataSet, Elements, ipfix, netflow_v9};
 
 use crate::domain::Domain;
-use crate::packet_section::{self, Section};
 use crate::record::Fields;
+use crate::sampling::{Method, Sampling};
 use crate::time::uptime_to_unix_millis;
-use crate::{Protocol, Received, Record};
+use crate::{Protocol, Received, Record, packet_section};
+
+/// Plans one converter may keep; the exporter decides how many templates
+/// it names.
+const MAX_PLANS: usize = 4096;
 
 /// What the records of one packet share.
 pub(crate) struct Context<'a> {
@@ -37,21 +46,40 @@ pub(crate) enum Uptime {
 }
 
 impl TimeBase {
-    /// The absolute element and value a relative time stands for; `None`
-    /// for any other element, or a time that cannot be made absolute.
-    fn absolute(&self, element: ElementId, value: &Value) -> Option<(ElementId, Value)> {
-        let (absolute, millis) = match element {
-            iana::FLOW_START_SYS_UP_TIME => (iana::FLOW_START_MILLISECONDS, self.uptime(value)?),
-            iana::FLOW_END_SYS_UP_TIME => (iana::FLOW_END_MILLISECONDS, self.uptime(value)?),
-            iana::FLOW_START_DELTA_MICROSECONDS => {
-                (iana::FLOW_START_MILLISECONDS, self.before_export(value)?)
-            }
-            iana::FLOW_END_DELTA_MICROSECONDS => {
-                (iana::FLOW_END_MILLISECONDS, self.before_export(value)?)
+    /// The absolute element a relative time's values become, if they can
+    /// be made absolute; `None` for any other element.
+    fn absolute_element(&self, element: ElementId) -> Option<ElementId> {
+        match element {
+            iana::FLOW_START_SYS_UP_TIME => self
+                .uptimes_convert()
+                .then_some(iana::FLOW_START_MILLISECONDS),
+            iana::FLOW_END_SYS_UP_TIME => self
+                .uptimes_convert()
+                .then_some(iana::FLOW_END_MILLISECONDS),
+            iana::FLOW_START_DELTA_MICROSECONDS => Some(iana::FLOW_START_MILLISECONDS),
+            iana::FLOW_END_DELTA_MICROSECONDS => Some(iana::FLOW_END_MILLISECONDS),
+            _ => None,
+        }
+    }
+
+    fn uptimes_convert(&self) -> bool {
+        match self.uptime {
+            Uptime::AtExport(_) => true,
+            Uptime::BootedAt(boot_ms) => boot_ms.is_some(),
+        }
+    }
+
+    /// The absolute time a value of `relative` stands for; `None` for a
+    /// value that cannot be made absolute.
+    fn absolute_value(&self, relative: ElementId, value: &Value) -> Option<Value> {
+        let millis = match relative {
+            iana::FLOW_START_SYS_UP_TIME | iana::FLOW_END_SYS_UP_TIME => self.uptime(value)?,
+            iana::FLOW_START_DELTA_MICROSECONDS | iana::FLOW_END_DELTA_MICROSECONDS => {
+                self.before_export(value)?
             }
             _ => return None,
         };
-        Some((absolute, Value::DateTimeMilliseconds(millis)))
+        Some(Value::DateTimeMilliseconds(millis))
     }
 
     fn uptime(&self, value: &Value) -> Option<u64> {
@@ -73,41 +101,234 @@ impl TimeBase {
     }
 }
 
-/// Converts the records of a data set, adding them to `records`. A record
-/// carrying a packet section (RFC 5477) gets the fields dissecting it
-/// yields, those it does not have already. Records whose elements come out
-/// the same share them.
-pub(crate) fn convert_data<T: Elements>(
+/// The template of a data set: every value has an element.
+pub(crate) trait DataTemplate: Elements {
+    fn template_id(&self) -> u16;
+
+    fn element_ids(&self) -> impl Iterator<Item = ElementId>;
+}
+
+impl DataTemplate for ipfix::Template {
+    fn template_id(&self) -> u16 {
+        self.template_id
+    }
+
+    fn element_ids(&self) -> impl Iterator<Item = ElementId> {
+        self.fields.iter().map(|field| field.element_id())
+    }
+}
+
+impl DataTemplate for netflow_v9::Template {
+    fn template_id(&self) -> u16 {
+        self.template_id
+    }
+
+    fn element_ids(&self) -> impl Iterator<Item = ElementId> {
+        self.fields
+            .iter()
+            .map(|field| ElementId::iana(field.field_type))
+    }
+}
+
+/// What converting a record of each template comes to, worked out once per
+/// template rather than once per record, by observation domain and
+/// template ID.
+pub(crate) struct Plans<T> {
+    by_template: HashMap<(u32, u16), Plan<T>>,
+}
+
+impl<T> Default for Plans<T> {
+    fn default() -> Self {
+        Self {
+            by_template: HashMap::new(),
+        }
+    }
+}
+
+impl<T: DataTemplate> Plans<T> {
+    /// The plan for `template`, made anew if it, the additions or what
+    /// the time base can make absolute changed since.
+    fn plan(
+        &mut self,
+        context: &Context,
+        additions: &[ElementId],
+        template: &Arc<T>,
+    ) -> &mut Plan<T> {
+        let key = (context.domain_id, template.template_id());
+        if self.by_template.len() >= MAX_PLANS && !self.by_template.contains_key(&key) {
+            self.by_template.clear();
+        }
+        match self.by_template.entry(key) {
+            Entry::Occupied(mut entry) => {
+                if !entry.get().fits(context, additions, template) {
+                    entry.insert(Plan::new(context, additions, template));
+                }
+                entry.into_mut()
+            }
+            Entry::Vacant(entry) => entry.insert(Plan::new(context, additions, template)),
+        }
+    }
+}
+
+struct Plan<T> {
+    template: Arc<T>,
+    additions: Vec<ElementId>,
+    uptimes_convert: bool,
+    /// The template's elements, relative times named by their absolute
+    /// element.
+    own: Vec<ElementId>,
+    times: Vec<RelativeTime>,
+    /// The field naming the record's sampler.
+    sampler: Option<usize>,
+    /// Whether a record may carry a packet section, whose fields vary with
+    /// its bytes.
+    section: bool,
+    /// The elements of a whole record, additions included, for each
+    /// sampling shape, once a record of that shape was converted.
+    shapes: [Option<Arc<[ElementId]>>; SHAPES],
+}
+
+struct RelativeTime {
+    index: usize,
+    relative: ElementId,
+}
+
+/// How many element lists sampling can end a record with: none, and one
+/// per method, stated or not.
+const SHAPES: usize = 4;
+
+fn shape(sampling: Option<Sampling>) -> usize {
+    match sampling.map(|sampling| sampling.method) {
+        None => 0,
+        Some(None) => 1,
+        Some(Some(Method::Systematic)) => 2,
+        Some(Some(Method::Random)) => 3,
+    }
+}
+
+impl<T: DataTemplate> Plan<T> {
+    fn new(context: &Context, additions: &[ElementId], template: &Arc<T>) -> Self {
+        let mut own = Vec::new();
+        let mut times = Vec::new();
+        let mut sampler = None;
+        let mut section = false;
+        for (index, element) in template.element_ids().enumerate() {
+            match context.time.absolute_element(element) {
+                Some(absolute) => {
+                    times.push(RelativeTime {
+                        index,
+                        relative: element,
+                    });
+                    own.push(absolute);
+                }
+                None => own.push(element),
+            }
+            match element {
+                iana::SAMPLER_ID | iana::SELECTOR_ID => sampler = sampler.or(Some(index)),
+                iana::DATA_LINK_FRAME_SECTION | iana::IP_HEADER_PACKET_SECTION => section = true,
+                _ => {}
+            }
+        }
+        Self {
+            template: Arc::clone(template),
+            additions: additions.to_vec(),
+            uptimes_convert: context.time.uptimes_convert(),
+            own,
+            times,
+            sampler,
+            section,
+            shapes: Default::default(),
+        }
+    }
+
+    fn fits(&self, context: &Context, additions: &[ElementId], template: &Arc<T>) -> bool {
+        Arc::ptr_eq(&self.template, template)
+            && self.additions == additions
+            && self.uptimes_convert == context.time.uptimes_convert()
+    }
+
+    fn elements(&mut self, sampling: Option<Sampling>) -> Arc<[ElementId]> {
+        let Self {
+            additions,
+            own,
+            shapes,
+            ..
+        } = self;
+        Arc::clone(shapes[shape(sampling)].get_or_insert_with(|| {
+            let mut elements = own.clone();
+            elements.extend_from_slice(additions);
+            if let Some(sampling) = sampling {
+                sampling.for_each(|element, _| elements.push(element));
+            }
+            elements.into()
+        }))
+    }
+}
+
+/// Converts the records of a data set, adding them to `records`, each
+/// keeping its values. A record carrying a packet section (RFC 5477) gets
+/// the fields dissecting it yields, those it does not have already. Records
+/// whose elements come out the same share them.
+pub(crate) fn convert_data<T: DataTemplate>(
     context: &Context,
     domain: Option<&Domain>,
-    data: &DataSet<T>,
+    plans: &mut Plans<T>,
+    data: DataSet<T>,
     records: &mut impl Extend<Record>,
 ) {
     let base = Fields::additions(context.received, Some(context.domain_id));
+    let plan = plans.plan(context, &base.elements, &data.template);
     let mut last_elements = None;
-    records.extend(data.records().map(|record| {
-        let mut additions = base.clone();
-        if let Some(sampling) = domain.and_then(|domain| domain.sampling(record)) {
-            sampling.add_to(&mut additions);
+    records.extend(data.records.into_iter().map(|mut values| {
+        let sampler_id = plan.sampler.and_then(|index| values.get(index)?.as_u64());
+        let sampling = domain.and_then(|domain| domain.sampling_for(sampler_id));
+        let mut all_absolute = true;
+        for time in &plan.times {
+            match values
+                .get(time.index)
+                .and_then(|value| context.time.absolute_value(time.relative, value))
+            {
+                Some(absolute) => values[time.index] = absolute,
+                None => all_absolute = false,
+            }
+        }
+        if all_absolute && !plan.section {
+            values.extend(base.values.iter().cloned());
+            if let Some(sampling) = sampling {
+                sampling.for_each(|_, value| values.push(value));
+            }
+            return Record {
+                protocol: context.protocol,
+                sequence_number: context.sequence_number,
+                elements: plan.elements(sampling),
+                values,
+            };
         }
 
-        let own = || {
-            record
-                .iter()
-                .filter_map(|(element, value)| Some((element?, value)))
-        };
-        let mut fields = Fields::with_capacity(record.values.len() + additions.elements.len());
-        for (element, value) in own() {
-            let (element, value) = context
-                .time
-                .absolute(element, value)
-                .unwrap_or_else(|| (element, value.clone()));
-            fields.push(element, value);
+        // A time that could not be made absolute keeps its element: it is
+        // the one whose value is still relative.
+        let mut elements = plan.own.clone();
+        for time in &plan.times {
+            if !matches!(values.get(time.index), Some(Value::DateTimeMilliseconds(_))) {
+                elements[time.index] = time.relative;
+            }
         }
-        if let Some(section) = Section::of_record(own()) {
-            packet_section::dissect(section, &mut |element, value| fields.add(element, value));
+        let mut fields = Fields { elements, values };
+        if let Some((index, layer)) = packet_section::find(fields.iter()) {
+            // The bytes are taken out while the fields they yield are added,
+            // which may move the values.
+            let section = mem::replace(&mut fields.values[index], Value::Null);
+            if let Value::OctetArray(bytes) = &section {
+                packet_section::dissect(layer, bytes, &mut |element, value| {
+                    fields.add(element, value);
+                });
+            }
+            fields.values[index] = section;
         }
-        fields.append(additions);
+        fields.append(base.clone());
+        if let Some(sampling) = sampling {
+            sampling.add_to(&mut fields);
+        }
         fields.into_record(
             context.protocol,
             context.sequence_number,

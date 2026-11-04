@@ -2,10 +2,10 @@
 //! same elements as IANA's IPFIX registry, which keeps NetFlow v9's
 //! numbers, so their fields are copied, with uptimes made absolute.
 
-use rustflow_protocol::netflow_v9::{FlowSet, Packet};
+use rustflow_protocol::netflow_v9::{self, FlowSet, Packet};
 
 use crate::domain::Domains;
-use crate::templated::{Context, TimeBase, Uptime, convert_data};
+use crate::templated::{Context, Plans, TimeBase, Uptime, convert_data};
 use crate::{Protocol, Received, Record};
 
 /// Converts one exporter's NetFlow v9 packets, keeping what its options
@@ -14,6 +14,7 @@ use crate::{Protocol, Received, Record};
 #[derive(Default)]
 pub struct Converter {
     domains: Domains,
+    plans: Plans<netflow_v9::Template>,
 }
 
 impl Converter {
@@ -22,7 +23,7 @@ impl Converter {
     /// that options records gave for its source ID, if any.
     pub fn convert(
         &mut self,
-        packet: &Packet,
+        packet: Packet,
         received: &Received,
         records: &mut impl Extend<Record>,
     ) {
@@ -46,9 +47,9 @@ impl Converter {
             },
         };
         let domain = self.domains.get(header.source_id);
-        for flow_set in &packet.flow_sets {
+        for flow_set in packet.flow_sets {
             if let FlowSet::Data(data) = flow_set {
-                convert_data(&context, domain, data, records);
+                convert_data(&context, domain, &mut self.plans, data, records);
             }
         }
     }
@@ -125,7 +126,7 @@ mod tests {
         }
     }
 
-    fn converted(converter: &mut Converter, packet: &Packet) -> Vec<Record> {
+    fn converted(converter: &mut Converter, packet: Packet) -> Vec<Record> {
         let mut records = Vec::new();
         converter.convert(packet, &received(), &mut records);
         records
@@ -156,7 +157,7 @@ mod tests {
     fn fields_are_copied_and_uptimes_made_absolute() {
         let records = converted(
             &mut Converter::default(),
-            &packet(SOURCE_ID, vec![octets_and_uptimes(&[1500, 1600])]),
+            packet(SOURCE_ID, vec![octets_and_uptimes(&[1500, 1600])]),
         );
         let record = &records[0];
 
@@ -191,7 +192,7 @@ mod tests {
         let mut converter = Converter::default();
         let records = converted(
             &mut converter,
-            &packet(SOURCE_ID, vec![octets_and_uptimes(&[1]), sampling]),
+            packet(SOURCE_ID, vec![octets_and_uptimes(&[1]), sampling]),
         );
 
         assert_eq!(records.len(), 1);
@@ -206,13 +207,13 @@ mod tests {
 
         let later = converted(
             &mut converter,
-            &packet(SOURCE_ID, vec![octets_and_uptimes(&[2])]),
+            packet(SOURCE_ID, vec![octets_and_uptimes(&[2])]),
         );
         assert_eq!(
             later[0].first(iana::SAMPLING_POPULATION),
             Some(&Value::Unsigned32(100))
         );
-        let other_source = converted(&mut converter, &packet(8, vec![octets_and_uptimes(&[3])]));
+        let other_source = converted(&mut converter, packet(8, vec![octets_and_uptimes(&[3])]));
         assert_eq!(other_source[0].first(iana::SAMPLING_POPULATION), None);
         assert_eq!(other_source[0].first(iana::SAMPLING_PACKET_INTERVAL), None);
     }
@@ -224,7 +225,7 @@ mod tests {
         let mut records = Vec::new();
         for datagram in udp_payloads("netflow_v9_sanity.pcap") {
             let packet = parser.parse(&datagram).unwrap();
-            converter.convert(&packet, &received(), &mut records);
+            converter.convert(packet, &received(), &mut records);
         }
 
         assert!(!records.is_empty());

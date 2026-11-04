@@ -34,23 +34,28 @@ impl Sampling {
     /// skipped (samplingPacketInterval and samplingPacketSpace), without a
     /// selector algorithm to claim a method for the latter.
     pub(crate) fn add_to(self, fields: &mut Fields) {
+        self.for_each(|element, value| fields.push(element, value));
+    }
+
+    /// Gives `push` each field, in record order.
+    pub(crate) fn for_each(self, mut push: impl FnMut(ElementId, Value)) {
         if self.method == Some(Method::Random) {
-            fields.push(
+            push(
                 iana::SELECTOR_ALGORITHM,
                 Value::Unsigned16(RANDOM_N_OUT_OF_N),
             );
-            fields.push(iana::SAMPLING_SIZE, Value::Unsigned32(1));
-            fields.push(iana::SAMPLING_POPULATION, Value::Unsigned32(self.rate));
+            push(iana::SAMPLING_SIZE, Value::Unsigned32(1));
+            push(iana::SAMPLING_POPULATION, Value::Unsigned32(self.rate));
             return;
         }
         if self.method == Some(Method::Systematic) {
-            fields.push(
+            push(
                 iana::SELECTOR_ALGORITHM,
                 Value::Unsigned16(SYSTEMATIC_COUNT_BASED),
             );
         }
-        fields.push(iana::SAMPLING_PACKET_INTERVAL, Value::Unsigned32(1));
-        fields.push(
+        push(iana::SAMPLING_PACKET_INTERVAL, Value::Unsigned32(1));
+        push(
             iana::SAMPLING_PACKET_SPACE,
             Value::Unsigned32(self.rate.saturating_sub(1)),
         );

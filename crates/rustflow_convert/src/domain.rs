@@ -89,18 +89,15 @@ impl Domain {
             .filter(|first| samplings.all(|sampling| sampling == first));
     }
 
-    /// The sampling of a data record: its sampler's, or else the domain's.
-    /// A record that names no known sampler, in a domain without sampling of
-    /// its own, takes the samplers' when they agree: many exporters name the
-    /// sampler only in the options record.
-    pub(crate) fn sampling<T: Elements + ?Sized>(
-        &self,
-        record: RecordRef<'_, T>,
-    ) -> Option<Sampling> {
+    /// The sampling of a data record naming `sampler_id`: its sampler's,
+    /// or else the domain's. A record that names no known sampler, in a
+    /// domain without sampling of its own, takes the samplers' when they
+    /// agree: many exporters name the sampler only in the options record.
+    pub(crate) fn sampling_for(&self, sampler_id: Option<u64>) -> Option<Sampling> {
         if self.sampler_sampling.is_empty() {
             return self.sampling;
         }
-        sampler_id(record)
+        sampler_id
             .and_then(|id| self.sampler_sampling.get(&id).copied())
             .or(self.sampling)
             .or(self.shared_sampler_sampling)
@@ -127,11 +124,6 @@ mod tests {
         domains.learn(domain, RecordRef::new(&elements[..], &values));
     }
 
-    fn sampling_of(domain: &Domain, fields: &[(ElementId, Value)]) -> Option<Sampling> {
-        let (elements, values): (Vec<_>, Vec<_>) = fields.iter().cloned().unzip();
-        domain.sampling(RecordRef::new(&elements[..], &values))
-    }
-
     fn one_in(rate: u32) -> Option<Sampling> {
         Some(Sampling { rate, method: None })
     }
@@ -149,11 +141,8 @@ mod tests {
         learn(&mut domains, 7, &sampler(2, 20));
         let domain = domains.get(7).unwrap();
 
-        assert_eq!(
-            sampling_of(domain, &[(iana::SAMPLER_ID, Value::Unsigned8(2))]),
-            one_in(20)
-        );
-        assert_eq!(sampling_of(domain, &[]), None);
+        assert_eq!(domain.sampling_for(Some(2)), one_in(20));
+        assert_eq!(domain.sampling_for(None), None);
 
         learn(
             &mut domains,
@@ -161,11 +150,8 @@ mod tests {
             &[(iana::SAMPLING_INTERVAL, Value::Unsigned32(5))],
         );
         let domain = domains.get(7).unwrap();
-        assert_eq!(sampling_of(domain, &[]), one_in(5));
-        assert_eq!(
-            sampling_of(domain, &[(iana::SAMPLER_ID, Value::Unsigned8(9))]),
-            one_in(5)
-        );
+        assert_eq!(domain.sampling_for(None), one_in(5));
+        assert_eq!(domain.sampling_for(Some(9)), one_in(5));
     }
 
     #[test]
@@ -182,7 +168,7 @@ mod tests {
             );
         }
         assert_eq!(
-            sampling_of(domains.get(7).unwrap(), &[]),
+            domains.get(7).unwrap().sampling_for(None),
             Some(Sampling {
                 rate: 100,
                 method: Some(Method::Random),

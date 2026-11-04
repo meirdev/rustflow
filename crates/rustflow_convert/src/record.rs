@@ -71,13 +71,6 @@ pub(crate) struct Fields {
 }
 
 impl Fields {
-    pub(crate) fn with_capacity(capacity: usize) -> Self {
-        Self {
-            elements: Vec::with_capacity(capacity),
-            values: Vec::with_capacity(capacity),
-        }
-    }
-
     /// The fields conversion adds to every record of a packet: the
     /// exporter, its observation domain if the protocol has one, and when
     /// the packet was received (RFC 6183 section 7).
@@ -127,6 +120,10 @@ impl Fields {
 
     pub(crate) fn has(&self, element: ElementId) -> bool {
         self.elements.contains(&element)
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (ElementId, &Value)> {
+        self.elements.iter().copied().zip(&self.values)
     }
 
     pub(crate) fn append(&mut self, mut other: Self) {

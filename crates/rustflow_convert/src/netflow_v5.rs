@@ -39,7 +39,7 @@ const ELEMENTS: [ElementId; 18] = [
 /// The header's sampling interval is taken as one packet in that many, by
 /// a method it does not say: its sampling mode bits are not interpreted. An
 /// interval of 0, which unsampled exporters send, is one in one.
-pub fn convert(packet: &Packet, received: &Received, records: &mut impl Extend<Record>) {
+pub fn convert(packet: Packet, received: &Received, records: &mut impl Extend<Record>) {
     let header = &packet.header;
     let export_time_ms =
         u64::from(header.unix_secs) * 1_000 + u64::from(header.unix_nsecs / 1_000_000);
@@ -169,7 +169,7 @@ mod tests {
         Received { exporter, time }
     }
 
-    fn converted(packet: &Packet, received: &Received) -> Vec<Record> {
+    fn converted(packet: Packet, received: &Received) -> Vec<Record> {
         let mut records = Vec::new();
         convert(packet, received, &mut records);
         records
@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn every_field_becomes_its_iana_element() {
-        let records = converted(&packet(0), &exporter());
+        let records = converted(packet(0), &exporter());
         let record = &records[0];
         for (element, value) in [
             (
@@ -209,7 +209,7 @@ mod tests {
 
     #[test]
     fn uptimes_become_absolute_times() {
-        let records = converted(&packet(0), &exporter());
+        let records = converted(packet(0), &exporter());
         // A minute, then a second, before the export time.
         assert_eq!(
             records[0].first(iana::FLOW_START_MILLISECONDS),
@@ -224,7 +224,7 @@ mod tests {
 
     #[test]
     fn the_records_of_a_packet_share_their_elements() {
-        let records = converted(&packet(0), &exporter());
+        let records = converted(packet(0), &exporter());
         assert_eq!(records.len(), 2);
         assert!(Arc::ptr_eq(&records[0].elements, &records[1].elements));
         assert_eq!(records[0].protocol, Protocol::NetflowV5);
@@ -234,7 +234,7 @@ mod tests {
     #[test]
     fn the_exporter_and_receive_time_are_added() {
         let time = UNIX_EPOCH + Duration::from_millis(1_700_000_001_250);
-        let ipv4 = converted(&packet(0), &received_from(exporter().exporter, Some(time)));
+        let ipv4 = converted(packet(0), &received_from(exporter().exporter, Some(time)));
         assert_eq!(
             ipv4[0].first(iana::ORIGINAL_EXPORTER_IPV4_ADDRESS),
             Some(&Value::Ipv4Address(Ipv4Addr::new(192, 0, 2, 254)))
@@ -246,7 +246,7 @@ mod tests {
         assert_eq!(ipv4[0].first(iana::ORIGINAL_OBSERVATION_DOMAIN_ID), None);
 
         let ipv6 = converted(
-            &packet(0),
+            packet(0),
             &received_from(IpAddr::V6(Ipv6Addr::LOCALHOST), None),
         );
         assert_eq!(
@@ -260,7 +260,7 @@ mod tests {
     #[test]
     fn the_sampling_interval_is_one_in_that_many_by_an_unstated_method() {
         let space = |interval| {
-            let records = converted(&packet(interval), &exporter());
+            let records = converted(packet(interval), &exporter());
             assert_eq!(
                 records[0].first(iana::SAMPLING_PACKET_INTERVAL),
                 Some(&Value::Unsigned32(1))
@@ -276,8 +276,9 @@ mod tests {
     fn real_packets_convert_every_flow_record() {
         for datagram in udp_payloads("netflow_v5_sanity.pcap") {
             let packet = netflow_v5::parse(&datagram).unwrap();
-            let records = converted(&packet, &exporter());
-            assert_eq!(records.len(), packet.flow_records.len());
+            let flow_records = packet.flow_records.len();
+            let records = converted(packet, &exporter());
+            assert_eq!(records.len(), flow_records);
             for record in &records {
                 assert_eq!(record.values.len(), record.elements.len());
                 assert!(matches!(
