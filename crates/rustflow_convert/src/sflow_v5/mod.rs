@@ -15,18 +15,14 @@ use rustflow_protocol::sflow_v5::{
 };
 use rustflow_protocol::value::Value;
 
+use crate::packet_section::{self, IPV4_ETHERNET_TYPE, IPV6_ETHERNET_TYPE, Section};
 use crate::record::{Additions, shared};
 use crate::sampling::{Method, Sampling};
 use crate::{Protocol, Received, Record};
 
-mod sampled_header;
-
 /// A compact interface value standing for the agent itself rather than an
 /// interface. The expanded encoding defines no such value.
 const INTERNAL_INTERFACE: u32 = 0x3fff_ffff;
-
-const IPV4_ETHERNET_TYPE: u16 = 0x0800;
-const IPV6_ETHERNET_TYPE: u16 = 0x86dd;
 
 /// Converts an sFlow v5 datagram's flow samples, adding a record of each to
 /// `records`.
@@ -138,17 +134,21 @@ fn if_index(interface: Interface, compact: bool) -> Option<u32> {
 /// octets but for a header that starts at the IP header.
 fn add_sampled_header(fields: &mut Fields, header: &SampledHeader) {
     let length = Value::Unsigned64(header.frame_length.into());
-    match header.protocol {
+    let section = match header.protocol {
         HeaderProtocol::Ipv4 | HeaderProtocol::Ipv6 => {
             fields.add(iana::OCTET_DELTA_COUNT, length);
-            sampled_header::add_ip(fields, &header.header);
+            Section::Ip(&header.header)
         }
         HeaderProtocol::EthernetIso88023 => {
             fields.add(iana::LAYER2_OCTET_DELTA_COUNT, length);
-            sampled_header::add_ethernet(fields, &header.header);
+            Section::Ethernet(&header.header)
         }
-        _ => fields.add(iana::LAYER2_OCTET_DELTA_COUNT, length),
-    }
+        _ => {
+            fields.add(iana::LAYER2_OCTET_DELTA_COUNT, length);
+            return;
+        }
+    };
+    packet_section::dissect(section, &mut |element, value| fields.add(element, value));
 }
 
 fn add_sampled_ethernet(fields: &mut Fields, ethernet: &SampledEthernet) {

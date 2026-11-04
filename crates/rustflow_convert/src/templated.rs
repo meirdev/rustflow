@@ -7,6 +7,7 @@ use rustflow_protocol::value::Value;
 use rustflow_protocol::{DataSet, Elements};
 
 use crate::domain::Domain;
+use crate::packet_section::{self, Section};
 use crate::record::{Additions, shared};
 use crate::time::uptime_to_unix_millis;
 use crate::{Protocol, Received, Record};
@@ -72,8 +73,10 @@ impl TimeBase {
     }
 }
 
-/// Converts the records of a data set, adding them to `records`. Records
-/// whose elements come out the same share them.
+/// Converts the records of a data set, adding them to `records`. A record
+/// carrying a packet section (RFC 5477) gets the fields dissecting it
+/// yields, those it does not have already. Records whose elements come out
+/// the same share them.
 pub(crate) fn convert_data<T: Elements>(
     context: &Context,
     domain: Option<&Domain>,
@@ -100,6 +103,17 @@ pub(crate) fn convert_data<T: Elements>(
                 .unwrap_or_else(|| (element, value.clone()));
             elements.push(element);
             values.push(value);
+        }
+        let own = record
+            .iter()
+            .filter_map(|(element, value)| Some((element?, value)));
+        if let Some(section) = Section::of_record(own) {
+            packet_section::dissect(section, &mut |element, value| {
+                if !elements.contains(&element) {
+                    elements.push(element);
+                    values.push(value);
+                }
+            });
         }
         elements.extend(additions.elements);
         values.extend(additions.values);

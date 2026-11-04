@@ -15,6 +15,7 @@ mod fixtures;
 pub mod ipfix;
 pub mod netflow_v5;
 pub mod netflow_v9;
+mod packet_section;
 mod record;
 mod sampling;
 pub mod sflow_v5;

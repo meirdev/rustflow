@@ -63,6 +63,7 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr};
     use std::sync::Arc;
 
+    use etherparse::PacketBuilder;
     use rustflow_protocol::DataSet;
     use rustflow_protocol::information_element::{ElementId, iana};
     use rustflow_protocol::ipfix::{self, FieldSpecifier, Header, OptionsTemplate, Template};
@@ -123,6 +124,146 @@ mod tests {
         let mut records = Vec::new();
         converter.convert(&packet, &received, &mut records);
         records
+    }
+
+    fn frame() -> Vec<u8> {
+        let mut frame = Vec::new();
+        PacketBuilder::ethernet2([2; 6], [4; 6])
+            .ipv4([192, 0, 2, 1], [198, 51, 100, 1], 64)
+            .tcp(1234, 80, 0, 1024)
+            .syn()
+            .write(&mut frame, &[0; 8])
+            .unwrap();
+        frame
+    }
+
+    #[test]
+    fn a_packet_section_is_dissected_for_what_the_record_lacks() {
+        let records = converted(
+            &mut Converter::default(),
+            vec![data(&[
+                (
+                    iana::SOURCE_IPV4_ADDRESS,
+                    Value::Ipv4Address(Ipv4Addr::LOCALHOST),
+                ),
+                (iana::DATA_LINK_FRAME_TYPE, Value::Unsigned16(1)),
+                (iana::DATA_LINK_FRAME_SECTION, Value::OctetArray(frame())),
+            ])],
+        );
+        let record = &records[0];
+        assert_eq!(
+            record.first(iana::SOURCE_IPV4_ADDRESS),
+            Some(&Value::Ipv4Address(Ipv4Addr::LOCALHOST))
+        );
+        assert_eq!(record.all(iana::SOURCE_IPV4_ADDRESS).count(), 1);
+        assert_eq!(
+            record.first(iana::DESTINATION_IPV4_ADDRESS),
+            Some(&Value::Ipv4Address(Ipv4Addr::new(198, 51, 100, 1)))
+        );
+        assert_eq!(
+            record.first(iana::SOURCE_MAC_ADDRESS),
+            Some(&Value::MacAddress([2; 6]))
+        );
+        assert_eq!(
+            record.first(iana::DESTINATION_TRANSPORT_PORT),
+            Some(&Value::Unsigned16(80))
+        );
+        assert_eq!(
+            record.first(iana::TCP_CONTROL_BITS),
+            Some(&Value::Unsigned16(0x02))
+        );
+        assert!(record.first(iana::ORIGINAL_EXPORTER_IPV4_ADDRESS).is_some());
+    }
+
+    #[test]
+    fn a_section_not_at_the_start_of_the_packet_is_left_alone() {
+        let records = converted(
+            &mut Converter::default(),
+            vec![data(&[
+                (iana::SECTION_OFFSET, Value::Unsigned16(4)),
+                (iana::DATA_LINK_FRAME_SECTION, Value::OctetArray(frame())),
+            ])],
+        );
+        assert_eq!(records[0].first(iana::SOURCE_IPV4_ADDRESS), None);
+        assert_eq!(records[0].first(iana::SOURCE_MAC_ADDRESS), None);
+    }
+
+    #[test]
+    fn a_frame_yields_the_same_fields_through_ipfix_and_sflow() {
+        use rustflow_protocol::sflow_v5::{
+            self, DataSource, FlowRecord, FlowSample, HeaderProtocol, Interface, Sample,
+            SampledHeader,
+        };
+
+        let by_ipfix = converted(
+            &mut Converter::default(),
+            vec![data(&[(
+                iana::DATA_LINK_FRAME_SECTION,
+                Value::OctetArray(frame()),
+            )])],
+        )
+        .remove(0);
+
+        let packet = sflow_v5::Packet {
+            header: sflow_v5::Header {
+                version: sflow_v5::VERSION,
+                agent_address: None,
+                sub_agent_id: 0,
+                sequence_number: 1,
+                uptime: 0,
+            },
+            samples: vec![Sample::Flow(FlowSample {
+                sequence_number: 1,
+                source_id: DataSource {
+                    source_id_type: 0,
+                    source_id_index: 1,
+                },
+                sampling_rate: 1,
+                sample_pool: 0,
+                drops: 0,
+                input: Interface {
+                    format: 0,
+                    value: 0,
+                },
+                output: Interface {
+                    format: 0,
+                    value: 0,
+                },
+                records: vec![FlowRecord::SampledHeader(SampledHeader {
+                    protocol: HeaderProtocol::EthernetIso88023,
+                    frame_length: 64,
+                    stripped: 0,
+                    header: frame(),
+                })],
+            })],
+        };
+        let received = Received {
+            exporter: IpAddr::V4(Ipv4Addr::new(192, 0, 2, 254)),
+            time: None,
+        };
+        let mut records = Vec::new();
+        crate::sflow_v5::convert(&packet, &received, &mut records);
+        let by_sflow = records.remove(0);
+
+        for element in [
+            iana::SOURCE_MAC_ADDRESS,
+            iana::DESTINATION_MAC_ADDRESS,
+            iana::ETHERNET_TYPE,
+            iana::SOURCE_IPV4_ADDRESS,
+            iana::DESTINATION_IPV4_ADDRESS,
+            iana::PROTOCOL_IDENTIFIER,
+            iana::IP_TTL,
+            iana::SOURCE_TRANSPORT_PORT,
+            iana::DESTINATION_TRANSPORT_PORT,
+            iana::TCP_CONTROL_BITS,
+        ] {
+            assert!(by_ipfix.first(element).is_some(), "{element:?}");
+            assert_eq!(
+                by_ipfix.first(element),
+                by_sflow.first(element),
+                "{element:?}"
+            );
+        }
     }
 
     fn uptimes() -> Set {
