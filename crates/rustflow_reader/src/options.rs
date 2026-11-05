@@ -2,82 +2,46 @@
 //! something: an interface's name, a selector's sampling, its own
 //! statistics.
 
-use std::collections::HashMap;
 use std::net::SocketAddr;
 
 use rustflow_convert::{Record, Scope};
-use rustflow_protocol::information_element::{ElementId, iana};
+use rustflow_protocol::information_element::ElementId;
 use rustflow_protocol::value::Value;
 
-/// Observation domains the table may keep records for, and records one
-/// domain may have; the exporters decide how many they send.
-const MAX_DOMAINS: usize = 4096;
-const MAX_RECORDS_PER_DOMAIN: usize = 1024;
+use crate::Collector;
 
-/// The latest options record of each kind an exporter sent: one per
-/// observation domain, scope and set of elements.
-#[derive(Debug, Default)]
-pub struct OptionsTable {
-    domains: HashMap<(SocketAddr, u32), Vec<Record>>,
-}
+/// The latest options record of each kind the exporters sent: one per
+/// exporter, observation domain, scope and set of elements, kept by the
+/// converters that applied them.
+#[derive(Clone, Copy)]
+pub struct OptionsTable<'a>(pub(crate) &'a Collector);
 
-impl OptionsTable {
-    /// Keeps `record`, an options record from `exporter`, in place of the
-    /// one it supersedes: that of the same scope and elements.
-    pub fn insert(&mut self, exporter: SocketAddr, record: Record) {
-        let domain = record
-            .first(iana::ORIGINAL_OBSERVATION_DOMAIN_ID)
-            .and_then(Value::as_u64)
-            .and_then(|domain| u32::try_from(domain).ok())
-            .unwrap_or(0);
-        let key = (exporter, domain);
-        if !self.domains.contains_key(&key) && self.domains.len() >= MAX_DOMAINS {
-            return;
-        }
-        let records = self.domains.entry(key).or_default();
-        let same_kind = records
-            .iter()
-            .position(|known| known.scope == record.scope && known.elements == record.elements);
-        match same_kind {
-            Some(index) => records[index] = record,
-            None if records.len() < MAX_RECORDS_PER_DOMAIN => records.push(record),
-            None => {}
-        }
-    }
-
+impl<'a> OptionsTable<'a> {
     /// The options records of `exporter`'s `domain` whose scope is
     /// `scope`.
-    pub fn get<'a>(
-        &'a self,
+    pub fn get<'s>(
+        self,
         exporter: SocketAddr,
         domain: u32,
-        scope: &'a [(Scope, Value)],
-    ) -> impl Iterator<Item = &'a Record> {
-        self.domains
-            .get(&(exporter, domain))
-            .into_iter()
-            .flatten()
-            .filter(move |record| record.scope == scope)
+        scope: &'s [(Scope, Value)],
+    ) -> impl Iterator<Item = &'a Record> + use<'a, 's> {
+        self.iter()
+            .filter(move |&(from, of, record)| {
+                from == exporter && of == domain && record.scope == scope
+            })
+            .map(|(_, _, record)| record)
     }
 
     /// Every options record that carries `element`, with the exporter it
     /// came from.
-    pub fn by_element(&self, element: ElementId) -> impl Iterator<Item = (SocketAddr, &Record)> {
+    pub fn by_element(self, element: ElementId) -> impl Iterator<Item = (SocketAddr, &'a Record)> {
         self.iter()
-            .filter(move |(_, record)| record.elements.contains(&element))
+            .filter(move |(_, _, record)| record.elements.contains(&element))
+            .map(|(exporter, _, record)| (exporter, record))
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (SocketAddr, &Record)> {
-        self.domains.iter().flat_map(|(&(exporter, _), records)| {
-            records.iter().map(move |record| (exporter, record))
-        })
-    }
-
-    pub fn len(&self) -> usize {
-        self.domains.values().map(Vec::len).sum()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
+    /// Every options record, with its exporter and observation domain.
+    pub fn iter(self) -> impl Iterator<Item = (SocketAddr, u32, &'a Record)> {
+        self.0.options()
     }
 }

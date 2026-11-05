@@ -14,7 +14,6 @@ pub struct Reader {
     socket: UdpSocket,
     buf: Vec<u8>,
     collector: Collector,
-    options: OptionsTable,
     pending: VecDeque<Record>,
 }
 
@@ -42,7 +41,6 @@ impl Reader {
             socket,
             buf: vec![0; 65_535],
             collector,
-            options: OptionsTable::default(),
             pending: VecDeque::new(),
         }
     }
@@ -59,8 +57,8 @@ impl Reader {
     }
 
     /// The latest options records read, by exporter, domain and scope.
-    pub fn options(&self) -> &OptionsTable {
-        &self.options
+    pub fn options(&self) -> OptionsTable<'_> {
+        OptionsTable(&self.collector)
     }
 
     /// The next record, in the order the exporters sent them. Datagrams
@@ -87,9 +85,6 @@ impl Reader {
                     exporter: from,
                     error,
                 });
-            }
-            for record in self.pending.iter().filter(|record| record.is_options()) {
-                self.options.insert(from, record.clone());
             }
         }
     }
@@ -283,7 +278,7 @@ mod tests {
         let mut flows = reader.flows();
         let flow = flows.next().unwrap().unwrap();
         assert_eq!(flow.protocol, Protocol::NetflowV5);
-        assert_eq!(flows.reader().options().len(), 1);
+        assert_eq!(flows.reader().options().iter().count(), 1);
     }
 
     use rustflow_convert::Protocol;

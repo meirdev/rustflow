@@ -5,7 +5,7 @@ use rustflow_bytes::{Reader, Truncated};
 
 use super::*;
 use crate::information_element::{DataType, ElementId, Registry};
-use crate::template_cache::TemplateCache;
+use crate::template_cache::{Entry, Slot, TemplateCache};
 use crate::value::{Value, decode};
 use crate::{DataSet, ParseError};
 
@@ -17,12 +17,7 @@ use crate::{DataSet, ParseError};
 /// is refused, and the template it would replace is dropped.
 pub struct Parser {
     registry: Registry,
-    templates: TemplateCache<Entry>,
-}
-
-struct Entry {
-    template: CachedTemplate,
-    layout: Box<[(usize, DataType)]>,
+    templates: TemplateCache<Entry<CachedTemplate>>,
 }
 
 enum CachedTemplate {
@@ -68,7 +63,7 @@ impl Parser {
                     .collect();
                 for template in &templates {
                     let layout = self.layout(&template.fields).collect();
-                    self.insert(
+                    self.templates.insert_entry(
                         source_id,
                         template.template_id,
                         CachedTemplate::Data(Arc::clone(template)),
@@ -84,12 +79,12 @@ impl Parser {
                     .map(Arc::new)
                     .collect();
                 for template in &templates {
-                    let scope = template
-                        .scope_fields
-                        .iter()
-                        .map(|field| (usize::from(field.length), DataType::Unsigned64));
+                    let scope = template.scope_fields.iter().map(|field| Slot {
+                        field_length: field.length,
+                        data_type: DataType::Unsigned64,
+                    });
                     let layout = scope.chain(self.layout(&template.option_fields)).collect();
-                    self.insert(
+                    self.templates.insert_entry(
                         source_id,
                         template.template_id,
                         CachedTemplate::Options(Arc::clone(template)),
@@ -120,27 +115,14 @@ impl Parser {
         Ok(flow_set)
     }
 
-    fn layout(&self, fields: &[Field]) -> impl Iterator<Item = (usize, DataType)> {
-        fields.iter().map(|field| {
-            let data_type = self
+    fn layout(&self, fields: &[Field]) -> impl Iterator<Item = Slot> {
+        fields.iter().map(|field| Slot {
+            field_length: field.length,
+            data_type: self
                 .registry
                 .get(ElementId::iana(field.field_type))
-                .map_or(DataType::OctetArray, |element| element.data_type);
-            (usize::from(field.length), data_type)
+                .map_or(DataType::OctetArray, |element| element.data_type),
         })
-    }
-
-    /// Stores a template, replacing any earlier one with its ID right away.
-    fn insert(
-        &mut self,
-        source_id: u32,
-        template_id: u16,
-        template: CachedTemplate,
-        layout: Box<[(usize, DataType)]>,
-    ) {
-        let fields = layout.len();
-        let entry = Entry { template, layout };
-        self.templates.insert(source_id, template_id, entry, fields);
     }
 }
 
@@ -213,9 +195,12 @@ fn parse_field(r: &mut Reader) -> Result<Field, Truncated> {
     Ok(Field { field_type, length })
 }
 
-fn parse_record(r: &mut Reader, layout: &[(usize, DataType)]) -> Result<Vec<Value>, Truncated> {
+fn parse_record(r: &mut Reader, layout: &[Slot]) -> Result<Vec<Value>, Truncated> {
     layout
         .iter()
-        .map(|&(length, data_type)| Ok(decode(data_type, r.bytes(length)?)))
+        .map(|slot| {
+            let bytes = r.bytes(usize::from(slot.field_length))?;
+            Ok(decode(slot.data_type, bytes))
+        })
         .collect()
 }

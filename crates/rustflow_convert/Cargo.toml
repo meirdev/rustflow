@@ -9,4 +9,6 @@ description = "Flow records of NetFlow, IPFIX and sFlow converted to IPFIX infor
 [dependencies]
 rustflow_protocol = { path = "../rustflow_protocol" }
 rustflow_dissect = { path = "../rustflow_dissect" }
+
+[dev-dependencies]
 etherparse.workspace = true

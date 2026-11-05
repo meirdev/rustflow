@@ -2,7 +2,6 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use rustflow_protocol::RecordRef;
 use rustflow_protocol::information_element::{ElementId, iana};
 use rustflow_protocol::netflow_v9::ScopeType;
 use rustflow_protocol::value::Value;
@@ -50,12 +49,14 @@ impl Record {
 
     /// The first value of `element`.
     pub fn first(&self, element: ElementId) -> Option<&Value> {
-        self.record_ref().first(element)
+        self.all(element).next()
     }
 
-    /// Every value of `element`.
+    /// Every value of `element`, which a record may hold more than once.
     pub fn all(&self, element: ElementId) -> impl Iterator<Item = &Value> {
-        self.record_ref().all(element)
+        self.iter()
+            .filter(move |(known, _)| *known == element)
+            .map(|(_, value)| value)
     }
 
     /// Each value with its element, in record order.
@@ -63,8 +64,12 @@ impl Record {
         self.elements.iter().copied().zip(&self.values)
     }
 
-    fn record_ref(&self) -> RecordRef<'_, [ElementId]> {
-        RecordRef::new(&self.elements, &self.values)
+    /// The scope values that are of an element, as IPFIX scopes are.
+    pub fn scope_elements(&self) -> impl Iterator<Item = (ElementId, &Value)> {
+        self.scope.iter().filter_map(|(scope, value)| match scope {
+            Scope::Element(element) => Some((*element, value)),
+            Scope::Type(_) => None,
+        })
     }
 }
 

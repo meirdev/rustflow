@@ -1186,7 +1186,7 @@ fn a_packet_that_cannot_be_written_writes_nothing() {
 }
 
 #[test]
-fn values_are_looked_up_by_element() {
+fn values_come_in_template_order_enterprise_fields_included() {
     let template = set(
         TEMPLATE_SET_ID,
         &template(
@@ -1210,25 +1210,35 @@ fn values_are_looked_up_by_element() {
         .parse(&message(DOMAIN, &[template, set(256, &record)]))
         .unwrap();
     let data = data_set(&packet.sets[1]);
-    let record = data.records().next().unwrap();
+    let elements: Vec<_> = data
+        .template
+        .fields
+        .iter()
+        .map(FieldSpecifier::element_id)
+        .collect();
 
     assert_eq!(
-        record.first(iana::SOURCE_IPV4_ADDRESS),
-        Some(&Value::Ipv4Address(Ipv4Addr::new(192, 0, 2, 1)))
+        elements,
+        [
+            iana::SOURCE_IPV4_ADDRESS,
+            iana::OCTET_DELTA_COUNT,
+            iana::OCTET_DELTA_COUNT,
+            ElementId::from((VENDOR_ENTERPRISE_NUMBER, 1)),
+        ]
     );
     assert_eq!(
-        record.all(iana::OCTET_DELTA_COUNT).collect::<Vec<_>>(),
-        [&Value::Unsigned32(1), &Value::Unsigned32(2)]
+        data.records[0],
+        [
+            Value::Ipv4Address(Ipv4Addr::new(192, 0, 2, 1)),
+            Value::Unsigned32(1),
+            Value::Unsigned32(2),
+            Value::OctetArray(vec![0, 0, 0, 5]),
+        ]
     );
-    assert_eq!(
-        record.first(ElementId::from((VENDOR_ENTERPRISE_NUMBER, 1))),
-        Some(&Value::OctetArray(vec![0, 0, 0, 5]))
-    );
-    assert_eq!(record.first(iana::DESTINATION_IPV4_ADDRESS), None);
 }
 
 #[test]
-fn scope_fields_are_looked_up_as_other_elements() {
+fn scope_values_come_first_in_an_options_record() {
     let template = set(
         OPTIONS_TEMPLATE_SET_ID,
         &options_template(
@@ -1250,19 +1260,22 @@ fn scope_fields_are_looked_up_as_other_elements() {
     let Set::OptionsData(data) = &packet.sets[1] else {
         panic!("expected an options data set");
     };
-    let record = data.records().next().unwrap();
     assert_eq!(
-        record.first(iana::OBSERVATION_DOMAIN_ID),
-        Some(&Value::Unsigned32(DOMAIN))
+        data.template.scope_fields[0].element_id(),
+        iana::OBSERVATION_DOMAIN_ID
     );
     assert_eq!(
-        record.first(iana::SAMPLING_INTERVAL),
-        Some(&Value::Unsigned32(100))
+        data.template.option_fields[0].element_id(),
+        iana::SAMPLING_INTERVAL
+    );
+    assert_eq!(
+        data.records[0],
+        [Value::Unsigned32(DOMAIN), Value::Unsigned32(100)]
     );
 }
 
 #[test]
-fn list_records_are_looked_up_by_element() {
+fn list_records_come_with_their_template() {
     let templates = set(
         TEMPLATE_SET_ID,
         &[
@@ -1284,14 +1297,20 @@ fn list_records_are_looked_up_by_element() {
     let Value::SubTemplateList(list) = only_value(&packet) else {
         panic!("expected a sub-template list");
     };
-    let counts: Vec<_> = list
-        .records
-        .records()
-        .map(|record| record.first(iana::OCTET_DELTA_COUNT))
-        .collect();
+    let ListRecords::Decoded { template, records } = &list.records else {
+        panic!("expected decoded records");
+    };
+    assert_eq!(template.template_id(), 256);
     assert_eq!(
-        counts,
-        [Some(&Value::Unsigned32(1)), Some(&Value::Unsigned32(2))]
+        template
+            .fields()
+            .map(FieldSpecifier::element_id)
+            .collect::<Vec<_>>(),
+        [iana::OCTET_DELTA_COUNT]
+    );
+    assert_eq!(
+        *records,
+        [vec![Value::Unsigned32(1)], vec![Value::Unsigned32(2)]]
     );
 }
 

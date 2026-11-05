@@ -2,10 +2,12 @@
 //! from datagrams and written back.
 //!
 //! NetFlow v9 and IPFIX describe their records by templates of information
-//! elements; [`information_element`] and [`value`] serve those two alone.
+//! elements; [`information_element`] and [`value`] serve those two alone. A
+//! parsed record is its values in template order, the template saying what
+//! each one is.
 
 pub use error::{ParseError, WriteError};
-pub use record::{DataSet, Elements, RecordRef};
+pub use record::DataSet;
 
 mod error;
 #[cfg(test)]

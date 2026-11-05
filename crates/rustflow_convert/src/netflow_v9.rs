@@ -2,10 +2,10 @@
 //! same elements as IANA's IPFIX registry, which keeps NetFlow v9's
 //! numbers, so their fields are copied, with uptimes made absolute.
 
-use rustflow_protocol::netflow_v9::{self, FlowSet, Packet};
+use rustflow_protocol::netflow_v9::{FlowSet, Packet};
 
 use crate::domain::Domains;
-use crate::templated::{Context, Plans, TimeBase, Uptime, convert_data, convert_options};
+use crate::templated::{Context, TimeBase, Uptime, convert_data, convert_options};
 use crate::{Protocol, Received, Record};
 
 /// Converts one exporter's NetFlow v9 packets, keeping what its options
@@ -14,14 +14,12 @@ use crate::{Protocol, Received, Record};
 #[derive(Default)]
 pub struct Converter {
     domains: Domains,
-    plans: Plans<netflow_v9::Template>,
 }
 
 impl Converter {
-    /// Converts a packet's records, adding them to `records` in packet
-    /// order, after learning from its options records. A data record gets
-    /// the sampling that options records gave for its source ID, if any; an
-    /// options record comes with its scope.
+    /// Converts a packet's records, adding them to `records`: its options
+    /// records first, with their scope, then its data records, with the
+    /// sampling the options records gave their source ID, if any.
     pub fn convert(
         &mut self,
         packet: Packet,
@@ -29,14 +27,6 @@ impl Converter {
         records: &mut impl Extend<Record>,
     ) {
         let header = &packet.header;
-        for flow_set in &packet.flow_sets {
-            if let FlowSet::OptionsData(data) = flow_set {
-                for record in data.records() {
-                    self.domains.learn(header.source_id, record);
-                }
-            }
-        }
-
         let context = Context {
             protocol: Protocol::NetflowV9,
             sequence_number: header.sequence_number,
@@ -47,16 +37,34 @@ impl Converter {
                 uptime: Uptime::AtExport(header.sys_uptime),
             },
         };
-        let domain = self.domains.get(header.source_id);
-        for flow_set in packet.flow_sets {
-            match flow_set {
-                FlowSet::Data(data) => {
-                    convert_data(&context, domain, &mut self.plans, data, records);
-                }
-                FlowSet::OptionsData(data) => convert_options(&context, data, records),
-                _ => {}
+        let (options, data): (Vec<_>, Vec<_>) = packet
+            .flow_sets
+            .into_iter()
+            .partition(|flow_set| matches!(flow_set, FlowSet::OptionsData(_)));
+        let mut converted = Vec::new();
+        for flow_set in options {
+            if let FlowSet::OptionsData(set) = flow_set {
+                convert_options(&context, set, &mut converted);
             }
         }
+        for record in &converted {
+            self.domains.learn(header.source_id, record);
+        }
+        records.extend(converted.drain(..));
+
+        let domain = self.domains.get(header.source_id);
+        for flow_set in data {
+            if let FlowSet::Data(set) = flow_set {
+                convert_data(&context, domain, set, &mut converted);
+            }
+        }
+        records.extend(converted);
+    }
+
+    /// The latest options record of each kind the exporter sent, with its
+    /// source ID.
+    pub fn options(&self) -> impl Iterator<Item = (u32, &Record)> {
+        self.domains.options()
     }
 }
 
@@ -205,19 +213,19 @@ mod tests {
 
         assert_eq!(records.len(), 2);
         assert_eq!(
-            records[1].scope,
+            records[0].scope,
             [(Scope::Type(ScopeType::System), Value::Unsigned32(0))]
         );
         assert_eq!(
-            records[1].first(iana::SAMPLING_INTERVAL),
+            records[0].first(iana::SAMPLING_INTERVAL),
             Some(&Value::Unsigned32(100))
         );
         assert_eq!(
-            records[0].first(iana::SELECTOR_ALGORITHM),
+            records[1].first(iana::SELECTOR_ALGORITHM),
             Some(&Value::Unsigned16(3))
         );
         assert_eq!(
-            records[0].first(iana::SAMPLING_POPULATION),
+            records[1].first(iana::SAMPLING_POPULATION),
             Some(&Value::Unsigned32(100))
         );
 

@@ -6,7 +6,7 @@ use rustflow_bytes::{Reader, Truncated};
 use super::type_records::ElementTypes;
 use super::*;
 use crate::information_element::{DataType, InformationElement, Registry};
-use crate::template_cache::TemplateCache;
+use crate::template_cache::{Entry, Slot, TemplateCache};
 use crate::value::{Value, decode};
 use crate::{DataSet, ParseError};
 
@@ -27,18 +27,7 @@ use crate::{DataSet, ParseError};
 pub struct Parser {
     registry: Registry,
     element_types: ElementTypes,
-    templates: TemplateCache<Entry>,
-}
-
-struct Entry {
-    template: TemplateRef,
-    layout: Box<[Slot]>,
-}
-
-#[derive(Clone, Copy)]
-struct Slot {
-    field_length: u16,
-    data_type: DataType,
+    templates: TemplateCache<Entry<TemplateRef>>,
 }
 
 impl Parser {
@@ -149,9 +138,8 @@ impl Parser {
             domain,
             template.fields(),
         );
-        let fields = layout.len();
-        let entry = Entry { template, layout };
-        self.templates.insert(domain, template_id, entry, fields);
+        self.templates
+            .insert_entry(domain, template_id, template, layout);
     }
 
     fn refresh_layouts(&mut self, domain: u32) {

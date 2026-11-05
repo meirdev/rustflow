@@ -513,31 +513,39 @@ fn a_record_that_does_not_fit_its_template_writes_nothing() {
 }
 
 #[test]
-fn values_of_a_real_record_are_looked_up_by_element() {
+fn values_of_a_real_record_follow_its_template() {
     let mut parser = parser();
     let packets: Vec<_> = udp_payloads("netflow_v9_sanity.pcap")
         .iter()
         .map(|datagram| parser.parse(datagram).unwrap())
         .collect();
-    let record = data_set(&packets[3].flow_sets[0]).records().next().unwrap();
+    let data = data_set(&packets[3].flow_sets[0]);
+    let value = |element: ElementId| {
+        let index = data
+            .template
+            .fields
+            .iter()
+            .position(|field| field.field_type == element.id)?;
+        data.records[0].get(index)
+    };
 
     assert_eq!(
-        record.first(iana::SOURCE_IPV4_ADDRESS),
+        value(iana::SOURCE_IPV4_ADDRESS),
         Some(&Value::Ipv4Address(Ipv4Addr::new(192, 0, 2, 1)))
     );
     assert_eq!(
-        record.first(iana::SOURCE_TRANSPORT_PORT),
+        value(iana::SOURCE_TRANSPORT_PORT),
         Some(&Value::Unsigned16(443))
     );
     assert_eq!(
-        record.first(iana::DESTINATION_TRANSPORT_PORT),
+        value(iana::DESTINATION_TRANSPORT_PORT),
         Some(&Value::Unsigned16(51001))
     );
-    assert_eq!(record.first(iana::SOURCE_IPV6_ADDRESS), None);
+    assert_eq!(value(iana::SOURCE_IPV6_ADDRESS), None);
 }
 
 #[test]
-fn scope_fields_are_looked_up_by_scope_type_not_as_elements() {
+fn scope_values_come_first_in_an_options_record() {
     let template = flow_set(
         OPTIONS_TEMPLATE_FLOW_SET_ID,
         &options_template(
@@ -556,15 +564,19 @@ fn scope_fields_are_looked_up_by_scope_type_not_as_elements() {
     let FlowSet::OptionsData(data) = &packet.flow_sets[1] else {
         panic!("expected an options data FlowSet");
     };
-    let record = data.records().next().unwrap();
 
-    assert_eq!(record.scope(SYSTEM_SCOPE), Some(&Value::Unsigned32(7)));
     assert_eq!(
-        record.first(iana::SAMPLING_INTERVAL),
-        Some(&Value::Unsigned32(100))
+        ScopeType::from(data.template.scope_fields[0].field_type),
+        ScopeType::System
     );
-    // The System scope type shares its number with octetDeltaCount.
-    assert_eq!(record.first(ElementId::iana(SYSTEM_SCOPE)), None);
+    assert_eq!(
+        data.template.option_fields[0].field_type,
+        iana::SAMPLING_INTERVAL.id
+    );
+    assert_eq!(
+        data.records[0],
+        [Value::Unsigned32(7), Value::Unsigned32(100)]
+    );
 }
 
 #[cfg(feature = "serde")]

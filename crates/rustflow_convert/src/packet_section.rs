@@ -5,8 +5,7 @@
 //! sFlow carries those bytes in a flow sample's sampled header; IPFIX and
 //! NetFlow v9 in a PSAMP packet section (RFC 5477).
 
-use etherparse::{LaxNetSlice, LaxSlicedPacket, LinkSlice, TransportSlice, VlanHeader};
-use rustflow_dissect::{first_fragment_transport, peel_ethernet, peel_ip};
+use rustflow_dissect::{Headers, Link, Net, Transport};
 use rustflow_protocol::information_element::{ElementId, iana};
 use rustflow_protocol::value::Value;
 
@@ -55,169 +54,125 @@ pub(crate) fn find<'a>(
 /// the IP packet giving the addresses, though a tunnel such as GRE or MPLS
 /// sat under it in the frame.
 pub(crate) fn dissect(layer: Layer, bytes: &[u8], add: &mut impl FnMut(ElementId, Value)) {
-    let peeled = match layer {
-        Layer::Ethernet => peel_ethernet(bytes),
-        Layer::Ip => peel_ip(bytes),
+    let headers = match layer {
+        Layer::Ethernet => rustflow_dissect::ethernet(bytes),
+        Layer::Ip => rustflow_dissect::ip(bytes),
     };
-    if let Some(peeled) = peeled {
-        add_net(&peeled.packet, add);
-        add_transport(&peeled.packet, add);
-        add_link(peeled.link.as_ref().unwrap_or(&peeled.packet), add);
+    let Some(Headers {
+        link,
+        net,
+        transport,
+    }) = headers
+    else {
+        return;
+    };
+    if let Some(net) = net {
+        add_net(net, add);
+    }
+    if let Some(transport) = transport {
+        add_transport(transport, add);
+    }
+    if let Some(link) = link {
+        add_link(link, add);
     }
 }
 
-fn add_net(sliced: &LaxSlicedPacket, add: &mut impl FnMut(ElementId, Value)) {
-    match &sliced.net {
-        Some(LaxNetSlice::Ipv4(ipv4)) => {
-            let header = ipv4.header();
-            add(
-                iana::SOURCE_IPV4_ADDRESS,
-                Value::Ipv4Address(header.source_addr()),
-            );
+fn add_net(net: Net, add: &mut impl FnMut(ElementId, Value)) {
+    match net {
+        Net::Ipv4(ipv4) => {
+            add(iana::SOURCE_IPV4_ADDRESS, Value::Ipv4Address(ipv4.source));
             add(
                 iana::DESTINATION_IPV4_ADDRESS,
-                Value::Ipv4Address(header.destination_addr()),
+                Value::Ipv4Address(ipv4.destination),
             );
-            add(
-                iana::PROTOCOL_IDENTIFIER,
-                Value::Unsigned8(header.protocol().0),
-            );
+            add(iana::PROTOCOL_IDENTIFIER, Value::Unsigned8(ipv4.protocol));
             add(
                 iana::IP_CLASS_OF_SERVICE,
-                Value::Unsigned8((header.dcp().value() << 2) | header.ecn().value()),
+                Value::Unsigned8(ipv4.class_of_service),
             );
-            add(iana::IP_TTL, Value::Unsigned8(header.ttl()));
+            add(iana::IP_TTL, Value::Unsigned8(ipv4.ttl));
             add(
                 iana::FRAGMENT_IDENTIFICATION,
-                Value::Unsigned32(header.identification().into()),
+                Value::Unsigned32(ipv4.identification.into()),
             );
             add(
                 iana::FRAGMENT_OFFSET,
-                Value::Unsigned16(header.fragments_offset().value()),
+                Value::Unsigned16(ipv4.fragment_offset),
             );
             add(iana::ETHERNET_TYPE, Value::Unsigned16(IPV4_ETHERNET_TYPE));
         }
-        Some(LaxNetSlice::Ipv6(ipv6)) => {
-            let header = ipv6.header();
-            add(
-                iana::SOURCE_IPV6_ADDRESS,
-                Value::Ipv6Address(header.source_addr()),
-            );
+        Net::Ipv6(ipv6) => {
+            add(iana::SOURCE_IPV6_ADDRESS, Value::Ipv6Address(ipv6.source));
             add(
                 iana::DESTINATION_IPV6_ADDRESS,
-                Value::Ipv6Address(header.destination_addr()),
+                Value::Ipv6Address(ipv6.destination),
             );
             add(
                 iana::PROTOCOL_IDENTIFIER,
-                Value::Unsigned8(ipv6.payload().ip_number.0),
+                Value::Unsigned8(ipv6.next_header),
             );
             add(
                 iana::IP_CLASS_OF_SERVICE,
-                Value::Unsigned8(header.traffic_class()),
+                Value::Unsigned8(ipv6.traffic_class),
             );
-            add(iana::IP_TTL, Value::Unsigned8(header.hop_limit()));
-            add(
-                iana::FLOW_LABEL_IPV6,
-                Value::Unsigned32(header.flow_label().value()),
-            );
+            add(iana::IP_TTL, Value::Unsigned8(ipv6.hop_limit));
+            add(iana::FLOW_LABEL_IPV6, Value::Unsigned32(ipv6.flow_label));
             add(iana::ETHERNET_TYPE, Value::Unsigned16(IPV6_ETHERNET_TYPE));
         }
-        _ => {}
     }
 }
 
-fn add_transport(sliced: &LaxSlicedPacket, add: &mut impl FnMut(ElementId, Value)) {
-    let transport = sliced
-        .transport
-        .clone()
-        .or_else(|| first_fragment_transport(sliced));
+fn add_transport(transport: Transport, add: &mut impl FnMut(ElementId, Value)) {
     match transport {
-        Some(TransportSlice::Tcp(tcp)) => {
-            add(
-                iana::SOURCE_TRANSPORT_PORT,
-                Value::Unsigned16(tcp.source_port()),
-            );
-            add(
-                iana::DESTINATION_TRANSPORT_PORT,
-                Value::Unsigned16(tcp.destination_port()),
-            );
-            let flags = [
-                tcp.ns(),
-                tcp.cwr(),
-                tcp.ece(),
-                tcp.urg(),
-                tcp.ack(),
-                tcp.psh(),
-                tcp.rst(),
-                tcp.syn(),
-                tcp.fin(),
-            ];
-            let bits = flags
-                .into_iter()
-                .fold(0, |bits, set| bits << 1 | u16::from(set));
-            add(iana::TCP_CONTROL_BITS, Value::Unsigned16(bits));
-        }
-        Some(TransportSlice::Udp(udp)) => {
-            add(
-                iana::SOURCE_TRANSPORT_PORT,
-                Value::Unsigned16(udp.source_port()),
-            );
+        Transport::Tcp {
+            source_port,
+            destination_port,
+            flags,
+        } => {
+            add(iana::SOURCE_TRANSPORT_PORT, Value::Unsigned16(source_port));
             add(
                 iana::DESTINATION_TRANSPORT_PORT,
-                Value::Unsigned16(udp.destination_port()),
+                Value::Unsigned16(destination_port),
+            );
+            add(iana::TCP_CONTROL_BITS, Value::Unsigned16(flags));
+        }
+        Transport::Udp {
+            source_port,
+            destination_port,
+        } => {
+            add(iana::SOURCE_TRANSPORT_PORT, Value::Unsigned16(source_port));
+            add(
+                iana::DESTINATION_TRANSPORT_PORT,
+                Value::Unsigned16(destination_port),
             );
         }
-        Some(TransportSlice::Icmpv4(icmp)) => {
-            add(iana::ICMP_TYPE_IPV4, Value::Unsigned8(icmp.type_u8()));
-            add(iana::ICMP_CODE_IPV4, Value::Unsigned8(icmp.code_u8()));
+        Transport::Icmpv4 { r#type, code } => {
+            add(iana::ICMP_TYPE_IPV4, Value::Unsigned8(r#type));
+            add(iana::ICMP_CODE_IPV4, Value::Unsigned8(code));
         }
-        Some(TransportSlice::Icmpv6(icmp)) => {
-            add(iana::ICMP_TYPE_IPV6, Value::Unsigned8(icmp.type_u8()));
-            add(iana::ICMP_CODE_IPV6, Value::Unsigned8(icmp.code_u8()));
+        Transport::Icmpv6 { r#type, code } => {
+            add(iana::ICMP_TYPE_IPV6, Value::Unsigned8(r#type));
+            add(iana::ICMP_CODE_IPV6, Value::Unsigned8(code));
         }
-        _ => {}
     }
 }
 
 /// A frame's tags are `dot1qVlanId`, and the inner one of two
 /// `dot1qCustomerVlanId`; `vlanId` is left to an extended switch record,
 /// which knows the VLANs of the interfaces.
-fn add_link(sliced: &LaxSlicedPacket, add: &mut impl FnMut(ElementId, Value)) {
-    match sliced.vlan().map(|vlan| vlan.to_header()) {
-        Some(VlanHeader::Single(tag)) => {
-            add(iana::DOT1Q_VLAN_ID, Value::Unsigned16(tag.vlan_id.value()));
-            add(iana::ETHERNET_TYPE, Value::Unsigned16(tag.ether_type.0));
-        }
-        Some(VlanHeader::Double(tags)) => {
-            add(
-                iana::DOT1Q_VLAN_ID,
-                Value::Unsigned16(tags.outer.vlan_id.value()),
-            );
-            add(
-                iana::DOT1Q_CUSTOMER_VLAN_ID,
-                Value::Unsigned16(tags.inner.vlan_id.value()),
-            );
-            add(
-                iana::ETHERNET_TYPE,
-                Value::Unsigned16(tags.inner.ether_type.0),
-            );
-        }
-        None => {}
+fn add_link(link: Link, add: &mut impl FnMut(ElementId, Value)) {
+    if let Some(vlan) = link.vlan {
+        add(iana::DOT1Q_VLAN_ID, Value::Unsigned16(vlan));
     }
-    if let Some(LinkSlice::Ethernet2(ethernet)) = &sliced.link {
-        add(
-            iana::SOURCE_MAC_ADDRESS,
-            Value::MacAddress(ethernet.source()),
-        );
-        add(
-            iana::DESTINATION_MAC_ADDRESS,
-            Value::MacAddress(ethernet.destination()),
-        );
-        add(
-            iana::ETHERNET_TYPE,
-            Value::Unsigned16(ethernet.ether_type().0),
-        );
+    if let Some(vlan) = link.customer_vlan {
+        add(iana::DOT1Q_CUSTOMER_VLAN_ID, Value::Unsigned16(vlan));
     }
+    add(iana::SOURCE_MAC_ADDRESS, Value::MacAddress(link.source));
+    add(
+        iana::DESTINATION_MAC_ADDRESS,
+        Value::MacAddress(link.destination),
+    );
+    add(iana::ETHERNET_TYPE, Value::Unsigned16(link.ether_type));
 }
 
 #[cfg(test)]

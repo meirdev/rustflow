@@ -9,28 +9,96 @@ use rustflow_convert::{Received, Record, ipfix, netflow_v5, netflow_v9, sflow_v5
 use rustflow_protocol::ParseError;
 use rustflow_protocol::information_element::Registry;
 
-/// Exporters one collector may keep state for; the network decides how
-/// many send to it.
-const MAX_EXPORTERS: usize = 65_536;
+/// Sessions one collector may keep state for; the network decides how many
+/// exporters send to it.
+const MAX_SESSIONS: usize = 65_536;
 
-/// Turns datagrams into records. One parser and converter per protocol
-/// serve each exporter transport address: templates and options are
-/// scoped by transport session, as RFC 7011 requires, so two exporting
-/// processes on one host are told apart by their ports. An exporter not heard
-/// from for the template timeout is forgotten, its templates having expired by
-/// then; datagrams of a new exporter past [`MAX_EXPORTERS`] are dropped.
+/// Turns datagrams into records. A session, one per exporter transport
+/// address, keeps the templates and options its protocols need between
+/// datagrams, scoped by transport session as RFC 7011 requires. A session
+/// not heard from for the template timeout is forgotten, its templates
+/// having expired by then; datagrams of a new session past
+/// [`MAX_SESSIONS`] are dropped.
 pub struct Collector {
     registry: Registry,
     timeout: Duration,
-    exporters: HashMap<SocketAddr, Exporter>,
+    sessions: HashMap<SocketAddr, Session>,
     next_sweep: Instant,
 }
 
 #[derive(Default)]
-struct Exporter {
+struct Session {
     last_seen: Option<Instant>,
-    netflow_v9: Option<(rustflow_protocol::netflow_v9::Parser, netflow_v9::Converter)>,
-    ipfix: Option<(rustflow_protocol::ipfix::Parser, ipfix::Converter)>,
+    netflow_v9: Option<Templated<rustflow_protocol::netflow_v9::Parser, netflow_v9::Converter>>,
+    ipfix: Option<Templated<rustflow_protocol::ipfix::Parser, ipfix::Converter>>,
+}
+
+/// One protocol's state in a session: the parser keeping its templates,
+/// the converter keeping what its options records said.
+struct Templated<P, C> {
+    parser: P,
+    converter: C,
+}
+
+trait Protocol: Sized {
+    fn new(registry: Registry, timeout: Duration) -> Self;
+
+    fn collect(
+        &mut self,
+        datagram: &[u8],
+        received: &Received,
+        records: &mut impl Extend<Record>,
+    ) -> Result<(), ParseError>;
+
+    fn options(&self) -> impl Iterator<Item = (u32, &Record)>;
+}
+
+impl Protocol for Templated<rustflow_protocol::netflow_v9::Parser, netflow_v9::Converter> {
+    fn new(registry: Registry, timeout: Duration) -> Self {
+        Self {
+            parser: rustflow_protocol::netflow_v9::Parser::new(registry, timeout),
+            converter: netflow_v9::Converter::default(),
+        }
+    }
+
+    fn collect(
+        &mut self,
+        datagram: &[u8],
+        received: &Received,
+        records: &mut impl Extend<Record>,
+    ) -> Result<(), ParseError> {
+        self.converter
+            .convert(self.parser.parse(datagram)?, received, records);
+        Ok(())
+    }
+
+    fn options(&self) -> impl Iterator<Item = (u32, &Record)> {
+        self.converter.options()
+    }
+}
+
+impl Protocol for Templated<rustflow_protocol::ipfix::Parser, ipfix::Converter> {
+    fn new(registry: Registry, timeout: Duration) -> Self {
+        Self {
+            parser: rustflow_protocol::ipfix::Parser::new(registry, timeout),
+            converter: ipfix::Converter::default(),
+        }
+    }
+
+    fn collect(
+        &mut self,
+        datagram: &[u8],
+        received: &Received,
+        records: &mut impl Extend<Record>,
+    ) -> Result<(), ParseError> {
+        self.converter
+            .convert(self.parser.parse(datagram)?, received, records);
+        Ok(())
+    }
+
+    fn options(&self) -> impl Iterator<Item = (u32, &Record)> {
+        self.converter.options()
+    }
 }
 
 impl Collector {
@@ -40,14 +108,14 @@ impl Collector {
         Self {
             registry,
             timeout,
-            exporters: HashMap::new(),
+            sessions: HashMap::new(),
             next_sweep: Instant::now() + timeout,
         }
     }
 
-    /// Converts a datagram's records, adding them to `records` in datagram
-    /// order. The protocol is read from the datagram: NetFlow and IPFIX
-    /// put their version in the first two bytes, sFlow in the first four.
+    /// Converts a datagram's records, adding them to `records`. The
+    /// protocol is read from the datagram: NetFlow and IPFIX put their
+    /// version in the first two bytes, sFlow in the first four.
     pub fn collect(
         &mut self,
         received: Received,
@@ -59,7 +127,7 @@ impl Collector {
             [high, low, ..] => u32::from(u16::from_be_bytes([*high, *low])),
             _ => 0,
         };
-        let (registry, timeout) = (&self.registry.clone(), self.timeout);
+        let (registry, timeout) = (self.registry.clone(), self.timeout);
         match version {
             5 => netflow_v5::convert(
                 rustflow_protocol::netflow_v5::parse(datagram)?,
@@ -67,28 +135,20 @@ impl Collector {
                 records,
             ),
             9 => {
-                let Some(exporter) = self.exporter(received.exporter) else {
-                    return Ok(());
-                };
-                let (parser, converter) = exporter.netflow_v9.get_or_insert_with(|| {
-                    (
-                        rustflow_protocol::netflow_v9::Parser::new(registry.clone(), timeout),
-                        netflow_v9::Converter::default(),
-                    )
-                });
-                converter.convert(parser.parse(datagram)?, &received, records);
+                if let Some(session) = self.session(received.exporter) {
+                    session
+                        .netflow_v9
+                        .get_or_insert_with(|| Templated::new(registry, timeout))
+                        .collect(datagram, &received, records)?;
+                }
             }
             10 => {
-                let Some(exporter) = self.exporter(received.exporter) else {
-                    return Ok(());
-                };
-                let (parser, converter) = exporter.ipfix.get_or_insert_with(|| {
-                    (
-                        rustflow_protocol::ipfix::Parser::new(registry.clone(), timeout),
-                        ipfix::Converter::default(),
-                    )
-                });
-                converter.convert(parser.parse(datagram)?, &received, records);
+                if let Some(session) = self.session(received.exporter) {
+                    session
+                        .ipfix
+                        .get_or_insert_with(|| Templated::new(registry, timeout))
+                        .collect(datagram, &received, records)?;
+                }
             }
             _ => sflow_v5::convert(
                 rustflow_protocol::sflow_v5::parse(datagram)?,
@@ -99,23 +159,35 @@ impl Collector {
         Ok(())
     }
 
-    /// The exporter's state, marked as heard from now; `None` for a new
-    /// exporter past [`MAX_EXPORTERS`].
-    fn exporter(&mut self, address: SocketAddr) -> Option<&mut Exporter> {
+    /// The latest options record of each kind every session sent, with
+    /// the exporter and observation domain it describes.
+    pub fn options(&self) -> impl Iterator<Item = (SocketAddr, u32, &Record)> {
+        self.sessions.iter().flat_map(|(&exporter, session)| {
+            let netflow_v9 = session.netflow_v9.iter().flat_map(Protocol::options);
+            let ipfix = session.ipfix.iter().flat_map(Protocol::options);
+            netflow_v9
+                .chain(ipfix)
+                .map(move |(domain, record)| (exporter, domain, record))
+        })
+    }
+
+    /// The session of `exporter`, marked as heard from now; `None` for a
+    /// new one past [`MAX_SESSIONS`].
+    fn session(&mut self, exporter: SocketAddr) -> Option<&mut Session> {
         let now = Instant::now();
-        let new = !self.exporters.contains_key(&address);
-        if now >= self.next_sweep || (new && self.exporters.len() >= MAX_EXPORTERS) {
+        let new = !self.sessions.contains_key(&exporter);
+        if now >= self.next_sweep || (new && self.sessions.len() >= MAX_SESSIONS) {
             let timeout = self.timeout;
-            self.exporters
-                .retain(|_, exporter| exporter.last_seen.is_some_and(|seen| now - seen < timeout));
+            self.sessions
+                .retain(|_, session| session.last_seen.is_some_and(|seen| now - seen < timeout));
             self.next_sweep = now + timeout;
         }
-        if new && self.exporters.len() >= MAX_EXPORTERS {
+        if new && self.sessions.len() >= MAX_SESSIONS {
             return None;
         }
-        let exporter = self.exporters.entry(address).or_default();
-        exporter.last_seen = Some(now);
-        Some(exporter)
+        let session = self.sessions.entry(exporter).or_default();
+        session.last_seen = Some(now);
+        Some(session)
     }
 }
 

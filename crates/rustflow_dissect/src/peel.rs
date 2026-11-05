@@ -6,7 +6,7 @@ use etherparse::{
 use crate::tunnel::{Inner, encapsulated};
 
 /// The deepest packet successfully parsed within the tunnel depth limit.
-pub struct Peeled<'a> {
+pub(crate) struct Peeled<'a> {
     /// The enclosing packet retained for its link-layer metadata when
     /// `packet` has no link header. `None` if `packet` has its own link
     /// header or no enclosing link layer was available.
@@ -24,17 +24,16 @@ const MAX_TUNNEL_DEPTH: u8 = 4;
 /// IP packets retain it in [`Peeled::link`]. Peeling stops at an unsupported
 /// or malformed encapsulation, or when the tunnel depth limit is reached.
 /// Returns `None` if the initial Ethernet frame cannot be parsed.
-pub fn peel_ethernet(frame: &[u8]) -> Option<Peeled<'_>> {
+pub(crate) fn peel_ethernet(frame: &[u8]) -> Option<Peeled<'_>> {
     LaxSlicedPacket::from_ethernet(frame).ok().map(peel)
 }
 
 /// Like [`peel_ethernet`], but starts at an IPv4 or IPv6 header.
-pub fn peel_ip(packet: &[u8]) -> Option<Peeled<'_>> {
+pub(crate) fn peel_ip(packet: &[u8]) -> Option<Peeled<'_>> {
     LaxSlicedPacket::from_ip(packet).ok().map(peel)
 }
 
-/// Peels an already sliced packet.
-pub fn peel(sliced: LaxSlicedPacket<'_>) -> Peeled<'_> {
+fn peel(sliced: LaxSlicedPacket<'_>) -> Peeled<'_> {
     peel_with(sliced, false)
 }
 
@@ -79,7 +78,9 @@ fn peel_with(sliced: LaxSlicedPacket<'_>, require_complete: bool) -> Peeled<'_> 
 /// The transport header of a first fragment. etherparse leaves the
 /// transport unsliced for any fragment, but the first one still carries
 /// the header, and the ports are what a flow is keyed on.
-pub fn first_fragment_transport<'a>(sliced: &LaxSlicedPacket<'a>) -> Option<TransportSlice<'a>> {
+pub(crate) fn first_fragment_transport<'a>(
+    sliced: &LaxSlicedPacket<'a>,
+) -> Option<TransportSlice<'a>> {
     let payload = match &sliced.net {
         Some(LaxNetSlice::Ipv4(ipv4)) if ipv4.header().fragments_offset().value() == 0 => {
             ipv4.payload()

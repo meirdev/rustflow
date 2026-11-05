@@ -3,6 +3,21 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use crate::information_element::DataType;
+
+/// A template as a parser keeps it: with the length and data type of each
+/// of its fields, for decoding its records.
+pub(crate) struct Entry<T> {
+    pub(crate) template: T,
+    pub(crate) layout: Box<[Slot]>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct Slot {
+    pub(crate) field_length: u16,
+    pub(crate) data_type: DataType,
+}
+
 /// Fields one cache may hold across its templates, each template counting as
 /// at least one. The exporter decides how many templates it sends and how
 /// large they are, so this bounds the memory one exporter can take.
@@ -26,6 +41,21 @@ struct Received<T> {
     template: T,
     fields: usize,
     at: Instant,
+}
+
+impl<T> TemplateCache<Entry<T>> {
+    /// Stores a template with the layout of its records; see
+    /// [`TemplateCache::insert`].
+    pub(crate) fn insert_entry(
+        &mut self,
+        domain: u32,
+        template_id: u16,
+        template: T,
+        layout: Box<[Slot]>,
+    ) {
+        let fields = layout.len();
+        self.insert(domain, template_id, Entry { template, layout }, fields);
+    }
 }
 
 impl<T> TemplateCache<T> {

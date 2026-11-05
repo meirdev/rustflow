@@ -1,9 +1,9 @@
 //! IPFIX data records, copied with their relative times made absolute.
 
-use rustflow_protocol::ipfix::{self, Packet, Set};
+use rustflow_protocol::ipfix::{Packet, Set};
 
 use crate::domain::Domains;
-use crate::templated::{Context, Plans, TimeBase, Uptime, convert_data, convert_options};
+use crate::templated::{Context, TimeBase, Uptime, convert_data, convert_options};
 use crate::{Protocol, Received, Record};
 
 /// Converts one exporter's IPFIX messages, keeping what its options records
@@ -12,14 +12,12 @@ use crate::{Protocol, Received, Record};
 #[derive(Default)]
 pub struct Converter {
     domains: Domains,
-    plans: Plans<ipfix::Template>,
 }
 
 impl Converter {
-    /// Converts a message's records, adding them to `records` in message
-    /// order, after learning from its options records. A data record gets
-    /// the sampling that options records gave for its observation domain,
-    /// if any; an options record comes with its scope.
+    /// Converts a message's records, adding them to `records`: its options
+    /// records first, with their scope, then its data records, with the
+    /// sampling the options records gave their observation domain, if any.
     ///
     /// Times relative to the export time (`flowStartDeltaMicroseconds`) are
     /// made absolute from it; uptimes (`flowStartSysUpTime`) from the
@@ -33,32 +31,49 @@ impl Converter {
     ) {
         let header = &packet.header;
         let domain_id = header.observation_domain_id;
-        for set in &packet.sets {
-            if let Set::OptionsData(data) = set {
-                for record in data.records() {
-                    self.domains.learn(domain_id, record);
-                }
-            }
-        }
-
-        let domain = self.domains.get(domain_id);
-        let context = Context {
+        let context = |domains: &Domains| Context {
             protocol: Protocol::Ipfix,
             sequence_number: header.sequence_number,
             domain_id,
             received,
             time: TimeBase {
                 export_time_ms: u64::from(header.export_time) * 1_000,
-                uptime: Uptime::BootedAt(domain.and_then(|domain| domain.system_init_time_ms)),
+                uptime: Uptime::BootedAt(
+                    domains
+                        .get(domain_id)
+                        .and_then(|domain| domain.system_init_time_ms),
+                ),
             },
         };
-        for set in packet.sets {
-            match set {
-                Set::Data(data) => convert_data(&context, domain, &mut self.plans, data, records),
-                Set::OptionsData(data) => convert_options(&context, data, records),
-                _ => {}
+        let (options, data): (Vec<_>, Vec<_>) = packet
+            .sets
+            .into_iter()
+            .partition(|set| matches!(set, Set::OptionsData(_)));
+        let mut converted = Vec::new();
+        for set in options {
+            if let Set::OptionsData(set) = set {
+                convert_options(&context(&self.domains), set, &mut converted);
             }
         }
+        for record in &converted {
+            self.domains.learn(domain_id, record);
+        }
+        records.extend(converted.drain(..));
+
+        let context = context(&self.domains);
+        let domain = self.domains.get(domain_id);
+        for set in data {
+            if let Set::Data(set) = set {
+                convert_data(&context, domain, set, &mut converted);
+            }
+        }
+        records.extend(converted);
+    }
+
+    /// The latest options record of each kind the exporter sent, with its
+    /// observation domain.
+    pub fn options(&self) -> impl Iterator<Item = (u32, &Record)> {
+        self.domains.options()
     }
 }
 

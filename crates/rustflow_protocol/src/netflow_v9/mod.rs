@@ -8,9 +8,7 @@ use num_enum::{FromPrimitive, IntoPrimitive};
 pub use parser::Parser;
 pub use writer::write;
 
-use crate::information_element::ElementId;
-use crate::value::Value;
-use crate::{DataSet, Elements, RecordRef};
+use crate::DataSet;
 
 mod parser;
 #[cfg(test)]
@@ -78,6 +76,7 @@ pub struct Template {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Field {
+    /// The ID of an IANA element, or in a scope field a [`ScopeType`].
     pub field_type: u16,
     /// The length of the field's values, in bytes.
     pub length: u16,
@@ -105,37 +104,4 @@ pub enum ScopeType {
     Template = 5,
     #[num_enum(catch_all)]
     Unassigned(u16),
-}
-
-/// A field's type is the ID of an IANA element.
-impl Elements for Template {
-    fn elements(&self) -> impl Iterator<Item = Option<ElementId>> {
-        self.fields
-            .iter()
-            .map(|field| Some(ElementId::iana(field.field_type)))
-    }
-}
-
-/// A scope field's type is not an element's ID, but a scope type.
-impl Elements for OptionsTemplate {
-    fn elements(&self) -> impl Iterator<Item = Option<ElementId>> {
-        let scope = self.scope_fields.iter().map(|_| None);
-        let options = self
-            .option_fields
-            .iter()
-            .map(|field| Some(ElementId::iana(field.field_type)));
-        scope.chain(options)
-    }
-}
-
-impl<'a> RecordRef<'a, OptionsTemplate> {
-    /// The value of the first scope field of `scope_type`.
-    pub fn scope(&self, scope_type: u16) -> Option<&'a Value> {
-        self.template
-            .scope_fields
-            .iter()
-            .zip(self.values)
-            .find(|(field, _)| field.field_type == scope_type)
-            .map(|(_, value)| value)
-    }
 }

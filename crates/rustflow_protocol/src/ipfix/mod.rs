@@ -9,8 +9,8 @@ pub use list::{BasicList, ListRecords, ListSemantic, SubTemplateList, SubTemplat
 pub use parser::Parser;
 pub use writer::write;
 
+use crate::DataSet;
 use crate::information_element::ElementId;
-use crate::{DataSet, Elements};
 
 mod list;
 mod parser;
@@ -91,7 +91,8 @@ pub struct Template {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OptionsTemplate {
     pub template_id: u16,
-    /// The fields saying what the options describe.
+    /// The fields saying what the options describe: elements as other
+    /// fields are (RFC 7011 section 3.4.2.1).
     pub scope_fields: Vec<FieldSpecifier>,
     pub option_fields: Vec<FieldSpecifier>,
 }
@@ -114,29 +115,6 @@ impl FieldSpecifier {
             enterprise_number: self.enterprise_number,
             id: self.information_element_id,
         }
-    }
-}
-
-impl Elements for Template {
-    fn elements(&self) -> impl Iterator<Item = Option<ElementId>> {
-        self.fields.iter().map(|field| Some(field.element_id()))
-    }
-}
-
-/// Scope fields are elements as other fields are (RFC 7011 section
-/// 3.4.2.1).
-impl Elements for OptionsTemplate {
-    fn elements(&self) -> impl Iterator<Item = Option<ElementId>> {
-        self.scope_fields
-            .iter()
-            .chain(&self.option_fields)
-            .map(|field| Some(field.element_id()))
-    }
-}
-
-impl Elements for TemplateRef {
-    fn elements(&self) -> impl Iterator<Item = Option<ElementId>> {
-        self.fields().map(|field| Some(field.element_id()))
     }
 }
 

@@ -2,25 +2,19 @@
 //! already: copied, with relative times made absolute and what conversion
 //! adds appended.
 
-use std::collections::HashMap;
-use std::collections::hash_map::Entry;
 use std::mem;
 use std::sync::Arc;
 
 use rustflow_protocol::information_element::{ElementId, iana};
 use rustflow_protocol::netflow_v9::ScopeType;
 use rustflow_protocol::value::Value;
-use rustflow_protocol::{DataSet, Elements, ipfix, netflow_v9};
+use rustflow_protocol::{DataSet, ipfix, netflow_v9};
 
 use crate::domain::Domain;
 use crate::record::{Fields, Scope};
 use crate::sampling::{Method, Sampling};
 use crate::time::uptime_to_unix_millis;
 use crate::{Protocol, Received, Record, packet_section};
-
-/// Plans one converter may keep; the exporter decides how many templates
-/// it names.
-const MAX_PLANS: usize = 4096;
 
 /// What the records of one packet share.
 pub(crate) struct Context<'a> {
@@ -119,27 +113,17 @@ impl TimeBase {
 }
 
 /// The template of a data set: every value has an element.
-pub(crate) trait DataTemplate: Elements {
-    fn template_id(&self) -> u16;
-
+pub(crate) trait DataTemplate {
     fn element_ids(&self) -> impl Iterator<Item = ElementId>;
 }
 
 impl DataTemplate for ipfix::Template {
-    fn template_id(&self) -> u16 {
-        self.template_id
-    }
-
     fn element_ids(&self) -> impl Iterator<Item = ElementId> {
         self.fields.iter().map(|field| field.element_id())
     }
 }
 
 impl DataTemplate for netflow_v9::Template {
-    fn template_id(&self) -> u16 {
-        self.template_id
-    }
-
     fn element_ids(&self) -> impl Iterator<Item = ElementId> {
         self.fields
             .iter()
@@ -148,7 +132,7 @@ impl DataTemplate for netflow_v9::Template {
 }
 
 /// The template of an options data set: scope fields, then option fields.
-pub(crate) trait OptionsTemplate: Elements {
+pub(crate) trait OptionsTemplate {
     fn scope(&self) -> impl Iterator<Item = Scope>;
 
     fn option_element_ids(&self) -> impl Iterator<Item = ElementId>;
@@ -185,7 +169,7 @@ impl OptionsTemplate for netflow_v9::OptionsTemplate {
 pub(crate) fn convert_options<T: OptionsTemplate>(
     context: &Context,
     data: DataSet<T>,
-    records: &mut impl Extend<Record>,
+    records: &mut Vec<Record>,
 ) {
     let base = Fields::additions(context.received, Some(context.domain_id));
     let mut last_elements = None;
@@ -213,50 +197,9 @@ pub(crate) fn convert_options<T: OptionsTemplate>(
     }));
 }
 
-/// What converting a record of each template comes to, worked out once per
-/// template rather than once per record, by observation domain and
-/// template ID.
-pub(crate) struct Plans<T> {
-    by_template: HashMap<(u32, u16), Plan<T>>,
-}
-
-impl<T> Default for Plans<T> {
-    fn default() -> Self {
-        Self {
-            by_template: HashMap::new(),
-        }
-    }
-}
-
-impl<T: DataTemplate> Plans<T> {
-    /// The plan for `template`, made anew if it, the additions or what
-    /// the time base can make absolute changed since.
-    fn plan(
-        &mut self,
-        context: &Context,
-        additions: &[ElementId],
-        template: &Arc<T>,
-    ) -> &mut Plan<T> {
-        let key = (context.domain_id, template.template_id());
-        if self.by_template.len() >= MAX_PLANS && !self.by_template.contains_key(&key) {
-            self.by_template.clear();
-        }
-        match self.by_template.entry(key) {
-            Entry::Occupied(mut entry) => {
-                if !entry.get().fits(context, additions, template) {
-                    entry.insert(Plan::new(context, additions, template));
-                }
-                entry.into_mut()
-            }
-            Entry::Vacant(entry) => entry.insert(Plan::new(context, additions, template)),
-        }
-    }
-}
-
-struct Plan<T> {
-    template: Arc<T>,
-    additions: Vec<ElementId>,
-    uptimes_convert: bool,
+/// What converting a record of a template comes to, worked out once per
+/// data set rather than once per record.
+struct Layout {
     /// The template's elements, relative times named by their absolute
     /// element.
     own: Vec<ElementId>,
@@ -266,9 +209,9 @@ struct Plan<T> {
     /// Whether a record may carry a packet section, whose fields vary with
     /// its bytes.
     section: bool,
-    /// The elements of a whole record, additions included, for each
-    /// sampling shape, once a record of that shape was converted.
-    shapes: [Option<Arc<[ElementId]>>; SHAPES],
+    /// The elements of a whole record, additions included, by sampling
+    /// shape, built as records of that shape come.
+    shapes: Vec<(usize, Arc<[ElementId]>)>,
 }
 
 struct RelativeTime {
@@ -276,10 +219,8 @@ struct RelativeTime {
     relative: ElementId,
 }
 
-/// How many element lists sampling can end a record with: none, and one
-/// per method, stated or not.
-const SHAPES: usize = 4;
-
+/// Which element list sampling ends a record with: none, or one per
+/// method, stated or not.
 fn shape(sampling: Option<Sampling>) -> usize {
     match sampling.map(|sampling| sampling.method) {
         None => 0,
@@ -289,8 +230,8 @@ fn shape(sampling: Option<Sampling>) -> usize {
     }
 }
 
-impl<T: DataTemplate> Plan<T> {
-    fn new(context: &Context, additions: &[ElementId], template: &Arc<T>) -> Self {
+impl Layout {
+    fn of(context: &Context, template: &impl DataTemplate) -> Self {
         let mut own = Vec::new();
         let mut times = Vec::new();
         let mut sampler = None;
@@ -313,38 +254,31 @@ impl<T: DataTemplate> Plan<T> {
             }
         }
         Self {
-            template: Arc::clone(template),
-            additions: additions.to_vec(),
-            uptimes_convert: context.time.uptimes_convert(),
             own,
             times,
             sampler,
             section,
-            shapes: Default::default(),
+            shapes: Vec::new(),
         }
     }
 
-    fn fits(&self, context: &Context, additions: &[ElementId], template: &Arc<T>) -> bool {
-        Arc::ptr_eq(&self.template, template)
-            && self.additions == additions
-            && self.uptimes_convert == context.time.uptimes_convert()
-    }
-
-    fn elements(&mut self, sampling: Option<Sampling>) -> Arc<[ElementId]> {
-        let Self {
-            additions,
-            own,
-            shapes,
-            ..
-        } = self;
-        Arc::clone(shapes[shape(sampling)].get_or_insert_with(|| {
-            let mut elements = own.clone();
-            elements.extend_from_slice(additions);
-            if let Some(sampling) = sampling {
-                sampling.for_each(|element, _| elements.push(element));
-            }
-            elements.into()
-        }))
+    fn elements(
+        &mut self,
+        additions: &[ElementId],
+        sampling: Option<Sampling>,
+    ) -> Arc<[ElementId]> {
+        let shape = shape(sampling);
+        if let Some((_, elements)) = self.shapes.iter().find(|(known, _)| *known == shape) {
+            return Arc::clone(elements);
+        }
+        let mut elements = self.own.clone();
+        elements.extend_from_slice(additions);
+        if let Some(sampling) = sampling {
+            sampling.for_each(|element, _| elements.push(element));
+        }
+        let elements: Arc<[ElementId]> = elements.into();
+        self.shapes.push((shape, Arc::clone(&elements)));
+        elements
     }
 }
 
@@ -355,18 +289,17 @@ impl<T: DataTemplate> Plan<T> {
 pub(crate) fn convert_data<T: DataTemplate>(
     context: &Context,
     domain: Option<&Domain>,
-    plans: &mut Plans<T>,
     data: DataSet<T>,
-    records: &mut impl Extend<Record>,
+    records: &mut Vec<Record>,
 ) {
     let base = Fields::additions(context.received, Some(context.domain_id));
-    let plan = plans.plan(context, &base.elements, &data.template);
+    let mut layout = Layout::of(context, &*data.template);
     let mut last_elements = None;
     records.extend(data.records.into_iter().map(|mut values| {
-        let sampler_id = plan.sampler.and_then(|index| values.get(index)?.as_u64());
+        let sampler_id = layout.sampler.and_then(|index| values.get(index)?.as_u64());
         let sampling = domain.and_then(|domain| domain.sampling_for(sampler_id));
         let mut all_absolute = true;
-        for time in &plan.times {
+        for time in &layout.times {
             match values
                 .get(time.index)
                 .and_then(|value| context.time.absolute_value(time.relative, value))
@@ -375,7 +308,7 @@ pub(crate) fn convert_data<T: DataTemplate>(
                 None => all_absolute = false,
             }
         }
-        if all_absolute && !plan.section {
+        if all_absolute && !layout.section {
             values.extend(base.values.iter().cloned());
             if let Some(sampling) = sampling {
                 sampling.for_each(|_, value| values.push(value));
@@ -384,15 +317,15 @@ pub(crate) fn convert_data<T: DataTemplate>(
                 protocol: context.protocol,
                 sequence_number: context.sequence_number,
                 scope: Vec::new(),
-                elements: plan.elements(sampling),
+                elements: layout.elements(&base.elements, sampling),
                 values,
             };
         }
 
         // A time that could not be made absolute keeps its element: it is
         // the one whose value is still relative.
-        let mut elements = plan.own.clone();
-        for time in &plan.times {
+        let mut elements = layout.own.clone();
+        for time in &layout.times {
             if !matches!(values.get(time.index), Some(Value::DateTimeMilliseconds(_))) {
                 elements[time.index] = time.relative;
             }
