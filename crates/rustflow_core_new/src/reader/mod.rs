@@ -42,6 +42,7 @@ pub use collector::Collector;
 pub use options::OptionsTable;
 #[cfg(feature = "pcap")]
 pub use pcap::PcapReader;
+pub use pending::{PendingLimits, PendingStats};
 pub use read::{Flows, Read};
 pub use socket::Reader;
 
@@ -51,5 +52,6 @@ mod collector;
 mod options;
 #[cfg(feature = "pcap")]
 mod pcap;
+mod pending;
 mod read;
 mod socket;

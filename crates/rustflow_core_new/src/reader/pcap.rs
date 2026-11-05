@@ -55,6 +55,10 @@ impl<R: io::Read> PcapReader<R> {
         OptionsTable(&self.queue.collector)
     }
 
+    pub fn collector(&self) -> &Collector {
+        &self.queue.collector
+    }
+
     /// The next record, in capture order; `None` at the end of the
     /// capture. A capture that cannot be read on, such as one cut short
     /// mid-packet, ends at the error: it is returned once, then `None`.

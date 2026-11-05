@@ -131,7 +131,13 @@ fn data_decodes_by_the_template_sent_before_it() {
         .parse(&packet(SOURCE_ID, &[data.clone(), template, data]))
         .unwrap();
 
-    assert_eq!(packet.flow_sets[0], FlowSet::Unknown(256));
+    assert!(matches!(
+        packet.flow_sets[0],
+        FlowSet::Undecoded {
+            flow_set_id: 256,
+            ..
+        }
+    ));
     let FlowSet::Templates(templates) = &packet.flow_sets[1] else {
         panic!("expected a template FlowSet");
     };
@@ -166,7 +172,13 @@ fn templates_are_kept_per_source_id_across_packets() {
         .unwrap();
 
     let other_source = parser.parse(&packet(8, &[octet_count_data(42)])).unwrap();
-    assert_eq!(other_source.flow_sets, [FlowSet::Unknown(256)]);
+    assert!(matches!(
+        other_source.flow_sets[..],
+        [FlowSet::Undecoded {
+            flow_set_id: 256,
+            ..
+        }]
+    ));
 
     let same_source = parser
         .parse(&packet(SOURCE_ID, &[octet_count_data(42)]))
@@ -208,7 +220,13 @@ fn expired_templates_do_not_decode_data() {
             &[octet_count_template(), octet_count_data(42)],
         ))
         .unwrap();
-    assert_eq!(packet.flow_sets[1], FlowSet::Unknown(256));
+    assert!(matches!(
+        packet.flow_sets[1],
+        FlowSet::Undecoded {
+            flow_set_id: 256,
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -374,6 +392,31 @@ fn flow_set_lengths(datagram: &[u8]) -> Vec<u16> {
         at += usize::from(length);
     }
     lengths
+}
+
+#[test]
+fn undecoded_data_decodes_once_its_template_arrives() {
+    let mut parser = parser();
+    let early = parser
+        .parse(&packet(SOURCE_ID, &[octet_count_data(42)]))
+        .unwrap();
+    let FlowSet::Undecoded { flow_set_id, body } = &early.flow_sets[0] else {
+        panic!("expected an undecoded FlowSet");
+    };
+    assert_eq!(parser.decode(SOURCE_ID, *flow_set_id, body), None);
+
+    parser
+        .parse(&packet(SOURCE_ID, &[octet_count_template()]))
+        .unwrap();
+    let flow_set = parser.decode(SOURCE_ID, *flow_set_id, body).unwrap();
+    assert_eq!(data_set(&flow_set).records, [[Value::Unsigned32(42)]]);
+}
+
+#[test]
+fn undecoded_data_is_written_as_sent() {
+    let datagram = packet(SOURCE_ID, &[octet_count_data(42)]);
+    let parsed = parser().parse(&datagram).unwrap();
+    assert_eq!(written(&parsed)[HEADER_SIZE..], datagram[HEADER_SIZE..]);
 }
 
 #[test]

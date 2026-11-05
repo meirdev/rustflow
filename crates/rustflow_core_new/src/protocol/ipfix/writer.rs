@@ -45,6 +45,10 @@ fn write_message(w: &mut Writer, packet: &Packet) -> Result<(), WriteError> {
                 let fields = [&template.scope_fields[..], &template.option_fields].concat();
                 write_data_set(w, template.template_id, &fields, &data.records)?;
             }
+            Set::Undecoded { set_id, body } => write_set(w, *set_id, |w| {
+                w.bytes(body);
+                Ok(())
+            })?,
             Set::Unknown(_) => {}
         }
     }

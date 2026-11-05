@@ -74,7 +74,13 @@ pub enum Set {
     OptionsTemplates(Vec<Arc<OptionsTemplate>>),
     Data(DataSet<Template>),
     OptionsData(DataSet<OptionsTemplate>),
-    /// A reserved set ID, or data whose template is unknown or expired.
+    /// Data whose template is unknown or expired, as sent: [`Parser::decode`]
+    /// decodes it once a later message brings the template.
+    Undecoded {
+        set_id: u16,
+        body: Vec<u8>,
+    },
+    /// A set of a reserved ID.
     Unknown(u16),
 }
 

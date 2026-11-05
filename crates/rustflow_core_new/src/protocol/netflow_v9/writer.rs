@@ -65,6 +65,11 @@ fn write_packet(w: &mut Writer, packet: &Packet) -> Result<(), WriteError> {
                 let fields = [&template.scope_fields[..], &template.option_fields].concat();
                 write_data(w, template.template_id, &fields, &data.records)?;
             }
+            // As sent, padding included.
+            FlowSet::Undecoded { flow_set_id, body } => write_flow_set(w, *flow_set_id, 0, |w| {
+                w.bytes(body);
+                Ok(())
+            })?,
             FlowSet::Unknown(_) => {}
         }
     }
@@ -77,7 +82,7 @@ fn record_count(flow_set: &FlowSet) -> usize {
         FlowSet::OptionsTemplates(templates) => templates.len(),
         FlowSet::Data(data) => data.records.len(),
         FlowSet::OptionsData(data) => data.records.len(),
-        FlowSet::Unknown(_) => 0,
+        FlowSet::Undecoded { .. } | FlowSet::Unknown(_) => 0,
     }
 }
 

@@ -46,6 +46,10 @@ impl Reader {
         OptionsTable(&self.queue.collector)
     }
 
+    pub fn collector(&self) -> &Collector {
+        &self.queue.collector
+    }
+
     /// The next record, in the order the exporters sent them. Datagrams
     /// that carry no records, such as template-only ones, are read past.
     pub fn read(&mut self) -> io::Result<Read> {

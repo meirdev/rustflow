@@ -172,7 +172,7 @@ fn data_decodes_by_the_template_sent_before_it() {
         .parse(&message(DOMAIN, &[data.clone(), template, data]))
         .unwrap();
 
-    assert_eq!(packet.sets[0], Set::Unknown(256));
+    assert!(matches!(packet.sets[0], Set::Undecoded { set_id: 256, .. }));
     let Set::Templates(templates) = &packet.sets[1] else {
         panic!("expected a template set");
     };
@@ -344,7 +344,13 @@ fn an_options_template_needs_one_to_all_of_its_fields_in_scope() {
             .unwrap();
         assert_eq!(
             packet.sets,
-            [Set::OptionsTemplates(Vec::new()), Set::Unknown(257)]
+            [
+                Set::OptionsTemplates(Vec::new()),
+                Set::Undecoded {
+                    set_id: 257,
+                    body: vec![0; 8]
+                }
+            ]
         );
     }
 }
@@ -404,7 +410,8 @@ fn reserved_template_ids_end_the_template_set() {
     let packet = Parser::default()
         .parse(&message(DOMAIN, &[templates, octet_count_data(1)]))
         .unwrap();
-    assert_eq!(packet.sets, [Set::Templates(Vec::new()), Set::Unknown(256)]);
+    assert_eq!(packet.sets[0], Set::Templates(Vec::new()));
+    assert!(matches!(packet.sets[1], Set::Undecoded { set_id: 256, .. }));
 }
 
 #[test]
@@ -433,7 +440,10 @@ fn templates_are_kept_per_domain_until_they_expire() {
         .parse(&message(DOMAIN, &[octet_count_template()]))
         .unwrap();
     let other_domain = parser.parse(&message(8, &[octet_count_data(1)])).unwrap();
-    assert_eq!(other_domain.sets, [Set::Unknown(256)]);
+    assert!(matches!(
+        other_domain.sets[..],
+        [Set::Undecoded { set_id: 256, .. }]
+    ));
     let same_domain = parser
         .parse(&message(DOMAIN, &[octet_count_data(1)]))
         .unwrap();
@@ -446,7 +456,7 @@ fn templates_are_kept_per_domain_until_they_expire() {
             &[octet_count_template(), octet_count_data(1)],
         ))
         .unwrap();
-    assert_eq!(packet.sets[1], Set::Unknown(256));
+    assert!(matches!(packet.sets[1], Set::Undecoded { set_id: 256, .. }));
 }
 
 #[test]
@@ -938,6 +948,32 @@ fn written(packet: &Packet) -> Vec<u8> {
     let mut buf = Vec::new();
     write(packet, &mut buf).unwrap();
     buf
+}
+
+#[test]
+fn undecoded_data_decodes_once_its_template_arrives() {
+    let mut parser = Parser::default();
+    let early = parser
+        .parse(&message(DOMAIN, &[octet_count_data(5)]))
+        .unwrap();
+    let Set::Undecoded { set_id, body } = &early.sets[0] else {
+        panic!("expected an undecoded set");
+    };
+    assert_eq!(parser.decode(DOMAIN, *set_id, body), None);
+
+    parser
+        .parse(&message(DOMAIN, &[octet_count_template()]))
+        .unwrap();
+    let set = parser.decode(DOMAIN, *set_id, body).unwrap();
+    assert_eq!(data_set(&set).records, [[Value::Unsigned32(5)]]);
+    assert_eq!(parser.decode(8, *set_id, body), None);
+}
+
+#[test]
+fn undecoded_data_is_written_as_sent() {
+    let datagram = message(DOMAIN, &[octet_count_data(5)]);
+    let parsed = Parser::default().parse(&datagram).unwrap();
+    assert_eq!(written(&parsed), datagram);
 }
 
 #[test]

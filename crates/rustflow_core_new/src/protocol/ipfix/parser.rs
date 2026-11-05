@@ -90,33 +90,51 @@ impl Parser {
                 Set::OptionsTemplates(templates)
             }
             id if id >= MIN_TEMPLATE_ID => {
-                let Some(entry) = self.templates.get(domain, id) else {
-                    return Ok(Set::Unknown(id));
-                };
-                let records = body.many(|r| self.parse_record(r, domain, &entry.layout, 0));
-                match &entry.template {
-                    TemplateRef::Data(template) => Set::Data(DataSet {
-                        template: Arc::clone(template),
-                        records,
-                    }),
-                    TemplateRef::Options(template) => Set::OptionsData(DataSet {
-                        template: Arc::clone(template),
-                        records,
-                    }),
-                }
+                self.data_set(domain, id, body)
+                    .unwrap_or_else(|| Set::Undecoded {
+                        set_id: id,
+                        body: body.remaining().to_vec(),
+                    })
             }
             id => Set::Unknown(id),
         };
+        self.learn_types(domain, &set);
+        Ok(set)
+    }
 
-        if let Set::OptionsData(data) = &set
+    /// Decodes the body of a [`Set::Undecoded`] of `domain` by its template,
+    /// once a later message brought it; `None` while it is still unknown.
+    pub fn decode(&mut self, domain: u32, set_id: u16, body: &[u8]) -> Option<Set> {
+        let set = self.data_set(domain, set_id, Reader::new(body))?;
+        self.learn_types(domain, &set);
+        Some(set)
+    }
+
+    /// The records of data set `set_id` by its template; `None` without one.
+    fn data_set(&self, domain: u32, set_id: u16, mut body: Reader) -> Option<Set> {
+        let entry = self.templates.get(domain, set_id)?;
+        let records = body.many(|r| self.parse_record(r, domain, &entry.layout, 0));
+        Some(match &entry.template {
+            TemplateRef::Data(template) => Set::Data(DataSet {
+                template: Arc::clone(template),
+                records,
+            }),
+            TemplateRef::Options(template) => Set::OptionsData(DataSet {
+                template: Arc::clone(template),
+                records,
+            }),
+        })
+    }
+
+    /// Learns the types an options data set's type records describe.
+    fn learn_types(&mut self, domain: u32, set: &Set) {
+        if let Set::OptionsData(data) = set
             && self
                 .element_types
                 .learn(domain, &data.template, &data.records, &self.registry)
         {
             self.refresh_layouts(domain);
         }
-
-        Ok(set)
     }
 
     /// The registry's element for a field of `domain`, or else the one the
