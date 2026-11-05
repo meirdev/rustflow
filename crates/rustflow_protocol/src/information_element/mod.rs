@@ -2,6 +2,7 @@
 //! its values are decoded and interpreted.
 
 use std::borrow::Cow;
+use std::fmt;
 
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 pub use registry::Registry;
@@ -78,6 +79,18 @@ impl ElementId {
     }
 }
 
+/// The number part of an Information Element Specifier (RFC 7013 section
+/// 10.1): `(8)` for an IANA element, `(35566/403)` for a vendor's. It is a
+/// partial IESpec in itself, naming the element by number alone.
+impl fmt::Display for ElementId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.enterprise_number {
+            None => write!(f, "({})", self.id),
+            Some(enterprise_number) => write!(f, "({enterprise_number}/{})", self.id),
+        }
+    }
+}
+
 /// An enterprise number and an ID, enterprise number 0 standing for IANA.
 impl From<(u32, u16)> for ElementId {
     fn from((enterprise_number, id): (u32, u16)) -> Self {
@@ -112,6 +125,12 @@ impl InformationElement {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_element_id_displays_as_a_partial_iespec() {
+        assert_eq!(iana::SOURCE_IPV4_ADDRESS.to_string(), "(8)");
+        assert_eq!(ElementId::from((35566, 403)).to_string(), "(35566/403)");
+    }
 
     #[test]
     fn element_ids_from_pairs_take_enterprise_0_as_iana() {

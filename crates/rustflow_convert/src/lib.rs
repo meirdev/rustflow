@@ -11,6 +11,8 @@
 
 pub use record::{Received, Record, Scope};
 pub use rustflow_protocol::{Family, Protocol};
+#[cfg(feature = "serde")]
+pub use text::TextRecord;
 
 mod domain;
 #[cfg(test)]
@@ -23,4 +25,6 @@ mod record;
 mod sampling;
 pub mod sflow_v5;
 mod templated;
+#[cfg(feature = "serde")]
+mod text;
 mod time;

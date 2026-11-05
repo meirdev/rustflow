@@ -6,12 +6,16 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 
 pub use decode::decode;
 pub use encode::{encode, natural_length};
+#[cfg(feature = "serde")]
+pub use text::Text;
 
 use crate::ipfix::{BasicList, SubTemplateList, SubTemplateMultiList};
 
 mod decode;
 mod display;
 mod encode;
+#[cfg(feature = "serde")]
+mod text;
 #[cfg(feature = "jiff")]
 mod timestamp;
 

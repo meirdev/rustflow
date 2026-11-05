@@ -1628,6 +1628,8 @@ dependencies = [
  "etherparse",
  "rustflow_dissect",
  "rustflow_protocol",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
