@@ -4,11 +4,11 @@
 
 use std::sync::Arc;
 
-use crate::convert::domain::Domain;
+use crate::convert::domains::Domain;
 use crate::convert::record::{Fields, Scope};
 use crate::convert::sampling::{Method, Sampling};
 use crate::convert::time::uptime_to_unix_millis;
-use crate::convert::{Protocol, Received, Record, packet_section};
+use crate::convert::{Protocol, Received, Record, packet_fields};
 use crate::protocol::information_element::{ElementId, iana};
 use crate::protocol::netflow_v9::ScopeType;
 use crate::protocol::value::Value;
@@ -328,14 +328,14 @@ pub(crate) fn convert_data<T: DataTemplate>(
             }
         }
         let mut fields = Fields { elements, values };
-        let headers = packet_section::find(fields.iter()).and_then(|(index, layer)| {
+        let headers = packet_fields::find(fields.iter()).and_then(|(index, layer)| {
             let Value::OctetArray(bytes) = &fields.values[index] else {
                 return None;
             };
-            packet_section::headers(layer, bytes)
+            packet_fields::headers(layer, bytes)
         });
         if let Some(headers) = headers {
-            packet_section::add(headers, &mut |element, value| fields.add(element, value));
+            packet_fields::add(headers, &mut |element, value| fields.add(element, value));
         }
         fields.append(base.clone());
         if let Some(sampling) = sampling {

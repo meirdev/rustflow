@@ -1,6 +1,6 @@
 //! IPFIX data records, copied with their relative times made absolute.
 
-use crate::convert::domain::Domains;
+use crate::convert::domains::Domains;
 use crate::convert::templated::{Context, TimeBase, Uptime, convert_data, convert_options};
 use crate::convert::{Protocol, Received, Record};
 use crate::protocol::ipfix::{Packet, Set};

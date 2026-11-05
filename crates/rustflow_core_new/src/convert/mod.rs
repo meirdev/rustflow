@@ -15,11 +15,11 @@ pub use text::TextRecord;
 
 pub use crate::protocol::{Family, Protocol};
 
-mod domain;
+mod domains;
 pub mod ipfix;
 pub mod netflow_v5;
 pub mod netflow_v9;
-mod packet_section;
+mod packet_fields;
 mod record;
 mod sampling;
 pub mod sflow_v5;

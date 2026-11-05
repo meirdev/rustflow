@@ -2,7 +2,7 @@
 //! same elements as IANA's IPFIX registry, which keeps NetFlow v9's
 //! numbers, so their fields are copied, with uptimes made absolute.
 
-use crate::convert::domain::Domains;
+use crate::convert::domains::Domains;
 use crate::convert::templated::{Context, TimeBase, Uptime, convert_data, convert_options};
 use crate::convert::{Protocol, Received, Record};
 use crate::protocol::netflow_v9::{FlowSet, Packet};

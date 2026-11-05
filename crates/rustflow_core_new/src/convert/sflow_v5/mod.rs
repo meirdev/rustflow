@@ -7,7 +7,7 @@
 
 use std::net::IpAddr;
 
-use crate::convert::packet_section::{self, IPV4_ETHERNET_TYPE, IPV6_ETHERNET_TYPE, Layer};
+use crate::convert::packet_fields::{self, IPV4_ETHERNET_TYPE, IPV6_ETHERNET_TYPE, Layer};
 use crate::convert::record::Fields;
 use crate::convert::sampling::{Method, Sampling};
 use crate::convert::{Protocol, Received, Record};
@@ -123,8 +123,8 @@ fn add_sampled_header(fields: &mut Fields, header: &SampledHeader) {
             return;
         }
     };
-    if let Some(headers) = packet_section::headers(layer, &header.header) {
-        packet_section::add(headers, &mut |element, value| fields.add(element, value));
+    if let Some(headers) = packet_fields::headers(layer, &header.header) {
+        packet_fields::add(headers, &mut |element, value| fields.add(element, value));
     }
 }
 
