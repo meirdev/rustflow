@@ -6,7 +6,8 @@ use crate::convert::{Received, Record};
 use crate::protocol::Family;
 use crate::reader::collector::Collector;
 use crate::reader::options::OptionsTable;
-use crate::reader::read::{Flows, Queue, Read};
+use crate::reader::queue::Queue;
+use crate::reader::read::{Flows, Read};
 
 /// Reads records from a UDP socket, whatever protocol each datagram is in.
 pub struct Reader {

@@ -218,6 +218,11 @@ pub(crate) fn convert_data<T: DataTemplate>(
                 None => all_absolute = false,
             }
         }
+        // Usually every time is made absolute and there is no packet
+        // section, so a record's elements are the template's and the
+        // additions: it reuses the list `layout` keeps for its sampling
+        // shape and only appends values, instead of rebuilding its fields
+        // and comparing element lists as the general path below does.
         if all_absolute && !layout.section {
             values.extend(base.values.iter().cloned());
             if let Some(sampling) = sampling {

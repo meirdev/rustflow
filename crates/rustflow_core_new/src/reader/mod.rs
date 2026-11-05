@@ -53,5 +53,6 @@ mod options;
 #[cfg(feature = "pcap")]
 mod pcap;
 mod pending;
+mod queue;
 mod read;
 mod socket;

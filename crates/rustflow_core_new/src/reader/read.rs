@@ -1,12 +1,11 @@
 //! What reading turns up, whatever a reader reads from.
 
-use std::collections::VecDeque;
 use std::io;
 use std::net::SocketAddr;
 
-use crate::convert::{Received, Record};
+use crate::convert::Record;
 use crate::protocol::ParseError;
-use crate::reader::{Collector, Reader};
+use crate::reader::Reader;
 
 /// What one read turned up.
 #[derive(Debug)]
@@ -38,39 +37,5 @@ impl<R: Iterator<Item = io::Result<Record>>> Iterator for Flows<R> {
     fn next(&mut self) -> Option<Self::Item> {
         self.0
             .find(|record| !record.as_ref().is_ok_and(Record::is_options))
-    }
-}
-
-/// A collector, and the records it collected that are not read yet: a
-/// datagram may carry many.
-pub(crate) struct Queue {
-    pub(crate) collector: Collector,
-    pending: VecDeque<Record>,
-}
-
-impl Queue {
-    pub(crate) fn new(collector: Collector) -> Self {
-        Self {
-            collector,
-            pending: VecDeque::new(),
-        }
-    }
-
-    /// The next record collected, in the order the exporters sent them.
-    pub(crate) fn pop(&mut self) -> Option<Read> {
-        self.pending.pop_front().map(Read::Record)
-    }
-
-    /// Collects a datagram's records for [`Queue::pop`]; a datagram that
-    /// does not parse is [`Read::Malformed`].
-    pub(crate) fn collect(&mut self, received: Received, datagram: &[u8]) -> Option<Read> {
-        let error = self
-            .collector
-            .collect(received, datagram, &mut self.pending)
-            .err()?;
-        Some(Read::Malformed {
-            exporter: received.exporter,
-            error,
-        })
     }
 }

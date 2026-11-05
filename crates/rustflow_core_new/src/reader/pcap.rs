@@ -12,7 +12,8 @@ use pcap_file::pcap::PcapReader as PcapFile;
 use crate::convert::{Received, Record};
 use crate::dissect::udp_payload;
 use crate::protocol::Family;
-use crate::reader::read::{Flows, Queue, Read};
+use crate::reader::queue::Queue;
+use crate::reader::read::{Flows, Read};
 use crate::reader::{Collector, OptionsTable};
 
 /// Reads records from a pcap capture, whatever protocol each datagram is
