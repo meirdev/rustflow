@@ -9,12 +9,14 @@
 //! out as records too, with the scope they describe, after what they say
 //! was applied to the flows that follow them.
 
+pub use common_flow::{CommonFlow, FlowType};
 pub use record::{Received, Record, Scope};
 #[cfg(feature = "serde")]
 pub use text::TextRecord;
 
 pub use crate::protocol::{Family, Protocol};
 
+mod common_flow;
 mod domains;
 pub mod ipfix;
 pub mod netflow_v5;

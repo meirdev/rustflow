@@ -1653,6 +1653,7 @@ dependencies = [
  "etherparse",
  "futures-core",
  "jiff",
+ "macaddr",
  "num_enum",
  "pcap-file",
  "rustc-hash",

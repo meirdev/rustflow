@@ -69,6 +69,27 @@ impl Value {
             _ => None,
         }
     }
+
+    /// Nanoseconds since 1970-01-01 UTC of a date-time value; `None` for
+    /// another value.
+    ///
+    /// Seconds and NTP timestamps wrap every 2^32 seconds, so `reference`, a
+    /// UNIX second near the value such as the packet's export time, picks
+    /// the era that puts the value nearest it (RFC 7011 section 5.2).
+    /// Fractions are rounded to the value's precision.
+    pub fn unix_nanos(&self, reference: i64) -> Option<i128> {
+        match *self {
+            Value::DateTimeSeconds(seconds) => {
+                Some(nearest_era(seconds, 0, reference) * NANOS_PER_SECOND)
+            }
+            Value::DateTimeMilliseconds(millis) => Some(i128::from(millis) * 1_000_000),
+            Value::DateTimeMicroseconds(ntp) => {
+                Some(ntp.unix_nanos(reference, MICROSECOND_FRACTION_MASK, 1_000))
+            }
+            Value::DateTimeNanoseconds(ntp) => Some(ntp.unix_nanos(reference, u32::MAX, 1)),
+            _ => None,
+        }
+    }
 }
 
 /// A timestamp in NTP format (RFC 5905 section 6).
@@ -96,4 +117,21 @@ impl NtpTimestamp {
         let units = (u64::from(self.fraction & fraction_mask) * per_second + (1 << 31)) >> 32;
         units * precision
     }
+
+    /// `precision` is in nanoseconds.
+    fn unix_nanos(self, reference: i64, fraction_mask: u32, precision: u64) -> i128 {
+        let seconds = nearest_era(self.seconds, -NTP_UNIX_EPOCH_DIFF, reference);
+        seconds * NANOS_PER_SECOND + i128::from(self.fraction_nanos(fraction_mask, precision))
+    }
+}
+
+const NANOS_PER_SECOND: i128 = 1_000_000_000;
+
+/// The UNIX second `seconds` after `epoch`, moved by whole 2^32-second
+/// eras to lie nearest `reference`.
+fn nearest_era(seconds: u32, epoch: i64, reference: i64) -> i128 {
+    const ERA: i128 = 1 << 32;
+    let second = i128::from(epoch) + i128::from(seconds);
+    let eras = (i128::from(reference) - second + ERA / 2).div_euclid(ERA);
+    second + eras * ERA
 }

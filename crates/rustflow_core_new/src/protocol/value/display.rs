@@ -2,9 +2,10 @@
 
 use std::fmt;
 
-use super::{MICROSECOND_FRACTION_MASK, NTP_UNIX_EPOCH_DIFF, NtpTimestamp, Value};
+use super::{
+    MICROSECOND_FRACTION_MASK, NANOS_PER_SECOND, NTP_UNIX_EPOCH_DIFF, NtpTimestamp, Value,
+};
 
-const NANOS_PER_SECOND: i128 = 1_000_000_000;
 const SECONDS_PER_DAY: i128 = 86_400;
 
 /// Writes a value in its RFC 7373 textual form.

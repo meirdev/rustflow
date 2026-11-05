@@ -118,6 +118,34 @@ mod tests {
     }
 
     #[test]
+    fn date_times_read_as_unix_nanoseconds_in_the_era_nearest_the_reference() {
+        const NOW: i64 = 1_700_000_000;
+        let ntp = |fraction| crate::protocol::value::NtpTimestamp {
+            seconds: u32::try_from(NOW + 2_208_988_800).unwrap(),
+            fraction,
+        };
+        assert_eq!(
+            Value::DateTimeMilliseconds(1_700_000_000_123).unix_nanos(NOW),
+            Some(1_700_000_000_123_000_000)
+        );
+        assert_eq!(
+            Value::DateTimeNanoseconds(ntp(1 << 31)).unix_nanos(NOW),
+            Some(1_700_000_000_500_000_000)
+        );
+        // The bottom 11 bits of a microsecond fraction are ignored.
+        assert_eq!(
+            Value::DateTimeMicroseconds(ntp(0x7ff)).unix_nanos(NOW),
+            Some(1_700_000_000_000_000_000)
+        );
+        // Five seconds past 1970, read near 2106: the next era.
+        assert_eq!(
+            Value::DateTimeSeconds(5).unix_nanos(1 << 32),
+            Some(((1 << 32) + 5) * 1_000_000_000)
+        );
+        assert_eq!(Value::Unsigned64(5).unix_nanos(NOW), None);
+    }
+
+    #[test]
     fn unsigned_integers_of_every_size() {
         let unsigned = |bytes: &[u8]| decode(DataType::Unsigned64, bytes);
         assert_eq!(unsigned(&[0x01]), Value::Unsigned8(0x01));

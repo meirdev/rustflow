@@ -1,59 +1,20 @@
 use jiff::Timestamp;
 
-use super::{MICROSECOND_FRACTION_MASK, NTP_UNIX_EPOCH_DIFF, NtpTimestamp, Value};
+use super::Value;
 
 impl Value {
     /// The instant a date-time value stands for, or `None` for another
-    /// value or an instant jiff cannot represent.
-    ///
-    /// Seconds and NTP timestamps wrap every 2^32 seconds, so
-    /// `reference`, a time near the value such as the packet's export
-    /// time, picks the era that puts the value nearest it (RFC 7011
-    /// section 5.2). Fractions are rounded to the value's precision.
+    /// value or an instant jiff cannot represent; see [`Value::unix_nanos`]
+    /// for how `reference` picks the era of a value that wraps.
     pub fn timestamp(&self, reference: Timestamp) -> Option<Timestamp> {
-        match *self {
-            Value::DateTimeSeconds(seconds) => {
-                Timestamp::from_second(nearest_era(seconds, 0, reference)).ok()
-            }
-            Value::DateTimeMilliseconds(millis) => {
-                Timestamp::from_millisecond(i64::try_from(millis).ok()?).ok()
-            }
-            Value::DateTimeMicroseconds(ntp) => {
-                ntp.timestamp(reference, MICROSECOND_FRACTION_MASK, 1_000)
-            }
-            Value::DateTimeNanoseconds(ntp) => ntp.timestamp(reference, u32::MAX, 1),
-            _ => None,
-        }
+        Timestamp::from_nanosecond(self.unix_nanos(reference.as_second())?).ok()
     }
-}
-
-impl NtpTimestamp {
-    /// `precision` is in nanoseconds.
-    fn timestamp(
-        self,
-        reference: Timestamp,
-        fraction_mask: u32,
-        precision: u64,
-    ) -> Option<Timestamp> {
-        let seconds = nearest_era(self.seconds, -NTP_UNIX_EPOCH_DIFF, reference);
-        let fraction = self.fraction_nanos(fraction_mask, precision);
-        let nanos = i128::from(seconds) * 1_000_000_000 + i128::from(fraction);
-        Timestamp::from_nanosecond(nanos).ok()
-    }
-}
-
-/// The UNIX second `seconds` after `epoch`, moved by whole 2^32-second
-/// eras to lie nearest `reference`.
-fn nearest_era(seconds: u32, epoch: i64, reference: Timestamp) -> i64 {
-    const ERA: i64 = 1 << 32;
-    let second = epoch + i64::from(seconds);
-    let eras = (reference.as_second() - second + ERA / 2).div_euclid(ERA);
-    second + eras * ERA
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::value::{MICROSECOND_FRACTION_MASK, NTP_UNIX_EPOCH_DIFF, NtpTimestamp};
 
     const NOW: i64 = 1_700_000_000;
 

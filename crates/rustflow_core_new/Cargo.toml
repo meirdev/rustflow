@@ -18,6 +18,7 @@ tokio = ["dep:futures-core", "dep:tokio"]
 etherparse.workspace = true
 futures-core = { version = "0.3", optional = true }
 jiff = { version = "0.2.21", optional = true, default-features = false, features = ["std"] }
+macaddr.workspace = true
 num_enum = "0.7.5"
 pcap-file = { workspace = true, optional = true }
 rustc-hash.workspace = true
