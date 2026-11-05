@@ -6,19 +6,19 @@
 //! parsed record is its values in template order, the template saying what
 //! each one is.
 
+pub use data_set::DataSet;
 pub use error::{ParseError, WriteError};
 pub use family::{Family, Protocol};
-pub use record::DataSet;
 
 pub use crate::bytes::Truncated;
 
+mod data_set;
 mod error;
 mod family;
 pub mod information_element;
 pub mod ipfix;
 pub mod netflow_v5;
 pub mod netflow_v9;
-mod record;
 pub mod sflow_v5;
 mod template_cache;
 pub mod value;
