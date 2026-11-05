@@ -1,0 +1,11 @@
+[package]
+name = "rustflow_reader"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Reads NetFlow, IPFIX and sFlow from a socket as IPFIX records, options records included"
+
+[dependencies]
+rustflow_convert = { path = "../rustflow_convert" }
+rustflow_protocol = { path = "../rustflow_protocol" }

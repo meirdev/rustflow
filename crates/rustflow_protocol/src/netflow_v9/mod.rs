@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use num_enum::{FromPrimitive, IntoPrimitive};
 pub use parser::Parser;
 pub use writer::write;
 
@@ -86,10 +87,24 @@ pub struct Field {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OptionsTemplate {
     pub template_id: u16,
-    /// What the options describe. The field type is a scope type: 1 System,
-    /// 2 Interface, 3 Line Card, 4 Cache or 5 Template.
+    /// What the options describe. The field type is a [`ScopeType`].
     pub scope_fields: Vec<Field>,
     pub option_fields: Vec<Field>,
+}
+
+/// What a scope field of an options template names (RFC 3954 section
+/// 6.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, FromPrimitive, IntoPrimitive)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[repr(u16)]
+pub enum ScopeType {
+    System = 1,
+    Interface = 2,
+    LineCard = 3,
+    Cache = 4,
+    Template = 5,
+    #[num_enum(catch_all)]
+    Unassigned(u16),
 }
 
 /// A field's type is the ID of an IANA element.

@@ -1725,6 +1725,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustflow_reader"
+version = "0.19.0"
+dependencies = [
+ "rustflow_convert",
+ "rustflow_protocol",
+]
+
+[[package]]
 name = "rustix"
 version = "1.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

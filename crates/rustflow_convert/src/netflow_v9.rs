@@ -5,7 +5,7 @@
 use rustflow_protocol::netflow_v9::{self, FlowSet, Packet};
 
 use crate::domain::Domains;
-use crate::templated::{Context, Plans, TimeBase, Uptime, convert_data};
+use crate::templated::{Context, Plans, TimeBase, Uptime, convert_data, convert_options};
 use crate::{Protocol, Received, Record};
 
 /// Converts one exporter's NetFlow v9 packets, keeping what its options
@@ -18,9 +18,10 @@ pub struct Converter {
 }
 
 impl Converter {
-    /// Converts a packet's data records, adding them to `records`, after
-    /// learning from its options records. A data record gets the sampling
-    /// that options records gave for its source ID, if any.
+    /// Converts a packet's records, adding them to `records` in packet
+    /// order, after learning from its options records. A data record gets
+    /// the sampling that options records gave for its source ID, if any; an
+    /// options record comes with its scope.
     pub fn convert(
         &mut self,
         packet: Packet,
@@ -48,8 +49,12 @@ impl Converter {
         };
         let domain = self.domains.get(header.source_id);
         for flow_set in packet.flow_sets {
-            if let FlowSet::Data(data) = flow_set {
-                convert_data(&context, domain, &mut self.plans, data, records);
+            match flow_set {
+                FlowSet::Data(data) => {
+                    convert_data(&context, domain, &mut self.plans, data, records);
+                }
+                FlowSet::OptionsData(data) => convert_options(&context, data, records),
+                _ => {}
             }
         }
     }
@@ -62,10 +67,13 @@ mod tests {
 
     use rustflow_protocol::DataSet;
     use rustflow_protocol::information_element::{ElementId, iana};
-    use rustflow_protocol::netflow_v9::{self, Field, Header, OptionsTemplate, Template};
+    use rustflow_protocol::netflow_v9::{
+        self, Field, Header, OptionsTemplate, ScopeType, Template,
+    };
     use rustflow_protocol::value::Value;
 
     use super::*;
+    use crate::Scope;
     use crate::fixtures::udp_payloads;
 
     const SOURCE_ID: u32 = 7;
@@ -184,7 +192,7 @@ mod tests {
     }
 
     #[test]
-    fn options_records_give_the_sampling_and_are_not_records() {
+    fn options_records_give_the_sampling_and_are_records_with_a_scope() {
         let sampling = options(&[
             (iana::SAMPLING_INTERVAL, Value::Unsigned32(100)),
             (iana::SAMPLING_ALGORITHM, Value::Unsigned8(2)),
@@ -195,7 +203,15 @@ mod tests {
             packet(SOURCE_ID, vec![octets_and_uptimes(&[1]), sampling]),
         );
 
-        assert_eq!(records.len(), 1);
+        assert_eq!(records.len(), 2);
+        assert_eq!(
+            records[1].scope,
+            [(Scope::Type(ScopeType::System), Value::Unsigned32(0))]
+        );
+        assert_eq!(
+            records[1].first(iana::SAMPLING_INTERVAL),
+            Some(&Value::Unsigned32(100))
+        );
         assert_eq!(
             records[0].first(iana::SELECTOR_ALGORITHM),
             Some(&Value::Unsigned16(3))
@@ -229,7 +245,7 @@ mod tests {
         }
 
         assert!(!records.is_empty());
-        for record in &records {
+        for record in records.iter().filter(|record| !record.is_options()) {
             assert_eq!(record.values.len(), record.elements.len());
             // The fixture's options record states a sampling interval of 100.
             assert_eq!(
@@ -242,9 +258,16 @@ mod tests {
             ));
             assert_eq!(record.first(iana::FLOW_START_SYS_UP_TIME), None);
         }
+        let flow = records.iter().find(|record| !record.is_options()).unwrap();
         assert_eq!(
-            records[0].first(iana::SOURCE_IPV4_ADDRESS),
+            flow.first(iana::SOURCE_IPV4_ADDRESS),
             Some(&Value::Ipv4Address(Ipv4Addr::new(192, 0, 2, 1)))
+        );
+        let options = records.iter().find(|record| record.is_options()).unwrap();
+        assert_eq!(options.scope.len(), 1);
+        assert_eq!(
+            options.first(iana::SAMPLING_INTERVAL),
+            Some(&Value::Unsigned32(100))
         );
     }
 }

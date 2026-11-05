@@ -4,6 +4,7 @@ use std::time::SystemTime;
 
 use rustflow_protocol::RecordRef;
 use rustflow_protocol::information_element::{ElementId, iana};
+use rustflow_protocol::netflow_v9::ScopeType;
 use rustflow_protocol::value::Value;
 
 use crate::time::unix_millis;
@@ -17,21 +18,36 @@ pub enum Protocol {
     SflowV5,
 }
 
-/// A flow record in IPFIX's information model (RFC 6183 section 8),
-/// whatever protocol it arrived in. Each value is of its element's IANA
-/// data type.
+/// A record in IPFIX's information model (RFC 6183 section 8), whatever
+/// protocol it arrived in: a flow, or with a scope, options describing
+/// what the scope names. Each value is of its element's IANA data type.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Record {
     pub protocol: Protocol,
     /// The sequence number of the packet the record arrived in.
     pub sequence_number: u32,
+    /// What an options record describes (RFC 7011 section 3.4.2.1); empty
+    /// for a flow.
+    pub scope: Vec<(Scope, Value)>,
     /// What each value is. Records of one shape, such as those of one
     /// packet, share it.
     pub elements: Arc<[ElementId]>,
     pub values: Vec<Value>,
 }
 
+/// What a scope value names: an element's value in IPFIX, a scope type's in
+/// NetFlow v9.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Scope {
+    Element(ElementId),
+    Type(ScopeType),
+}
+
 impl Record {
+    pub fn is_options(&self) -> bool {
+        !self.scope.is_empty()
+    }
+
     /// The first value of `element`.
     pub fn first(&self, element: ElementId) -> Option<&Value> {
         self.record_ref().first(element)
@@ -147,6 +163,7 @@ impl Fields {
         Record {
             protocol,
             sequence_number,
+            scope: Vec::new(),
             elements,
             values: self.values,
         }

@@ -372,6 +372,7 @@ pub(crate) mod tests {
         Record {
             protocol: Protocol::Ipfix,
             sequence_number: 1,
+            scope: Vec::new(),
             elements: Arc::from([iana::PROTOCOL_IDENTIFIER]),
             values: vec![Value::Unsigned8(protocol)],
         }

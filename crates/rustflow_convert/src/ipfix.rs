@@ -3,7 +3,7 @@
 use rustflow_protocol::ipfix::{self, Packet, Set};
 
 use crate::domain::Domains;
-use crate::templated::{Context, Plans, TimeBase, Uptime, convert_data};
+use crate::templated::{Context, Plans, TimeBase, Uptime, convert_data, convert_options};
 use crate::{Protocol, Received, Record};
 
 /// Converts one exporter's IPFIX messages, keeping what its options records
@@ -16,9 +16,10 @@ pub struct Converter {
 }
 
 impl Converter {
-    /// Converts a message's data records, adding them to `records`, after
-    /// learning from its options records. A data record gets the sampling
-    /// that options records gave for its observation domain, if any.
+    /// Converts a message's records, adding them to `records` in message
+    /// order, after learning from its options records. A data record gets
+    /// the sampling that options records gave for its observation domain,
+    /// if any; an options record comes with its scope.
     ///
     /// Times relative to the export time (`flowStartDeltaMicroseconds`) are
     /// made absolute from it; uptimes (`flowStartSysUpTime`) from the
@@ -52,8 +53,10 @@ impl Converter {
             },
         };
         for set in packet.sets {
-            if let Set::Data(data) = set {
-                convert_data(&context, domain, &mut self.plans, data, records);
+            match set {
+                Set::Data(data) => convert_data(&context, domain, &mut self.plans, data, records),
+                Set::OptionsData(data) => convert_options(&context, data, records),
+                _ => {}
             }
         }
     }
@@ -71,6 +74,7 @@ mod tests {
     use rustflow_protocol::value::Value;
 
     use super::*;
+    use crate::Scope;
 
     const DOMAIN: u32 = 7;
     const EXPORT_TIME_MS: u64 = 1_700_000_000_000;
@@ -107,7 +111,15 @@ mod tests {
         })
     }
 
+    /// The flows of `sets`, options records left out.
     fn converted(converter: &mut Converter, sets: Vec<Set>) -> Vec<Record> {
+        all_converted(converter, sets)
+            .into_iter()
+            .filter(|record| !record.is_options())
+            .collect()
+    }
+
+    fn all_converted(converter: &mut Converter, sets: Vec<Set>) -> Vec<Record> {
         let packet = Packet {
             header: Header {
                 version: ipfix::VERSION,
@@ -265,6 +277,42 @@ mod tests {
                 "{element:?}"
             );
         }
+    }
+
+    #[test]
+    fn options_records_are_records_with_a_scope() {
+        let records = all_converted(
+            &mut Converter::default(),
+            vec![
+                options(&[(iana::SAMPLING_INTERVAL, Value::Unsigned32(100))]),
+                data(&[(iana::OCTET_DELTA_COUNT, Value::Unsigned64(1))]),
+            ],
+        );
+        assert_eq!(records.len(), 2);
+        let options = &records[0];
+        assert_eq!(
+            options.scope,
+            [(
+                Scope::Element(iana::OBSERVATION_DOMAIN_ID),
+                Value::Unsigned32(DOMAIN)
+            )]
+        );
+        assert_eq!(
+            options.first(iana::SAMPLING_INTERVAL),
+            Some(&Value::Unsigned32(100))
+        );
+        assert_eq!(options.first(iana::SAMPLING_PACKET_SPACE), None);
+        assert!(
+            options
+                .first(iana::ORIGINAL_EXPORTER_IPV4_ADDRESS)
+                .is_some()
+        );
+        let flow = &records[1];
+        assert!(!flow.is_options());
+        assert_eq!(
+            flow.first(iana::SAMPLING_PACKET_SPACE),
+            Some(&Value::Unsigned32(99))
+        );
     }
 
     #[test]

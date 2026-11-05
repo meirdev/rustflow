@@ -5,6 +5,7 @@ use rustflow_convert::Record;
 /// What flows through a pipeline.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Item {
+    /// A flow, or an options record with the scope it describes.
     Record(Record),
     Control(Control),
 }
@@ -24,13 +25,5 @@ pub enum Control {
         exporter: IpAddr,
         domain: u32,
         template_id: u16,
-    },
-    /// An options data record, for processes that keep exporter state of
-    /// their own. Conversion has already applied it to the records that
-    /// follow.
-    Options {
-        exporter: IpAddr,
-        domain: u32,
-        record: Record,
     },
 }

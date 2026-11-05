@@ -5,9 +5,11 @@
 //!
 //! Every record converted carries what a later stage needs without the
 //! packet it came in: absolute times, the exporter that sent it, when it
-//! was received, and how its packets were sampled.
+//! was received, and how its packets were sampled. Options records come
+//! out as records too, with the scope they describe, after what they say
+//! was applied to the flows that follow them.
 
-pub use record::{Protocol, Received, Record};
+pub use record::{Protocol, Received, Record, Scope};
 
 mod domain;
 #[cfg(test)]

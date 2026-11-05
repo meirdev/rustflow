@@ -62,6 +62,7 @@ pub fn convert(packet: Packet, received: &Received, records: &mut impl Extend<Re
         Record {
             protocol: Protocol::NetflowV5,
             sequence_number: header.flow_sequence,
+            scope: Vec::new(),
             elements: Arc::clone(&elements),
             values: record_values(record, millis)
                 .into_iter()

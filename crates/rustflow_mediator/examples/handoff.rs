@@ -44,6 +44,7 @@ fn record(i: u32) -> Record {
     Record {
         protocol: rustflow_convert::Protocol::NetflowV5,
         sequence_number: i,
+        scope: Vec::new(),
         elements,
         values: vec![
             Value::Ipv4Address([10, 0, 0, 1].into()),

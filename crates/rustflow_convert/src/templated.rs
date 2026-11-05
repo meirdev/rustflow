@@ -8,11 +8,12 @@ use std::mem;
 use std::sync::Arc;
 
 use rustflow_protocol::information_element::{ElementId, iana};
+use rustflow_protocol::netflow_v9::ScopeType;
 use rustflow_protocol::value::Value;
 use rustflow_protocol::{DataSet, Elements, ipfix, netflow_v9};
 
 use crate::domain::Domain;
-use crate::record::Fields;
+use crate::record::{Fields, Scope};
 use crate::sampling::{Method, Sampling};
 use crate::time::uptime_to_unix_millis;
 use crate::{Protocol, Received, Record, packet_section};
@@ -59,6 +60,22 @@ impl TimeBase {
             iana::FLOW_START_DELTA_MICROSECONDS => Some(iana::FLOW_START_MILLISECONDS),
             iana::FLOW_END_DELTA_MICROSECONDS => Some(iana::FLOW_END_MILLISECONDS),
             _ => None,
+        }
+    }
+
+    /// Makes a relative time's value absolute, giving the element it then
+    /// is; any other element, or a value that cannot be made absolute, is
+    /// left as it is.
+    fn make_absolute(&self, element: ElementId, value: &mut Value) -> ElementId {
+        match self.absolute_element(element) {
+            Some(absolute) => match self.absolute_value(element, value) {
+                Some(time) => {
+                    *value = time;
+                    absolute
+                }
+                None => element,
+            },
+            None => element,
         }
     }
 
@@ -128,6 +145,72 @@ impl DataTemplate for netflow_v9::Template {
             .iter()
             .map(|field| ElementId::iana(field.field_type))
     }
+}
+
+/// The template of an options data set: scope fields, then option fields.
+pub(crate) trait OptionsTemplate: Elements {
+    fn scope(&self) -> impl Iterator<Item = Scope>;
+
+    fn option_element_ids(&self) -> impl Iterator<Item = ElementId>;
+}
+
+impl OptionsTemplate for ipfix::OptionsTemplate {
+    fn scope(&self) -> impl Iterator<Item = Scope> {
+        self.scope_fields
+            .iter()
+            .map(|field| Scope::Element(field.element_id()))
+    }
+
+    fn option_element_ids(&self) -> impl Iterator<Item = ElementId> {
+        self.option_fields.iter().map(|field| field.element_id())
+    }
+}
+
+impl OptionsTemplate for netflow_v9::OptionsTemplate {
+    fn scope(&self) -> impl Iterator<Item = Scope> {
+        self.scope_fields
+            .iter()
+            .map(|field| Scope::Type(ScopeType::from(field.field_type)))
+    }
+
+    fn option_element_ids(&self) -> impl Iterator<Item = ElementId> {
+        self.option_fields
+            .iter()
+            .map(|field| ElementId::iana(field.field_type))
+    }
+}
+
+/// Converts the records of an options data set, adding them to `records`
+/// with their scope. They are few, so each is converted on its own.
+pub(crate) fn convert_options<T: OptionsTemplate>(
+    context: &Context,
+    data: DataSet<T>,
+    records: &mut impl Extend<Record>,
+) {
+    let base = Fields::additions(context.received, Some(context.domain_id));
+    let mut last_elements = None;
+    let template = &*data.template;
+    let scope_len = template.scope().count();
+    records.extend(data.records.into_iter().map(|mut values| {
+        let mut option_values = values.split_off(scope_len.min(values.len()));
+        let scope = template.scope().zip(values).collect();
+        let mut elements = Vec::with_capacity(option_values.len() + base.elements.len());
+        for (element, value) in template.option_element_ids().zip(&mut option_values) {
+            elements.push(context.time.make_absolute(element, value));
+        }
+        let mut fields = Fields {
+            elements,
+            values: option_values,
+        };
+        fields.append(base.clone());
+        let mut record = fields.into_record(
+            context.protocol,
+            context.sequence_number,
+            &mut last_elements,
+        );
+        record.scope = scope;
+        record
+    }));
 }
 
 /// What converting a record of each template comes to, worked out once per
@@ -300,6 +383,7 @@ pub(crate) fn convert_data<T: DataTemplate>(
             return Record {
                 protocol: context.protocol,
                 sequence_number: context.sequence_number,
+                scope: Vec::new(),
                 elements: plan.elements(sampling),
                 values,
             };
