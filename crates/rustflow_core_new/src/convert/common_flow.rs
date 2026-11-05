@@ -466,7 +466,7 @@ mod tests {
             protocol,
             sequence_number: 7,
             scope: Vec::new(),
-            elements: Arc::from(elements),
+            elements: Arc::new(elements.into()),
             values,
         }
     }

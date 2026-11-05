@@ -388,7 +388,7 @@ pub(crate) mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
-    use rustflow_core_new::convert::{Protocol, Record};
+    use rustflow_core_new::convert::{Elements, Protocol, Record};
     use rustflow_core_new::protocol::information_element::{ElementId, iana};
     use rustflow_core_new::protocol::value::Value;
 
@@ -400,7 +400,7 @@ pub(crate) mod tests {
             protocol: Protocol::Ipfix,
             sequence_number: 1,
             scope: Vec::new(),
-            elements: Arc::from([iana::PROTOCOL_IDENTIFIER]),
+            elements: Arc::new(Elements::from(vec![iana::PROTOCOL_IDENTIFIER])),
             values: vec![Value::Unsigned8(protocol)],
         }
     }
@@ -435,7 +435,7 @@ pub(crate) mod tests {
                 Item::Record(mut record) => {
                     let mut elements = record.elements.to_vec();
                     elements.push(self.0);
-                    record.elements = elements.into();
+                    record.elements = Arc::new(elements.into());
                     record.values.push(self.1.clone());
                     out.record(record);
                 }

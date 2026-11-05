@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crate::convert::record::Fields;
 use crate::convert::sampling::Sampling;
 use crate::convert::time::uptime_to_unix_millis;
-use crate::convert::{Protocol, Received, Record};
+use crate::convert::{Elements, Protocol, Received, Record};
 use crate::protocol::information_element::{ElementId, iana};
 use crate::protocol::netflow_v5::{FlowRecord, Packet};
 use crate::protocol::value::Value;
@@ -55,7 +55,9 @@ pub fn convert(packet: Packet, received: &Received, records: &mut impl Extend<Re
         method: None,
     }
     .add_to(&mut additions);
-    let elements: Arc<[ElementId]> = ELEMENTS.iter().copied().chain(additions.elements).collect();
+    let elements = Arc::new(Elements::from_iter(
+        ELEMENTS.iter().copied().chain(additions.elements),
+    ));
 
     records.extend(packet.flow_records.iter().map(|record| {
         Record {

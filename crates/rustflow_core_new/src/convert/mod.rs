@@ -10,7 +10,7 @@
 //! was applied to the flows that follow them.
 
 pub use common_flow::{CommonFlow, FlowType};
-pub use record::{Received, Record, Scope};
+pub use record::{Elements, Received, Record, Scope};
 #[cfg(feature = "serde")]
 pub use text::TextRecord;
 

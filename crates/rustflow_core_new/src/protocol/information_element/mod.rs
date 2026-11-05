@@ -61,7 +61,7 @@ pub enum DataTypeSemantics {
 
 /// What an information element is known by: its ID, among IANA's elements
 /// or a vendor's. [`iana`] has a constant for each of IANA's.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ElementId {
     /// The private enterprise number of a vendor's element; `None` for an

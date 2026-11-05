@@ -9,7 +9,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use std::{io, thread};
 
-use rustflow_core_new::protocol::information_element::{ElementId, iana};
+use rustflow_core_new::convert::Elements;
+use rustflow_core_new::protocol::information_element::iana;
 use rustflow_core_new::protocol::value::Value;
 use rustflow_mediator::{Exporter, Item, Output, Pipeline, Process, Record, Runner, Schedule};
 
@@ -19,7 +20,7 @@ const RECORDS: usize = CHUNK * CHUNKS;
 
 /// A NetFlow v5-sized record: the elements the converter gives one.
 fn record(i: u32) -> Record {
-    let elements: Arc<[ElementId]> = Arc::from([
+    let elements = Arc::new(Elements::from(vec![
         iana::SOURCE_IPV4_ADDRESS,
         iana::DESTINATION_IPV4_ADDRESS,
         iana::IP_NEXT_HOP_IPV4_ADDRESS,
@@ -40,7 +41,7 @@ fn record(i: u32) -> Record {
         iana::DESTINATION_IPV4_PREFIX_LENGTH,
         iana::ORIGINAL_EXPORTER_IPV4_ADDRESS,
         iana::COLLECTION_TIME_MILLISECONDS,
-    ]);
+    ]));
     Record {
         protocol: rustflow_core_new::convert::Protocol::NetflowV5,
         sequence_number: i,
@@ -81,7 +82,7 @@ impl Process for Tag {
             Item::Record(mut record) => {
                 let mut elements = record.elements.to_vec();
                 elements.push(iana::DOT1Q_VLAN_ID);
-                record.elements = elements.into();
+                record.elements = Arc::new(elements.into());
                 record.values.push(Value::Unsigned16(7));
                 out.record(record);
             }

@@ -1,4 +1,5 @@
 use std::net::{IpAddr, SocketAddr};
+use std::ops::Deref;
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -21,8 +22,88 @@ pub struct Record {
     pub scope: Vec<(Scope, Value)>,
     /// What each value is. Records of one shape, such as those of one
     /// packet, share it.
-    pub elements: Arc<[ElementId]>,
+    pub elements: Arc<Elements>,
     pub values: Vec<Value>,
+}
+
+/// The elements of records of one shape, and where each is, so that a
+/// value is found by its element without a scan of the record. Built once
+/// per shape; records of the shape share it.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Elements {
+    list: Box<[ElementId]>,
+    /// The first position of each IANA element, by id, as far as the
+    /// largest id the list has; [`NONE`] for an id the list lacks.
+    iana: Box<[usize]>,
+    /// The first position of each enterprise element, sorted by element.
+    enterprise: Box<[(ElementId, usize)]>,
+}
+
+const NONE: usize = usize::MAX;
+
+impl Elements {
+    /// Where `element` first is in a record of these elements.
+    pub fn position(&self, element: ElementId) -> Option<usize> {
+        match element.enterprise_number {
+            None => self
+                .iana
+                .get(usize::from(element.id))
+                .copied()
+                .filter(|&position| position != NONE),
+            Some(_) => {
+                let found = self
+                    .enterprise
+                    .binary_search_by_key(&element, |&(known, _)| known)
+                    .ok()?;
+                Some(self.enterprise[found].1)
+            }
+        }
+    }
+}
+
+impl From<Vec<ElementId>> for Elements {
+    fn from(list: Vec<ElementId>) -> Self {
+        let ids = list
+            .iter()
+            .filter(|element| element.enterprise_number.is_none())
+            .map(|element| usize::from(element.id) + 1)
+            .max()
+            .unwrap_or(0);
+        let mut iana = vec![NONE; ids];
+        let mut enterprise = Vec::new();
+        for (position, &element) in list.iter().enumerate() {
+            match element.enterprise_number {
+                None => {
+                    let slot = &mut iana[usize::from(element.id)];
+                    if *slot == NONE {
+                        *slot = position;
+                    }
+                }
+                Some(_) => enterprise.push((element, position)),
+            }
+        }
+        enterprise.sort();
+        enterprise.dedup_by_key(|&mut (element, _)| element);
+        Self {
+            list: list.into(),
+            iana: iana.into(),
+            enterprise: enterprise.into(),
+        }
+    }
+}
+
+impl FromIterator<ElementId> for Elements {
+    fn from_iter<I: IntoIterator<Item = ElementId>>(iter: I) -> Self {
+        Vec::from_iter(iter).into()
+    }
+}
+
+impl Deref for Elements {
+    type Target = [ElementId];
+
+    fn deref(&self) -> &[ElementId] {
+        &self.list
+    }
 }
 
 /// What a scope value names: an element's value, as IPFIX scopes and the
@@ -41,7 +122,7 @@ impl Record {
 
     /// The first value of `element`.
     pub fn first(&self, element: ElementId) -> Option<&Value> {
-        self.all(element).next()
+        self.values.get(self.elements.position(element)?)
     }
 
     /// Every value of `element`, which a record may hold more than once.
@@ -182,11 +263,11 @@ impl Fields {
         self,
         protocol: Protocol,
         sequence_number: u32,
-        last_elements: &mut Option<Arc<[ElementId]>>,
+        last_elements: &mut Option<Arc<Elements>>,
     ) -> Record {
         let elements = match last_elements {
             Some(last) if last[..] == self.elements[..] => Arc::clone(last),
-            _ => Arc::clone(last_elements.insert(self.elements.into())),
+            _ => Arc::clone(last_elements.insert(Arc::new(self.elements.into()))),
         };
         Record {
             protocol,
@@ -195,5 +276,29 @@ impl Fields {
             elements,
             values: self.values,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_elements_position_is_its_first() {
+        let vendor = ElementId::from((9, 1));
+        let elements = Elements::from(vec![
+            iana::OCTET_DELTA_COUNT,
+            vendor,
+            iana::PACKET_DELTA_COUNT,
+            iana::OCTET_DELTA_COUNT,
+            vendor,
+        ]);
+        assert_eq!(elements.position(iana::OCTET_DELTA_COUNT), Some(0));
+        assert_eq!(elements.position(vendor), Some(1));
+        assert_eq!(elements.position(iana::PACKET_DELTA_COUNT), Some(2));
+        assert_eq!(elements.position(iana::PROTOCOL_IDENTIFIER), None);
+        assert_eq!(elements.position(iana::COLLECTION_TIME_MILLISECONDS), None);
+        assert_eq!(elements.position(ElementId::from((9, 2))), None);
+        assert_eq!(elements.len(), 5);
     }
 }

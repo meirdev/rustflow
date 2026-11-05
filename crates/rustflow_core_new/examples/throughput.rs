@@ -1,5 +1,5 @@
-//! How fast captured IPFIX, NetFlow and sFlow datagrams parse, and collect
-//! into records:
+//! How fast captured IPFIX, NetFlow and sFlow datagrams parse, collect
+//! into records, and come out as common flows:
 //!
 //! ```text
 //! cargo run --release -p rustflow_core_new --example throughput -- capture.pcap [payload MB]
@@ -10,15 +10,18 @@
 //! timed. The capture is taken as NetFlow and IPFIX, or as sFlow with
 //! `sflow` as a third argument. A first pass through the collector learns
 //! the templates; the timed passes follow: one parsing alone, one
-//! collecting.
+//! collecting, one collecting and making a common flow of every flow
+//! record.
 
 use std::collections::HashMap;
 use std::fs::File;
+use std::hint::black_box;
 use std::io;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use pcap_file::pcap::PcapReader;
+use rustflow_core_new::convert::CommonFlow;
 use rustflow_core_new::dissect::udp_payload;
 use rustflow_core_new::protocol::information_element::Registry;
 use rustflow_core_new::protocol::{
@@ -71,6 +74,8 @@ fn main() -> io::Result<()> {
     report("parse", &counts, elapsed);
     let (counts, elapsed) = collect(&datagrams, &mut collector);
     report("parse + convert", &counts, elapsed);
+    let (counts, elapsed) = flows(&datagrams, &mut collector);
+    report("+ common flow", &counts, elapsed);
     Ok(())
 }
 
@@ -113,6 +118,26 @@ fn collect(datagrams: &[Datagram], collector: &mut Collector) -> (Counts, Durati
         records.clear();
         collector.collect(received, &datagram.payload, &mut records)?;
         Ok(records.len())
+    })
+}
+
+/// The whole way: parsed, converted, and every flow record made a
+/// [`CommonFlow`]. Counts the flows.
+fn flows(datagrams: &[Datagram], collector: &mut Collector) -> (Counts, Duration) {
+    let mut records: Vec<Record> = Vec::new();
+    timed(datagrams, |datagram| {
+        let received = Received {
+            exporter: datagram.exporter,
+            time: None,
+        };
+        records.clear();
+        collector.collect(received, &datagram.payload, &mut records)?;
+        let mut flows = 0;
+        for record in records.iter().filter(|record| !record.is_options()) {
+            black_box(CommonFlow::from(record));
+            flows += 1;
+        }
+        Ok(flows)
     })
 }
 

@@ -6,7 +6,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use crate::convert::domains::{Domain, Domains, SAMPLING_KEYS, sampling_key};
-use crate::convert::record::{Fields, Scope};
+use crate::convert::record::{Elements, Fields, Scope};
 use crate::convert::sampling::{Method, Sampling};
 use crate::convert::time::{TimeBase, Uptime};
 use crate::convert::{Protocol, Received, Record, packet_fields};
@@ -241,7 +241,7 @@ struct Layout {
     section: bool,
     /// The elements of a whole record, additions included, by sampling
     /// shape, built as records of that shape come.
-    shapes: [Option<Arc<[ElementId]>>; SHAPES],
+    shapes: [Option<Arc<Elements>>; SHAPES],
 }
 
 /// How many element lists sampling can end a record with: none, and one
@@ -302,11 +302,7 @@ impl Layout {
         }
     }
 
-    fn elements(
-        &mut self,
-        additions: &[ElementId],
-        sampling: Option<Sampling>,
-    ) -> Arc<[ElementId]> {
+    fn elements(&mut self, additions: &[ElementId], sampling: Option<Sampling>) -> Arc<Elements> {
         let Self { own, shapes, .. } = self;
         Arc::clone(shapes[shape(sampling)].get_or_insert_with(|| {
             let mut elements = own.clone();
@@ -314,7 +310,7 @@ impl Layout {
             if let Some(sampling) = sampling {
                 sampling.for_each(|element, _| elements.push(element));
             }
-            elements.into()
+            Arc::new(elements.into())
         }))
     }
 }

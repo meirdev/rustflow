@@ -190,7 +190,7 @@ mod tests {
             protocol: Protocol::Ipfix,
             sequence_number: 0,
             scope: vec![(Scope::Element(scope), value)],
-            elements: Arc::from(elements),
+            elements: Arc::new(elements.into()),
             values,
         };
         domains.learn(domain, &record);

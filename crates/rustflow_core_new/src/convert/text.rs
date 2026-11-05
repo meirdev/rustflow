@@ -105,7 +105,7 @@ mod tests {
             protocol: Protocol::Ipfix,
             sequence_number: 0,
             scope,
-            elements: Arc::from(elements),
+            elements: Arc::new(elements.into()),
             values,
         }
     }
