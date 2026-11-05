@@ -10,13 +10,7 @@ use crate::error::fit_u32;
 /// and lengths written are those of what is written. On error, nothing is
 /// written.
 pub fn write(packet: &Packet, buf: &mut Vec<u8>) -> Result<(), WriteError> {
-    let mut w = Writer::new(buf);
-    let start = w.len();
-    let written = write_datagram(&mut w, packet);
-    if written.is_err() {
-        w.truncate(start);
-    }
-    written
+    Writer::new(buf).transaction(|w| write_datagram(w, packet))
 }
 
 fn write_datagram(w: &mut Writer, packet: &Packet) -> Result<(), WriteError> {

@@ -9,3 +9,6 @@ description = "Reads NetFlow, IPFIX and sFlow from a socket as IPFIX records, op
 [dependencies]
 rustflow_convert = { path = "../rustflow_convert" }
 rustflow_protocol = { path = "../rustflow_protocol" }
+
+[dev-dependencies]
+rustflow_dissect = { path = "../rustflow_dissect" }

@@ -9,7 +9,8 @@
 //! out as records too, with the scope they describe, after what they say
 //! was applied to the flows that follow them.
 
-pub use record::{Protocol, Received, Record, Scope};
+pub use record::{Received, Record, Scope};
+pub use rustflow_protocol::Protocol;
 
 mod domain;
 #[cfg(test)]

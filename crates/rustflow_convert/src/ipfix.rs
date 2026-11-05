@@ -49,25 +49,24 @@ impl Converter {
             .sets
             .into_iter()
             .partition(|set| matches!(set, Set::OptionsData(_)));
-        let mut converted = Vec::new();
         for set in options {
             if let Set::OptionsData(set) = set {
-                convert_options(&context(&self.domains), set, &mut converted);
+                let context = context(&self.domains);
+                let domains = &mut self.domains;
+                records.extend(
+                    convert_options(&context, set)
+                        .inspect(|record| domains.learn(domain_id, record)),
+                );
             }
         }
-        for record in &converted {
-            self.domains.learn(domain_id, record);
-        }
-        records.extend(converted.drain(..));
 
         let context = context(&self.domains);
         let domain = self.domains.get(domain_id);
         for set in data {
             if let Set::Data(set) = set {
-                convert_data(&context, domain, set, &mut converted);
+                convert_data(&context, domain, set, records);
             }
         }
-        records.extend(converted);
     }
 
     /// The latest options record of each kind the exporter sent, with its

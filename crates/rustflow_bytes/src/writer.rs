@@ -27,6 +27,20 @@ impl<'a> Writer<'a> {
         self.buf.truncate(len);
     }
 
+    /// Runs `write`, keeping what it wrote only if it succeeds: on an
+    /// error, the buffer is as it was.
+    pub fn transaction<E>(
+        &mut self,
+        write: impl FnOnce(&mut Self) -> Result<(), E>,
+    ) -> Result<(), E> {
+        let start = self.len();
+        let written = write(self);
+        if written.is_err() {
+            self.truncate(start);
+        }
+        written
+    }
+
     /// Overwrites the two bytes at `at`, such as a length known only once
     /// what it counts is written.
     ///

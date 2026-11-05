@@ -206,7 +206,32 @@ mod tests {
         let data = ipfix(&[set(256, &5u32.to_be_bytes())]);
         // A NetFlow v5 header announcing one record, and an empty record.
         let v5 = [words(&[5, 1]), vec![0; 20 + 48]].concat();
-        for datagram in [&templates, &options, &data, &v5, &[1, 2, 3][..]] {
+        // An sFlow datagram from agent 192.0.2.1 with one flow sample of no
+        // records: version, address type and address, sub-agent, sequence,
+        // uptime, sample count; then the sample's format, length and body.
+        let sflow: Vec<u8> = [
+            5,
+            1,
+            0xc000_0201,
+            0,
+            1,
+            0,
+            1,
+            1,
+            32,
+            1,
+            1,
+            1000,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ]
+        .iter()
+        .flat_map(|word: &u32| word.to_be_bytes())
+        .collect();
+        for datagram in [&templates, &options, &data, &v5, &sflow, &[1, 2, 3][..]] {
             sender.send_to(datagram, addr).unwrap();
         }
 
@@ -232,6 +257,14 @@ mod tests {
             panic!("expected the v5 flow");
         };
         assert_eq!(flow.protocol, Protocol::NetflowV5);
+        let Read::Record(flow) = reader.read().unwrap() else {
+            panic!("expected the sFlow flow");
+        };
+        assert_eq!(flow.protocol, Protocol::SflowV5);
+        assert_eq!(
+            flow.first(iana::SAMPLING_POPULATION),
+            Some(&Value::Unsigned32(1000))
+        );
         assert!(matches!(reader.read().unwrap(), Read::Malformed { .. }));
         assert!(matches!(reader.read().unwrap(), Read::Timeout));
 

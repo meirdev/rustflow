@@ -1729,6 +1729,7 @@ name = "rustflow_reader"
 version = "0.19.0"
 dependencies = [
  "rustflow_convert",
+ "rustflow_dissect",
  "rustflow_protocol",
 ]
 

@@ -2,7 +2,6 @@
 //! already: copied, with relative times made absolute and what conversion
 //! adds appended.
 
-use std::mem;
 use std::sync::Arc;
 
 use rustflow_protocol::information_element::{ElementId, iana};
@@ -164,18 +163,17 @@ impl OptionsTemplate for netflow_v9::OptionsTemplate {
     }
 }
 
-/// Converts the records of an options data set, adding them to `records`
-/// with their scope. They are few, so each is converted on its own.
-pub(crate) fn convert_options<T: OptionsTemplate>(
-    context: &Context,
+/// Converts the records of an options data set, each with its scope. They
+/// are few, so each is converted on its own.
+pub(crate) fn convert_options<'a, T: OptionsTemplate + 'a>(
+    context: &'a Context,
     data: DataSet<T>,
-    records: &mut Vec<Record>,
-) {
+) -> impl Iterator<Item = Record> + 'a {
     let base = Fields::additions(context.received, Some(context.domain_id));
     let mut last_elements = None;
-    let template = &*data.template;
+    let template = data.template;
     let scope_len = template.scope().count();
-    records.extend(data.records.into_iter().map(|mut values| {
+    data.records.into_iter().map(move |mut values| {
         let mut option_values = values.split_off(scope_len.min(values.len()));
         let scope = template.scope().zip(values).collect();
         let mut elements = Vec::with_capacity(option_values.len() + base.elements.len());
@@ -194,7 +192,7 @@ pub(crate) fn convert_options<T: OptionsTemplate>(
         );
         record.scope = scope;
         record
-    }));
+    })
 }
 
 /// What converting a record of a template comes to, worked out once per
@@ -290,7 +288,7 @@ pub(crate) fn convert_data<T: DataTemplate>(
     context: &Context,
     domain: Option<&Domain>,
     data: DataSet<T>,
-    records: &mut Vec<Record>,
+    records: &mut impl Extend<Record>,
 ) {
     let base = Fields::additions(context.received, Some(context.domain_id));
     let mut layout = Layout::of(context, &*data.template);
@@ -331,16 +329,14 @@ pub(crate) fn convert_data<T: DataTemplate>(
             }
         }
         let mut fields = Fields { elements, values };
-        if let Some((index, layer)) = packet_section::find(fields.iter()) {
-            // The bytes are taken out while the fields they yield are added,
-            // which may move the values.
-            let section = mem::replace(&mut fields.values[index], Value::Null);
-            if let Value::OctetArray(bytes) = &section {
-                packet_section::dissect(layer, bytes, &mut |element, value| {
-                    fields.add(element, value);
-                });
-            }
-            fields.values[index] = section;
+        let headers = packet_section::find(fields.iter()).and_then(|(index, layer)| {
+            let Value::OctetArray(bytes) = &fields.values[index] else {
+                return None;
+            };
+            packet_section::headers(layer, bytes)
+        });
+        if let Some(headers) = headers {
+            packet_section::add(headers, &mut |element, value| fields.add(element, value));
         }
         fields.append(base.clone());
         if let Some(sampling) = sampling {

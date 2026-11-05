@@ -18,13 +18,7 @@ const MIN_OPTIONS_TEMPLATE_SIZE: usize = 6;
 /// holds. Unknown FlowSets, whose records were not kept, are left out. On
 /// error, nothing is written.
 pub fn write(packet: &Packet, buf: &mut Vec<u8>) -> Result<(), WriteError> {
-    let mut w = Writer::new(buf);
-    let start = w.len();
-    let written = write_packet(&mut w, packet);
-    if written.is_err() {
-        w.truncate(start);
-    }
-    written
+    Writer::new(buf).transaction(|w| write_packet(w, packet))
 }
 
 fn write_packet(w: &mut Writer, packet: &Packet) -> Result<(), WriteError> {

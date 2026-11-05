@@ -2,20 +2,12 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use rustflow_protocol::Protocol;
 use rustflow_protocol::information_element::{ElementId, iana};
 use rustflow_protocol::netflow_v9::ScopeType;
 use rustflow_protocol::value::Value;
 
 use crate::time::unix_millis;
-
-/// The protocol a record arrived in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Protocol {
-    NetflowV5,
-    NetflowV9,
-    Ipfix,
-    SflowV5,
-}
 
 /// A record in IPFIX's information model (RFC 6183 section 8), whatever
 /// protocol it arrived in: a flow, or with a scope, options describing

@@ -48,24 +48,25 @@ pub(crate) fn find<'a>(
         .or_else(|| packet.map(|index| (index, Layer::Ip)))
 }
 
-/// Gives `add` each field the section yields, an element more than once
+/// The headers of a section, peeled through any tunnels.
+pub(crate) fn headers(layer: Layer, bytes: &[u8]) -> Option<Headers> {
+    match layer {
+        Layer::Ethernet => rustflow_dissect::ethernet(bytes),
+        Layer::Ip => rustflow_dissect::ip(bytes),
+    }
+}
+
+/// Gives `add` each field the headers yield, an element more than once
 /// where layers repeat one: the network layer comes first, so that the
 /// `ethernetType` a caller keeping the first of each gets is the one of
 /// the IP packet giving the addresses, though a tunnel such as GRE or MPLS
 /// sat under it in the frame.
-pub(crate) fn dissect(layer: Layer, bytes: &[u8], add: &mut impl FnMut(ElementId, Value)) {
-    let headers = match layer {
-        Layer::Ethernet => rustflow_dissect::ethernet(bytes),
-        Layer::Ip => rustflow_dissect::ip(bytes),
-    };
-    let Some(Headers {
+pub(crate) fn add(headers: Headers, add: &mut impl FnMut(ElementId, Value)) {
+    let Headers {
         link,
         net,
         transport,
-    }) = headers
-    else {
-        return;
-    };
+    } = headers;
     if let Some(net) = net {
         add_net(net, add);
     }
@@ -198,7 +199,7 @@ mod tests {
     /// The fields as a caller keeps them: the first of each element.
     fn dissected(layer: Layer, bytes: &[u8]) -> Vec<(ElementId, Value)> {
         let mut fields: Vec<(ElementId, Value)> = Vec::new();
-        dissect(layer, bytes, &mut |element, value| {
+        add(headers(layer, bytes).unwrap(), &mut |element, value| {
             if !fields.iter().any(|(known, _)| *known == element) {
                 fields.push((element, value));
             }

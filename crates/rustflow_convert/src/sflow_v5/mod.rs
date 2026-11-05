@@ -124,9 +124,9 @@ fn add_sampled_header(fields: &mut Fields, header: &SampledHeader) {
             return;
         }
     };
-    packet_section::dissect(layer, &header.header, &mut |element, value| {
-        fields.add(element, value);
-    });
+    if let Some(headers) = packet_section::headers(layer, &header.header) {
+        packet_section::add(headers, &mut |element, value| fields.add(element, value));
+    }
 }
 
 fn add_sampled_ethernet(fields: &mut Fields, ethernet: &SampledEthernet) {

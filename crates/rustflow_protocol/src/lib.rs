@@ -7,6 +7,7 @@
 //! each one is.
 
 pub use error::{ParseError, WriteError};
+pub use protocol::Protocol;
 pub use record::DataSet;
 
 mod error;
@@ -16,6 +17,7 @@ pub mod information_element;
 pub mod ipfix;
 pub mod netflow_v5;
 pub mod netflow_v9;
+mod protocol;
 mod record;
 pub mod sflow_v5;
 mod template_cache;

@@ -41,24 +41,22 @@ impl Converter {
             .flow_sets
             .into_iter()
             .partition(|flow_set| matches!(flow_set, FlowSet::OptionsData(_)));
-        let mut converted = Vec::new();
         for flow_set in options {
             if let FlowSet::OptionsData(set) = flow_set {
-                convert_options(&context, set, &mut converted);
+                let domains = &mut self.domains;
+                records.extend(
+                    convert_options(&context, set)
+                        .inspect(|record| domains.learn(header.source_id, record)),
+                );
             }
         }
-        for record in &converted {
-            self.domains.learn(header.source_id, record);
-        }
-        records.extend(converted.drain(..));
 
         let domain = self.domains.get(header.source_id);
         for flow_set in data {
             if let FlowSet::Data(set) = flow_set {
-                convert_data(&context, domain, set, &mut converted);
+                convert_data(&context, domain, set, records);
             }
         }
-        records.extend(converted);
     }
 
     /// The latest options record of each kind the exporter sent, with its

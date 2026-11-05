@@ -10,13 +10,7 @@ use crate::value::{Value, encode, natural_length};
 /// not padded, and unknown sets, whose records were not kept, are left out.
 /// On error, nothing is written.
 pub fn write(packet: &Packet, buf: &mut Vec<u8>) -> Result<(), WriteError> {
-    let mut w = Writer::new(buf);
-    let start = w.len();
-    let written = write_message(&mut w, packet);
-    if written.is_err() {
-        w.truncate(start);
-    }
-    written
+    Writer::new(buf).transaction(|w| write_message(w, packet))
 }
 
 fn write_message(w: &mut Writer, packet: &Packet) -> Result<(), WriteError> {

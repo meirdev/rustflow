@@ -6,8 +6,8 @@ use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use rustflow_convert::{Received, Record, ipfix, netflow_v5, netflow_v9, sflow_v5};
-use rustflow_protocol::ParseError;
 use rustflow_protocol::information_element::Registry;
+use rustflow_protocol::{ParseError, Protocol};
 
 /// Sessions one collector may keep state for; the network decides how many
 /// exporters send to it.
@@ -40,67 +40,6 @@ struct Templated<P, C> {
     converter: C,
 }
 
-trait Protocol: Sized {
-    fn new(registry: Registry, timeout: Duration) -> Self;
-
-    fn collect(
-        &mut self,
-        datagram: &[u8],
-        received: &Received,
-        records: &mut impl Extend<Record>,
-    ) -> Result<(), ParseError>;
-
-    fn options(&self) -> impl Iterator<Item = (u32, &Record)>;
-}
-
-impl Protocol for Templated<rustflow_protocol::netflow_v9::Parser, netflow_v9::Converter> {
-    fn new(registry: Registry, timeout: Duration) -> Self {
-        Self {
-            parser: rustflow_protocol::netflow_v9::Parser::new(registry, timeout),
-            converter: netflow_v9::Converter::default(),
-        }
-    }
-
-    fn collect(
-        &mut self,
-        datagram: &[u8],
-        received: &Received,
-        records: &mut impl Extend<Record>,
-    ) -> Result<(), ParseError> {
-        self.converter
-            .convert(self.parser.parse(datagram)?, received, records);
-        Ok(())
-    }
-
-    fn options(&self) -> impl Iterator<Item = (u32, &Record)> {
-        self.converter.options()
-    }
-}
-
-impl Protocol for Templated<rustflow_protocol::ipfix::Parser, ipfix::Converter> {
-    fn new(registry: Registry, timeout: Duration) -> Self {
-        Self {
-            parser: rustflow_protocol::ipfix::Parser::new(registry, timeout),
-            converter: ipfix::Converter::default(),
-        }
-    }
-
-    fn collect(
-        &mut self,
-        datagram: &[u8],
-        received: &Received,
-        records: &mut impl Extend<Record>,
-    ) -> Result<(), ParseError> {
-        self.converter
-            .convert(self.parser.parse(datagram)?, received, records);
-        Ok(())
-    }
-
-    fn options(&self) -> impl Iterator<Item = (u32, &Record)> {
-        self.converter.options()
-    }
-}
-
 impl Collector {
     /// Fields are looked up in `registry`. A template expires `timeout`
     /// after it was last received.
@@ -113,44 +52,42 @@ impl Collector {
         }
     }
 
-    /// Converts a datagram's records, adding them to `records`. The
-    /// protocol is read from the datagram: NetFlow and IPFIX put their
-    /// version in the first two bytes, sFlow in the first four.
+    /// Converts a datagram's records, adding them to `records`, by the
+    /// protocol its first bytes say it is in.
     pub fn collect(
         &mut self,
         received: Received,
         datagram: &[u8],
         records: &mut impl Extend<Record>,
     ) -> Result<(), ParseError> {
-        let version = match datagram {
-            [0, 0, ..] => rustflow_protocol::sflow_v5::VERSION,
-            [high, low, ..] => u32::from(u16::from_be_bytes([*high, *low])),
-            _ => 0,
-        };
         let (registry, timeout) = (self.registry.clone(), self.timeout);
-        match version {
-            5 => netflow_v5::convert(
+        match Protocol::of(datagram)? {
+            Protocol::NetflowV5 => netflow_v5::convert(
                 rustflow_protocol::netflow_v5::parse(datagram)?,
                 &received,
                 records,
             ),
-            9 => {
+            Protocol::NetflowV9 => {
                 if let Some(session) = self.session(received.exporter) {
-                    session
-                        .netflow_v9
-                        .get_or_insert_with(|| Templated::new(registry, timeout))
-                        .collect(datagram, &received, records)?;
+                    let state = session.netflow_v9.get_or_insert_with(|| Templated {
+                        parser: rustflow_protocol::netflow_v9::Parser::new(registry, timeout),
+                        converter: netflow_v9::Converter::default(),
+                    });
+                    let packet = state.parser.parse(datagram)?;
+                    state.converter.convert(packet, &received, records);
                 }
             }
-            10 => {
+            Protocol::Ipfix => {
                 if let Some(session) = self.session(received.exporter) {
-                    session
-                        .ipfix
-                        .get_or_insert_with(|| Templated::new(registry, timeout))
-                        .collect(datagram, &received, records)?;
+                    let state = session.ipfix.get_or_insert_with(|| Templated {
+                        parser: rustflow_protocol::ipfix::Parser::new(registry, timeout),
+                        converter: ipfix::Converter::default(),
+                    });
+                    let packet = state.parser.parse(datagram)?;
+                    state.converter.convert(packet, &received, records);
                 }
             }
-            _ => sflow_v5::convert(
+            Protocol::SflowV5 => sflow_v5::convert(
                 rustflow_protocol::sflow_v5::parse(datagram)?,
                 &received,
                 records,
@@ -163,8 +100,14 @@ impl Collector {
     /// the exporter and observation domain it describes.
     pub fn options(&self) -> impl Iterator<Item = (SocketAddr, u32, &Record)> {
         self.sessions.iter().flat_map(|(&exporter, session)| {
-            let netflow_v9 = session.netflow_v9.iter().flat_map(Protocol::options);
-            let ipfix = session.ipfix.iter().flat_map(Protocol::options);
+            let netflow_v9 = session
+                .netflow_v9
+                .iter()
+                .flat_map(|state| state.converter.options());
+            let ipfix = session
+                .ipfix
+                .iter()
+                .flat_map(|state| state.converter.options());
             netflow_v9
                 .chain(ipfix)
                 .map(move |(domain, record)| (exporter, domain, record))

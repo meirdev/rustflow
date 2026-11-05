@@ -1,4 +1,4 @@
-use std::net::IpAddr;
+use std::net::SocketAddr;
 
 use etherparse::{EtherType, LaxNetSlice, LaxSlicedPacket, TransportSlice};
 
@@ -32,15 +32,15 @@ impl LinkType {
 const LINUX_SLL_HEADER_LEN: usize = 16;
 const LINUX_SLL2_HEADER_LEN: usize = 20;
 
-/// The UDP payload of a captured frame, and the IP address that sent it,
-/// after peeling supported tunnels: what a collector reads from captured
-/// exporter traffic.
+/// The UDP payload of a captured frame, and the transport address that sent
+/// it, after peeling supported tunnels: what a collector reads from
+/// captured exporter traffic.
 ///
 /// `link_type` is the capture's pcap link-layer header type number
 /// (Ethernet, Linux cooked v1 and v2, and raw IP are read; frames of any
 /// other type are `None`). Only a whole datagram is returned: a truncated
 /// or fragmented one is `None`.
-pub fn udp_payload(link_type: u32, frame: &[u8]) -> Option<(IpAddr, &[u8])> {
+pub fn udp_payload(link_type: u32, frame: &[u8]) -> Option<(SocketAddr, &[u8])> {
     let sliced = match LinkType::from_pcap(link_type)? {
         LinkType::Ethernet => LaxSlicedPacket::from_ethernet(frame).ok()?,
         // Both cooked headers carry the protocol as an ethertype: v1 in
@@ -62,19 +62,19 @@ pub fn udp_payload(link_type: u32, frame: &[u8]) -> Option<(IpAddr, &[u8])> {
         return None;
     }
     let source_ip = match &packet.net {
-        Some(LaxNetSlice::Ipv4(ipv4)) => IpAddr::V4(ipv4.header().source_addr()),
-        Some(LaxNetSlice::Ipv6(ipv6)) => IpAddr::V6(ipv6.header().source_addr()),
+        Some(LaxNetSlice::Ipv4(ipv4)) => ipv4.header().source_addr().into(),
+        Some(LaxNetSlice::Ipv6(ipv6)) => ipv6.header().source_addr().into(),
         _ => return None,
     };
     let Some(TransportSlice::Udp(udp)) = &packet.transport else {
         return None;
     };
-    Some((source_ip, udp.payload()))
+    Some((SocketAddr::new(source_ip, udp.source_port()), udp.payload()))
 }
 
 #[cfg(test)]
 mod tests {
-    use std::net::{Ipv4Addr, Ipv6Addr};
+    use std::net::Ipv6Addr;
 
     use etherparse::{IpNumber, PacketBuilder};
 
@@ -91,8 +91,8 @@ mod tests {
         ipv4_udp(INNER, 2055, PAYLOAD)
     }
 
-    fn sent_from_inner() -> Option<(IpAddr, &'static [u8])> {
-        Some((IpAddr::V4(Ipv4Addr::from(INNER)), PAYLOAD))
+    fn sent_from_inner() -> Option<(SocketAddr, &'static [u8])> {
+        Some((SocketAddr::from((INNER, 1000)), PAYLOAD))
     }
 
     #[test]
@@ -123,7 +123,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             udp_payload(RAW_IP, &packet),
-            Some((IpAddr::V6(source), PAYLOAD))
+            Some((SocketAddr::from((source, 1000)), PAYLOAD))
         );
     }
 
