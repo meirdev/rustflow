@@ -38,6 +38,23 @@
 //!     }
 //! }
 //! ```
+//!
+//! The readers take a [`Collector`], which is where the information
+//! element registry and the template timeout are set; the socket's own
+//! settings are the reader's, and the `socket2` feature adds the receive
+//! buffer size among them:
+//!
+//! ```no_run
+//! use std::net::UdpSocket;
+//! use std::time::Duration;
+//!
+//! use rustflow_core_new::protocol::information_element::Registry;
+//! use rustflow_core_new::reader::{Collector, Family, Reader};
+//!
+//! let registry = Registry::iana();
+//! let collector = Collector::new(Family::Netflow, registry, Duration::from_secs(1800));
+//! let reader = Reader::new(UdpSocket::bind("0.0.0.0:9995").unwrap(), collector);
+//! ```
 
 #[cfg(feature = "tokio")]
 pub use async_socket::AsyncReader;

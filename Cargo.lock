@@ -1659,6 +1659,7 @@ dependencies = [
  "rustc-hash",
  "serde",
  "serde_json",
+ "socket2",
  "tokio",
 ]
 

@@ -7,6 +7,7 @@ use std::task::{Context, Poll, ready};
 use std::time::{Duration, SystemTime};
 
 use futures_core::Stream;
+use socket2::SockRef;
 use tokio::io::ReadBuf;
 use tokio::net::{ToSocketAddrs, UdpSocket};
 
@@ -55,6 +56,18 @@ impl AsyncReader {
     pub fn with_read_timeout(mut self, timeout: Option<Duration>) -> Self {
         self.read_timeout = timeout;
         self
+    }
+
+    /// Asks the kernel for a receive buffer of `size` bytes, room for
+    /// datagrams that arrive faster than they are read; the kernel may
+    /// grant another size, which [`AsyncReader::recv_buffer_size`] tells.
+    pub fn with_recv_buffer_size(self, size: usize) -> io::Result<Self> {
+        SockRef::from(&self.socket).set_recv_buffer_size(size)?;
+        Ok(self)
+    }
+
+    pub fn recv_buffer_size(&self) -> io::Result<usize> {
+        SockRef::from(&self.socket).recv_buffer_size()
     }
 
     pub fn local_addr(&self) -> io::Result<SocketAddr> {

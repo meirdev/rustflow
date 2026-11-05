@@ -2,6 +2,9 @@ use std::io;
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 use std::time::{Duration, SystemTime};
 
+#[cfg(feature = "socket2")]
+use socket2::SockRef;
+
 use crate::convert::{Received, Record};
 use crate::protocol::Family;
 use crate::reader::collector::Collector;
@@ -36,6 +39,20 @@ impl Reader {
     pub fn with_read_timeout(self, timeout: Option<Duration>) -> io::Result<Self> {
         self.socket.set_read_timeout(timeout)?;
         Ok(self)
+    }
+
+    /// Asks the kernel for a receive buffer of `size` bytes, room for
+    /// datagrams that arrive faster than they are read; the kernel may
+    /// grant another size, which [`Reader::recv_buffer_size`] tells.
+    #[cfg(feature = "socket2")]
+    pub fn with_recv_buffer_size(self, size: usize) -> io::Result<Self> {
+        SockRef::from(&self.socket).set_recv_buffer_size(size)?;
+        Ok(self)
+    }
+
+    #[cfg(feature = "socket2")]
+    pub fn recv_buffer_size(&self) -> io::Result<usize> {
+        SockRef::from(&self.socket).recv_buffer_size()
     }
 
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
@@ -132,6 +149,16 @@ mod tests {
     fn set(id: u16, body: &[u8]) -> Vec<u8> {
         let length = u16::try_from(4 + body.len()).unwrap();
         [&words(&[id, length])[..], body].concat()
+    }
+
+    #[cfg(feature = "socket2")]
+    #[test]
+    fn the_receive_buffer_is_set_and_told() {
+        let reader = Reader::bind("127.0.0.1:0", Family::Netflow)
+            .unwrap()
+            .with_recv_buffer_size(1 << 20)
+            .unwrap();
+        assert!(reader.recv_buffer_size().unwrap() >= 1 << 20);
     }
 
     fn reader(family: Family) -> (Reader, UdpSocket, SocketAddr) {
