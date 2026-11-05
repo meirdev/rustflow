@@ -5,26 +5,28 @@ use toml::Table;
 
 use crate::{Error, Pipeline, Registry};
 
-/// A pipeline as a configuration file describes it: collectors, processes
-/// and exporters by name, each of a type, processes and exporters fed by
-/// the components their inputs name.
+/// A pipeline as a configuration file describes it: collectors, meters,
+/// processes and exporters by name, each of a type, processes and
+/// exporters fed by the components their inputs name.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default)]
-    pub collectors: BTreeMap<String, Collector>,
+    pub collectors: BTreeMap<String, Source>,
+    #[serde(default)]
+    pub meters: BTreeMap<String, Source>,
     #[serde(default)]
     pub processes: BTreeMap<String, Component>,
     #[serde(default)]
     pub exporters: BTreeMap<String, Component>,
 }
 
-/// A Collecting Process: its type, and the options its type reads, such
-/// as where to listen. The embedding program runs it, since what a
-/// collector listens to is its business; the pipeline only knows its
-/// name.
+/// A collector or a meter: its type, and the options its type reads, such
+/// as where to listen or what to capture. A meter is built by its type's
+/// constructor; a collector the embedding program runs, since what it
+/// listens to is its business, and the pipeline only knows its name.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct Collector {
+pub struct Source {
     #[serde(rename = "type")]
     pub kind: String,
     #[serde(flatten)]
@@ -48,14 +50,18 @@ impl Config {
         toml::from_str(text).map_err(Error::Parse)
     }
 
-    /// Builds the pipeline, every process and exporter by its type's
+    /// Builds the pipeline, every meter, process and exporter by its type's
     /// constructor in `registry`. The collectors are named, for the
-    /// embedding program to feed; see [`Pipeline::collector`].
+    /// embedding program to feed; see [`Pipeline::source`].
     pub fn build(&self, registry: &Registry) -> Result<Pipeline, Error> {
-        if self.collectors.is_empty() {
-            return Err(Error::NoCollectors);
+        if self.collectors.is_empty() && self.meters.is_empty() {
+            return Err(Error::NoSources);
         }
         let mut builder = Pipeline::builder(self.collectors.keys().cloned());
+        for (name, source) in &self.meters {
+            let meter = registry.build_meter(name, &source.kind, &source.options)?;
+            builder = builder.meter(name, meter);
+        }
         for (name, component) in &self.processes {
             let process = registry.build_process(name, &component.kind, &component.options)?;
             builder = builder.process(name, &component.inputs, process);
@@ -74,12 +80,16 @@ mod tests {
 
     use super::*;
     use crate::Item;
-    use crate::pipeline::tests::{Collect, Select, Shared, record};
+    use crate::pipeline::tests::{Collect, Generate, Select, Shared, record};
 
     const CONFIG: &str = r#"
         [collectors.flows]
         type = "netflow"
         listen = ":9995"
+
+        [meters.load]
+        type = "generate"
+        count = 2
 
         [processes.tcp]
         type = "select"
@@ -93,11 +103,22 @@ mod tests {
         [exporters.tcp_only]
         type = "collect"
         inputs = ["tcp"]
+
+        [exporters.generated]
+        type = "collect"
+        inputs = ["load"]
     "#;
 
     fn registry(out: &Shared) -> Registry {
         let out = Arc::clone(out);
         Registry::new()
+            .meter("generate", |options| {
+                let count = options
+                    .get("count")
+                    .and_then(toml::Value::as_integer)
+                    .ok_or("generate needs a count")?;
+                Ok(Box::new(Generate(usize::try_from(count)?)))
+            })
             .process("select", |options| {
                 let protocol = options
                     .get("protocol")
@@ -121,11 +142,13 @@ mod tests {
         assert_eq!(tcp.kind, "select");
         assert_eq!(tcp.inputs, ["flows"]);
         assert_eq!(tcp.options.get("protocol"), Some(&toml::Value::Integer(6)));
-        assert_eq!(config.exporters.len(), 2);
+        assert_eq!(config.meters["load"].kind, "generate");
+        assert_eq!(config.exporters.len(), 3);
 
         let out = Shared::default();
         let mut pipeline = config.build(&registry(&out)).unwrap();
-        let flows = pipeline.collector("flows").unwrap();
+        let flows = pipeline.source("flows").unwrap();
+        assert!(pipeline.source("load").is_some());
         pipeline
             .push(
                 flows,
@@ -152,8 +175,20 @@ mod tests {
 
         assert!(matches!(
             Config::parse("[processes]").and_then(|c| c.build(&registry).map(|_| ())),
-            Err(Error::NoCollectors)
+            Err(Error::NoSources)
         ));
+        assert_eq!(
+            build(
+                "[meters.flows]\ntype = \"generate\"\ncount = 1\n[exporters.out]\ntype = \"collect\"\ninputs = [\"flows\"]"
+            ),
+            "the name 'flows' is used twice"
+        );
+        assert_eq!(
+            build(
+                "[meters.load]\ntype = \"capture\"\n[exporters.out]\ntype = \"collect\"\ninputs = [\"flows\"]"
+            ),
+            "unknown meter type 'capture'"
+        );
         assert_eq!(build(""), "the pipeline has no exporter");
         assert!(matches!(
             Config::parse("[collectors.flows]\ntype = \"netflow\"\n[extra]"),

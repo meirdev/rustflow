@@ -5,7 +5,7 @@ use std::time::{Duration, Instant, SystemTime};
 use std::{fmt, io};
 
 use crate::pipeline::{Component, Node, Parts};
-use crate::{CollectorId, Exporter, Item, Output, Pipeline, Process};
+use crate::{Exporter, Item, Output, Pipeline, Process, SourceId, Stop};
 
 /// How the runner paces itself.
 #[derive(Debug, Clone, Copy)]
@@ -41,10 +41,13 @@ type Inbox = SyncSender<Message>;
 
 /// Runs every component of a [`Pipeline`] on a thread of its own, each
 /// handing what it emits to the inboxes of the components that read it.
-/// Collectors feed the pipeline through a [`Feed`] each. Export failures
-/// go to the error callback as they happen; the run goes on.
+/// Collectors feed the pipeline through a [`Feed`] each; meters run on
+/// threads of their own with theirs. Export failures go to the error
+/// callback as they happen; the run goes on.
 pub struct Runner {
     feeds: Vec<Option<Feed>>,
+    stop: Stop,
+    meters: Vec<JoinHandle<io::Result<()>>>,
     stop_ticking: mpsc::Sender<()>,
     ticker: JoinHandle<()>,
     threads: Vec<JoinHandle<io::Result<()>>>,
@@ -57,7 +60,8 @@ impl Runner {
         on_error: impl FnMut(io::Error) + Send + 'static,
     ) -> io::Result<Self> {
         let Parts {
-            collectors,
+            sources,
+            meters,
             processes,
             exporters,
         } = pipeline.into_parts();
@@ -87,10 +91,10 @@ impl Runner {
                 .collect()
         };
 
-        let feeds = (0..collectors.len())
+        let mut feeds: Vec<Option<Feed>> = (0..sources.len())
             .map(|i| {
                 Some(Feed {
-                    readers: readers_of(Node::Collector(i)),
+                    readers: readers_of(Node::Source(i)),
                 })
             })
             .collect();
@@ -113,17 +117,32 @@ impl Runner {
             threads.push(spawn(&name, move || run_exporter(exporter, rx, &on_error))?);
         }
 
+        let stop = Stop::default();
+        let first_meter = sources.len() - meters.len();
+        let mut meter_threads = Vec::with_capacity(meters.len());
+        for (i, meter) in meters.into_iter().enumerate() {
+            let feed = feeds[first_meter + i].take().unwrap_or_else(|| Feed {
+                readers: Vec::new(),
+            });
+            let stop = stop.clone();
+            meter_threads.push(spawn(&sources[first_meter + i], move || {
+                meter.run(feed, stop)
+            })?);
+        }
+
         let inboxes: Vec<Inbox> = process_inboxes
             .into_iter()
             .chain(exporter_inboxes)
             .collect();
-        let (stop_ticking, stop) = mpsc::channel();
+        let (stop_ticking, ticks) = mpsc::channel();
         let ticker = thread::Builder::new()
             .name("mediator:ticker".into())
-            .spawn(move || tick(&inboxes, schedule.tick_every, &stop))?;
+            .spawn(move || tick(&inboxes, schedule.tick_every, &ticks))?;
 
         Ok(Self {
             feeds,
+            stop,
+            meters: meter_threads,
             stop_ticking,
             ticker,
             threads,
@@ -131,17 +150,31 @@ impl Runner {
     }
 
     /// A collector's way into the pipeline, given out once per collector.
-    pub fn feed(&mut self, collector: CollectorId) -> Option<Feed> {
+    /// A meter has its own, so `None` for one.
+    pub fn feed(&mut self, collector: SourceId) -> Option<Feed> {
         self.feeds.get_mut(collector.0).and_then(Option::take)
     }
 
-    /// Waits for every chunk pushed so far to go through, then ends the
-    /// stream. Every [`Feed`] given out must be dropped first, or this
-    /// never returns.
+    /// What tells the meters to stop, for a signal handler to set: a
+    /// meter with no end of its own runs until then.
+    pub fn stop(&self) -> Stop {
+        self.stop.clone()
+    }
+
+    /// Waits for every meter to end and every chunk pushed so far to go
+    /// through, then ends the stream. Every [`Feed`] given out must be
+    /// dropped first, and every meter without an end told to
+    /// [`stop`](Runner::stop), or this never returns.
     pub fn finish(self) -> io::Result<()> {
+        let mut result = Ok(());
+        for meter in self.meters {
+            let ended = meter
+                .join()
+                .unwrap_or_else(|_| Err(io::Error::other("a meter's thread panicked")));
+            result = result.and(ended);
+        }
         // Collectors never fed end their inputs here.
         drop(self.feeds);
-        let mut result = Ok(());
         for thread in self.threads {
             let ended = thread
                 .join()
@@ -304,7 +337,7 @@ fn tick(inboxes: &[Inbox], every: Duration, stop: &Receiver<()>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pipeline::tests::{Collect, Hold, Shared, Tag, record};
+    use crate::pipeline::tests::{Collect, Generate, Hold, Shared, Tag, record};
 
     fn pipeline(hold: bool) -> (Pipeline, Shared) {
         let out = Shared::default();
@@ -325,8 +358,8 @@ mod tests {
     #[test]
     fn collectors_feed_the_pipeline_from_their_own_threads() {
         let (pipeline, out) = pipeline(false);
-        let netflow = pipeline.collector("netflow").unwrap();
-        let sflow = pipeline.collector("sflow").unwrap();
+        let netflow = pipeline.source("netflow").unwrap();
+        let sflow = pipeline.source("sflow").unwrap();
         let mut runner = Runner::spawn(pipeline, Schedule::default(), |e| panic!("{e}")).unwrap();
 
         let feeds = [
@@ -357,7 +390,7 @@ mod tests {
     #[test]
     fn ticks_come_on_schedule_and_the_end_drains_what_is_held() {
         let (pipeline, out) = pipeline(true);
-        let netflow = pipeline.collector("netflow").unwrap();
+        let netflow = pipeline.source("netflow").unwrap();
         let schedule = Schedule {
             tick_every: Duration::from_millis(20),
             queue: 4,
@@ -397,8 +430,8 @@ mod tests {
             .exporter("files", ["tag"], Box::new(Collect(Arc::clone(&out))))
             .build()
             .unwrap();
-        let netflow = pipeline.collector("netflow").unwrap();
-        let sflow = pipeline.collector("sflow").unwrap();
+        let netflow = pipeline.source("netflow").unwrap();
+        let sflow = pipeline.source("sflow").unwrap();
         let mut runner = Runner::spawn(pipeline, Schedule::default(), |e| panic!("{e}")).unwrap();
         let netflow = runner.feed(netflow).unwrap();
         let sflow = runner.feed(sflow).unwrap();
@@ -430,7 +463,7 @@ mod tests {
             .exporter("files", ["netflow"], Box::new(Failing))
             .build()
             .unwrap();
-        let netflow = pipeline.collector("netflow").unwrap();
+        let netflow = pipeline.source("netflow").unwrap();
         let errors = Arc::new(Mutex::new(Vec::new()));
         let seen = Arc::clone(&errors);
         let mut runner = Runner::spawn(pipeline, Schedule::default(), move |e| {
@@ -451,9 +484,48 @@ mod tests {
     }
 
     #[test]
+    fn meters_feed_the_pipeline_from_their_own_threads() {
+        let out = Shared::default();
+        let pipeline = Pipeline::builder(["netflow"])
+            .meter("load", Box::new(Generate(3)))
+            .exporter(
+                "files",
+                ["netflow", "load"],
+                Box::new(Collect(Arc::clone(&out))),
+            )
+            .build()
+            .unwrap();
+        let netflow = pipeline.source("netflow").unwrap();
+        let load = pipeline.source("load").unwrap();
+        let mut runner = Runner::spawn(pipeline, Schedule::default(), |e| panic!("{e}")).unwrap();
+        assert!(runner.feed(load).is_none(), "a meter keeps its own feed");
+        let feed = runner.feed(netflow).unwrap();
+        feed.push(vec![Item::Record(record(6))]).unwrap();
+        drop(feed);
+        runner.finish().unwrap();
+
+        assert_eq!(out.lock().unwrap().items.len(), 4);
+    }
+
+    #[test]
+    fn a_meter_that_never_ends_is_told_to_stop() {
+        let out = Shared::default();
+        let pipeline = Pipeline::builder(Vec::<String>::new())
+            .meter("load", Box::new(Generate(usize::MAX)))
+            .exporter("files", ["load"], Box::new(Collect(Arc::clone(&out))))
+            .build()
+            .unwrap();
+        let runner = Runner::spawn(pipeline, Schedule::default(), |e| panic!("{e}")).unwrap();
+        thread::sleep(Duration::from_millis(20));
+        runner.stop().set();
+        runner.finish().unwrap();
+        assert!(!out.lock().unwrap().items.is_empty());
+    }
+
+    #[test]
     fn finishing_waits_for_the_feeds() {
         let (pipeline, _out) = pipeline(false);
-        let netflow = pipeline.collector("netflow").unwrap();
+        let netflow = pipeline.source("netflow").unwrap();
         let mut runner = Runner::spawn(pipeline, Schedule::default(), |e| panic!("{e}")).unwrap();
         let feed = runner.feed(netflow).unwrap();
         let thread = thread::spawn(move || runner.finish());

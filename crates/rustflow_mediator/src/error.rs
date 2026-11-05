@@ -4,10 +4,11 @@ use std::{error, fmt};
 #[derive(Debug)]
 pub enum Error {
     Parse(toml::de::Error),
-    /// Every pipeline collects from somewhere.
-    NoCollectors,
+    /// Every pipeline gets its records from somewhere.
+    NoSources,
     /// Every pipeline exports somewhere.
     NoExporters,
+    UnknownMeter(String),
     UnknownProcess(String),
     UnknownExporter(String),
     /// A component's constructor rejected its options.
@@ -19,7 +20,7 @@ pub enum Error {
     DuplicateName(String),
     /// A component with no inputs would never receive anything.
     NoInputs(String),
-    /// An input naming no collector and no process.
+    /// An input naming no source and no process.
     UnknownInput {
         component: String,
         input: String,
@@ -32,8 +33,9 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Parse(e) => write!(f, "{e}"),
-            Self::NoCollectors => f.write_str("the pipeline has no collector"),
+            Self::NoSources => f.write_str("the pipeline has no collector or meter"),
             Self::NoExporters => f.write_str("the pipeline has no exporter"),
+            Self::UnknownMeter(kind) => write!(f, "unknown meter type '{kind}'"),
             Self::UnknownProcess(kind) => write!(f, "unknown process type '{kind}'"),
             Self::UnknownExporter(kind) => write!(f, "unknown exporter type '{kind}'"),
             Self::Component { name, source } => write!(f, "{name}: {source}"),

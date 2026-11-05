@@ -1,17 +1,16 @@
 use std::io;
 use std::time::SystemTime;
 
-use crate::{Error, Exporter, Item, Output, Process};
+use crate::{Error, Exporter, Item, Meter, Output, Process};
 
-/// A Collecting Process the embedding program feeds: see
-/// [`Pipeline::collector`].
+/// A source of records, a collector or a meter: see [`Pipeline::source`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CollectorId(pub(crate) usize);
+pub struct SourceId(pub(crate) usize);
 
 /// Where a component's input comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Node {
-    Collector(usize),
+    Source(usize),
     Process(usize),
 }
 
@@ -24,16 +23,20 @@ pub(crate) struct Component<T> {
 /// A pipeline taken apart, for running its components on threads of
 /// their own.
 pub(crate) struct Parts {
-    pub(crate) collectors: Vec<String>,
+    pub(crate) sources: Vec<String>,
+    /// The last sources, one meter each.
+    pub(crate) meters: Vec<Box<dyn Meter>>,
     pub(crate) processes: Vec<Component<Box<dyn Process>>>,
     pub(crate) exporters: Vec<Component<Box<dyn Exporter>>>,
 }
 
-/// Named Collecting, Intermediate and Exporting Processes (RFC 6183
-/// section 5) wired by their inputs. Built by a
-/// [`Builder`], or from a [`Config`](crate::Config).
+/// Named Collecting, Metering, Intermediate and Exporting Processes (RFC
+/// 6183 section 5) wired by their inputs. Built by a [`Builder`], or from
+/// a [`Config`](crate::Config).
 pub struct Pipeline {
-    collectors: Vec<String>,
+    /// Collectors, then meters.
+    sources: Vec<String>,
+    meters: Vec<Box<dyn Meter>>,
     /// In an order where every process comes after its inputs.
     processes: Vec<Component<Box<dyn Process>>>,
     exporters: Vec<Component<Box<dyn Exporter>>>,
@@ -42,35 +45,36 @@ pub struct Pipeline {
 }
 
 impl Pipeline {
+    /// A builder with the named collectors as sources.
     pub fn builder(collectors: impl IntoIterator<Item = impl Into<String>>) -> Builder {
         Builder {
-            collectors: collectors.into_iter().map(Into::into).collect(),
+            sources: collectors.into_iter().map(Into::into).collect(),
+            meters: Vec::new(),
             processes: Vec::new(),
             exporters: Vec::new(),
         }
     }
 
-    /// The collector called `name`, to push items from.
-    pub fn collector(&self, name: &str) -> Option<CollectorId> {
-        self.collectors
-            .iter()
-            .position(|s| s == name)
-            .map(CollectorId)
+    /// The source called `name`, to push items from, or to get the feed
+    /// of.
+    pub fn source(&self, name: &str) -> Option<SourceId> {
+        self.sources.iter().position(|s| s == name).map(SourceId)
     }
 
     pub(crate) fn into_parts(self) -> Parts {
         Parts {
-            collectors: self.collectors,
+            sources: self.sources,
+            meters: self.meters,
             processes: self.processes,
             exporters: self.exporters,
         }
     }
 
-    /// Runs `items` from `collector` through every process and exporter they
+    /// Runs `items` from `source` through every process and exporter they
     /// reach. Every exporter runs; the first export failure is returned.
-    pub fn push(&mut self, collector: CollectorId, items: Vec<Item>) -> io::Result<()> {
-        let mut batches = Batches::new(self.collectors.len(), &self.readers);
-        batches.put(Node::Collector(collector.0), items);
+    pub fn push(&mut self, source: SourceId, items: Vec<Item>) -> io::Result<()> {
+        let mut batches = Batches::new(self.sources.len(), &self.readers);
+        batches.put(Node::Source(source.0), items);
         self.run(&mut batches, |_, _| {});
         self.deliver(&mut batches, |_, _| Ok(()))
     }
@@ -78,7 +82,7 @@ impl Pipeline {
     /// Ticks every process and flushes every exporter, whether or not
     /// anything reached it.
     pub fn tick(&mut self, now: SystemTime) -> io::Result<()> {
-        let mut batches = Batches::new(self.collectors.len(), &self.readers);
+        let mut batches = Batches::new(self.sources.len(), &self.readers);
         self.run(&mut batches, |process, out| process.tick(now, out));
         self.deliver(&mut batches, |exporter, _| exporter.flush())
     }
@@ -86,7 +90,7 @@ impl Pipeline {
     /// Ends the stream: every process emits what it holds, every exporter
     /// completes its output.
     pub fn finish(mut self) -> io::Result<()> {
-        let mut batches = Batches::new(self.collectors.len(), &self.readers);
+        let mut batches = Batches::new(self.sources.len(), &self.readers);
         self.run(&mut batches, |process, out| process.finish(out));
         let mut result = Ok(());
         for mut exporter in self.exporters {
@@ -145,15 +149,15 @@ fn named(exporter: &str, result: io::Result<()>) -> io::Result<()> {
 /// What each node produced in one pass, handed to its readers: copied to
 /// all but the last, which takes the original.
 struct Batches {
-    collectors: usize,
+    sources: usize,
     items: Vec<Option<Vec<Item>>>,
     readers_left: Vec<usize>,
 }
 
 impl Batches {
-    fn new(collectors: usize, readers: &[usize]) -> Self {
+    fn new(sources: usize, readers: &[usize]) -> Self {
         Self {
-            collectors,
+            sources,
             items: vec![None; readers.len()],
             readers_left: readers.to_vec(),
         }
@@ -162,8 +166,8 @@ impl Batches {
     /// Sources first, then processes, in one index space.
     fn index(&self, node: Node) -> usize {
         match node {
-            Node::Collector(i) => i,
-            Node::Process(i) => self.collectors + i,
+            Node::Source(i) => i,
+            Node::Process(i) => self.sources + i,
         }
     }
 
@@ -190,15 +194,23 @@ impl Batches {
     }
 }
 
-/// Assembles a pipeline, checking that every input names a collector or a
+/// Assembles a pipeline, checking that every input names a source or a
 /// process, that every component has one, and that nothing feeds itself.
 pub struct Builder {
-    collectors: Vec<String>,
+    sources: Vec<String>,
+    meters: Vec<Box<dyn Meter>>,
     processes: Vec<(String, Vec<String>, Box<dyn Process>)>,
     exporters: Vec<(String, Vec<String>, Box<dyn Exporter>)>,
 }
 
 impl Builder {
+    /// Adds a meter as a source called `name`.
+    pub fn meter(mut self, name: impl Into<String>, meter: Box<dyn Meter>) -> Self {
+        self.sources.push(name.into());
+        self.meters.push(meter);
+        self
+    }
+
     pub fn process(
         mut self,
         name: impl Into<String>,
@@ -231,10 +243,15 @@ impl Builder {
         if self.exporters.is_empty() {
             return Err(Error::NoExporters);
         }
-        let mut names: Vec<&str> = self.collectors.iter().map(String::as_str).collect();
+        let mut names: Vec<&str> = Vec::new();
         let process_names = self.processes.iter().map(|(name, _, _)| name);
         let exporter_names = self.exporters.iter().map(|(name, _, _)| name);
-        for name in process_names.chain(exporter_names) {
+        for name in self
+            .sources
+            .iter()
+            .chain(process_names)
+            .chain(exporter_names)
+        {
             if names.contains(&name.as_str()) {
                 return Err(Error::DuplicateName(name.clone()));
             }
@@ -248,8 +265,8 @@ impl Builder {
             inputs
                 .iter()
                 .map(|input| {
-                    if let Some(i) = self.collectors.iter().position(|s| s == input) {
-                        Ok(Node::Collector(i))
+                    if let Some(i) = self.sources.iter().position(|s| s == input) {
+                        Ok(Node::Source(i))
                     } else if let Some(i) = self.processes.iter().position(|(n, _, _)| n == input) {
                         Ok(Node::Process(i))
                     } else {
@@ -276,17 +293,17 @@ impl Builder {
         // Processs are stored in `order`, so inputs are renumbered to
         // their final positions, which is also the index space of
         // `Batches`.
-        let collectors = self.collectors.len();
+        let sources = self.sources.len();
         let position = |node: Node| match node {
-            Node::Collector(i) => Node::Collector(i),
+            Node::Source(i) => Node::Source(i),
             Node::Process(i) => Node::Process(order.iter().position(|&o| o == i).unwrap()),
         };
-        let mut readers = vec![0; collectors + self.processes.len()];
+        let mut readers = vec![0; sources + self.processes.len()];
         let mut count = |inputs: &[Node]| {
             for &input in inputs {
                 readers[match input {
-                    Node::Collector(i) => i,
-                    Node::Process(i) => collectors + i,
+                    Node::Source(i) => i,
+                    Node::Process(i) => sources + i,
                 }] += 1;
             }
         };
@@ -322,7 +339,8 @@ impl Builder {
             .collect();
 
         Ok(Pipeline {
-            collectors: self.collectors,
+            sources: self.sources,
+            meters: self.meters,
             processes,
             exporters,
             readers,
@@ -342,7 +360,7 @@ fn topological(
         let ready = (0..processes.len()).find(|&i| {
             !placed[i]
                 && inputs[i].iter().all(|input| match *input {
-                    Node::Collector(_) => true,
+                    Node::Source(_) => true,
                     Node::Process(j) => placed[j],
                 })
         });
@@ -414,6 +432,23 @@ pub(crate) mod tests {
                 }
                 control => out.push(control),
             }
+        }
+    }
+
+    /// Pushes that many records, one chunk each, then ends; or stops
+    /// early when told to.
+    pub(crate) struct Generate(pub(crate) usize);
+
+    impl Meter for Generate {
+        fn run(self: Box<Self>, feed: crate::Feed, stop: crate::Stop) -> io::Result<()> {
+            for _ in 0..self.0 {
+                if stop.is_set() {
+                    break;
+                }
+                feed.push(vec![Item::Record(record(6))])
+                    .map_err(io::Error::other)?;
+            }
+            Ok(())
         }
     }
 
@@ -495,8 +530,8 @@ pub(crate) mod tests {
             .exporter("collector", ["names"], ipfix)
             .build()
             .unwrap();
-        let flows = pipeline.collector("flows").unwrap();
-        assert_eq!(pipeline.collector("logs"), None);
+        let flows = pipeline.source("flows").unwrap();
+        assert_eq!(pipeline.source("logs"), None);
 
         pipeline
             .push(
@@ -537,8 +572,8 @@ pub(crate) mod tests {
             .build()
             .unwrap();
 
-        let netflow = pipeline.collector("netflow").unwrap();
-        let sflow = pipeline.collector("sflow").unwrap();
+        let netflow = pipeline.source("netflow").unwrap();
+        let sflow = pipeline.source("sflow").unwrap();
         pipeline
             .push(
                 netflow,
@@ -562,7 +597,7 @@ pub(crate) mod tests {
             .exporter("out", ["tcp"], exporter)
             .build()
             .unwrap();
-        let flows = pipeline.collector("flows").unwrap();
+        let flows = pipeline.source("flows").unwrap();
 
         pipeline
             .push(
@@ -589,7 +624,7 @@ pub(crate) mod tests {
             .exporter("out", ["hold"], exporter)
             .build()
             .unwrap();
-        let flows = pipeline.collector("flows").unwrap();
+        let flows = pipeline.source("flows").unwrap();
         pipeline.push(flows, vec![Item::Record(record(1))]).unwrap();
 
         pipeline.finish().unwrap();
@@ -607,7 +642,7 @@ pub(crate) mod tests {
             .exporter("good", ["flows"], exporter)
             .build()
             .unwrap();
-        let flows = pipeline.collector("flows").unwrap();
+        let flows = pipeline.source("flows").unwrap();
 
         let error = pipeline
             .push(flows, vec![Item::Record(record(1))])

@@ -158,8 +158,8 @@ fn single_thread(processes: usize, allocating: bool) -> Duration {
     let count = Arc::new(AtomicUsize::new(0));
     let mut pipeline = pipeline(processes, allocating, &count);
     let ids = [
-        pipeline.collector("netflow").unwrap(),
-        pipeline.collector("sflow").unwrap(),
+        pipeline.source("netflow").unwrap(),
+        pipeline.source("sflow").unwrap(),
     ];
     let chunks = chunks();
     let started = Instant::now();
@@ -175,8 +175,8 @@ fn threaded(processes: usize, allocating: bool) -> Duration {
     let count = Arc::new(AtomicUsize::new(0));
     let pipeline = pipeline(processes, allocating, &count);
     let ids = [
-        pipeline.collector("netflow").unwrap(),
-        pipeline.collector("sflow").unwrap(),
+        pipeline.source("netflow").unwrap(),
+        pipeline.source("sflow").unwrap(),
     ];
     let mut runner = Runner::spawn(pipeline, Schedule::default(), |e| panic!("{e}")).unwrap();
     let mut streams = vec![Vec::new(), Vec::new()];
