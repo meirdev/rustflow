@@ -1,78 +1,44 @@
 //! IPFIX data records, copied with their relative times made absolute.
 
-use crate::convert::domains::Domains;
-use crate::convert::templated::{Context, convert_data, convert_options};
+use crate::convert::templated::{PacketHeader, Sets, Templated};
 use crate::convert::time::{TimeBase, Uptime};
-use crate::convert::{Protocol, Received, Record};
-use crate::protocol::ipfix::{Packet, Set};
+use crate::convert::{Protocol, templated};
+use crate::protocol::ipfix::{OptionsTemplate, Packet, Set, Template};
 
-/// Converts one exporter's IPFIX messages, keeping what its options records
-/// said of each observation domain, as a parser keeps its templates. Use
-/// one converter per exporter address.
-#[derive(Default)]
-pub struct Converter {
-    domains: Domains,
-}
+/// Converts one exporter's IPFIX messages; see
+/// [`templated::Converter`].
+pub type Converter = templated::Converter<Packet>;
 
-impl Converter {
-    /// Converts a message's records, adding them to `records`: its options
-    /// records first, with their scope, then its data records, with the
-    /// sampling the options records gave their observation domain, if any.
-    ///
-    /// Times relative to the export time (`flowStartDeltaMicroseconds`) are
-    /// made absolute from it; uptimes (`flowStartSysUpTime`) from the
-    /// exporter's `systemInitTimeMilliseconds`, once an options record gave
-    /// it, and are kept as they are until then.
-    pub fn convert(
-        &mut self,
-        packet: Packet,
-        received: &Received,
-        records: &mut impl Extend<Record>,
-    ) {
-        let header = &packet.header;
-        let domain_id = header.observation_domain_id;
-        let context = |domains: &Domains| Context {
-            protocol: Protocol::Ipfix,
-            sequence_number: header.sequence_number,
-            domain_id,
-            received,
+impl Templated for Packet {
+    type Data = Template;
+    type Options = OptionsTemplate;
+
+    const PROTOCOL: Protocol = Protocol::Ipfix;
+
+    fn header(&self) -> PacketHeader {
+        PacketHeader {
+            sequence_number: self.header.sequence_number,
+            domain_id: self.header.observation_domain_id,
             time: TimeBase {
-                export_time_ms: u64::from(header.export_time) * 1_000,
-                uptime: Uptime::BootedAt(
-                    domains
-                        .get(domain_id)
-                        .and_then(|domain| domain.system_init_time_ms),
-                ),
+                export_time_ms: u64::from(self.header.export_time) * 1_000,
+                uptime: Uptime::BootedAt(None),
             },
-        };
-        let (options, data): (Vec<_>, Vec<_>) = packet
-            .sets
-            .into_iter()
-            .partition(|set| matches!(set, Set::OptionsData(_)));
-        for set in options {
-            if let Set::OptionsData(set) = set {
-                let context = context(&self.domains);
-                let domains = &mut self.domains;
-                records.extend(
-                    convert_options(&context, set)
-                        .inspect(|record| domains.learn(domain_id, record)),
-                );
-            }
-        }
-
-        let context = context(&self.domains);
-        let domain = self.domains.get(domain_id);
-        for set in data {
-            if let Set::Data(set) = set {
-                convert_data(&context, domain, set, records);
-            }
         }
     }
 
-    /// The latest options record of each kind the exporter sent, with its
-    /// observation domain.
-    pub fn options(&self) -> impl Iterator<Item = (u32, &Record)> {
-        self.domains.options()
+    fn into_sets(self) -> Sets<OptionsTemplate, Template> {
+        let mut sets = Sets {
+            options: Vec::new(),
+            data: Vec::new(),
+        };
+        for set in self.sets {
+            match set {
+                Set::OptionsData(set) => sets.options.push(set),
+                Set::Data(set) => sets.data.push(set),
+                _ => {}
+            }
+        }
+        sets
     }
 }
 
@@ -84,7 +50,7 @@ mod tests {
     use etherparse::PacketBuilder;
 
     use super::*;
-    use crate::convert::Scope;
+    use crate::convert::{Received, Record, Scope};
     use crate::protocol::DataSet;
     use crate::protocol::information_element::{ElementId, iana};
     use crate::protocol::ipfix::{self, FieldSpecifier, Header, OptionsTemplate, Template};

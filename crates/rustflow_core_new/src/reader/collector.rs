@@ -45,8 +45,9 @@ struct State<P, C> {
     converter: C,
 }
 
-/// A protocol whose records are decoded by templates sent earlier.
-trait Templated {
+/// The state a templated protocol keeps per session: its parser and
+/// converter.
+trait TemplatedState {
     type Packet;
 
     fn new(registry: Registry, timeout: Duration) -> Self;
@@ -60,15 +61,12 @@ trait Templated {
         records: &mut impl Extend<Record>,
     );
 
-    /// Whether the packet carries templates, which may decode datagrams
-    /// held for them.
-    fn brings_templates(packet: &Self::Packet) -> bool;
+    fn has_templates(packet: &Self::Packet) -> bool;
 
-    /// Whether the packet carries data whose template is not known.
-    fn lacks_templates(packet: &Self::Packet) -> bool;
+    fn has_undecoded(packet: &Self::Packet) -> bool;
 }
 
-impl Templated for State<crate::protocol::netflow_v9::Parser, netflow_v9::Converter> {
+impl TemplatedState for State<crate::protocol::netflow_v9::Parser, netflow_v9::Converter> {
     type Packet = crate::protocol::netflow_v9::Packet;
 
     fn new(registry: Registry, timeout: Duration) -> Self {
@@ -91,24 +89,16 @@ impl Templated for State<crate::protocol::netflow_v9::Parser, netflow_v9::Conver
         self.converter.convert(packet, received, records);
     }
 
-    fn brings_templates(packet: &Self::Packet) -> bool {
-        use crate::protocol::netflow_v9::FlowSet;
-        packet
-            .flow_sets
-            .iter()
-            .any(|set| matches!(set, FlowSet::Templates(_) | FlowSet::OptionsTemplates(_)))
+    fn has_templates(packet: &Self::Packet) -> bool {
+        packet.has_templates()
     }
 
-    fn lacks_templates(packet: &Self::Packet) -> bool {
-        use crate::protocol::netflow_v9::FlowSet;
-        packet
-            .flow_sets
-            .iter()
-            .any(|set| matches!(set, FlowSet::Undecoded { .. }))
+    fn has_undecoded(packet: &Self::Packet) -> bool {
+        packet.has_undecoded()
     }
 }
 
-impl Templated for State<crate::protocol::ipfix::Parser, ipfix::Converter> {
+impl TemplatedState for State<crate::protocol::ipfix::Parser, ipfix::Converter> {
     type Packet = crate::protocol::ipfix::Packet;
 
     fn new(registry: Registry, timeout: Duration) -> Self {
@@ -131,20 +121,12 @@ impl Templated for State<crate::protocol::ipfix::Parser, ipfix::Converter> {
         self.converter.convert(packet, received, records);
     }
 
-    fn brings_templates(packet: &Self::Packet) -> bool {
-        use crate::protocol::ipfix::Set;
-        packet
-            .sets
-            .iter()
-            .any(|set| matches!(set, Set::Templates(_) | Set::OptionsTemplates(_)))
+    fn has_templates(packet: &Self::Packet) -> bool {
+        packet.has_templates()
     }
 
-    fn lacks_templates(packet: &Self::Packet) -> bool {
-        use crate::protocol::ipfix::Set;
-        packet
-            .sets
-            .iter()
-            .any(|set| matches!(set, Set::Undecoded { .. }))
+    fn has_undecoded(packet: &Self::Packet) -> bool {
+        packet.has_undecoded()
     }
 }
 
@@ -196,14 +178,6 @@ impl Collector {
         Self::new(family, Registry::iana(), Duration::from_mins(10))
     }
 
-    pub fn netflow() -> Self {
-        Self::of(Family::Netflow)
-    }
-
-    pub fn sflow() -> Self {
-        Self::of(Family::Sflow)
-    }
-
     /// Converts a datagram's records, adding them to `records`, by the
     /// version at its start.
     pub fn collect(
@@ -240,7 +214,7 @@ impl Collector {
     /// Collects a datagram of a templated protocol through its session's
     /// state and held datagrams, `parts_of` the session, with the datagrams
     /// held for templates it brings converted first.
-    fn collect_templated<T: Templated>(
+    fn collect_templated<T: TemplatedState>(
         &mut self,
         received: Received,
         datagram: &[u8],
@@ -255,13 +229,13 @@ impl Collector {
         let state = state.get_or_insert_with(|| T::new(registry, timeout));
         let mut dropped = 0;
         let mut packet = state.parse(datagram)?;
-        if T::brings_templates(&packet) {
+        if T::has_templates(&packet) {
             if let Some(limits) = limits {
                 let (taken, aged) = held.take(limits);
                 dropped += aged;
                 for (received, datagram) in taken {
                     match state.parse(&datagram) {
-                        Ok(packet) if T::lacks_templates(&packet) => {
+                        Ok(packet) if T::has_undecoded(&packet) => {
                             dropped += held.push(limits, received, &datagram);
                         }
                         Ok(packet) => state.convert(packet, &received, records),
@@ -270,12 +244,12 @@ impl Collector {
                 }
             }
             // The template came after the data in the same datagram.
-            if T::lacks_templates(&packet) {
+            if T::has_undecoded(&packet) {
                 packet = state.parse(datagram)?;
             }
         }
         if let Some(limits) = limits
-            && T::lacks_templates(&packet)
+            && T::has_undecoded(&packet)
         {
             dropped += held.push(limits, received, datagram);
         }
@@ -387,7 +361,7 @@ mod tests {
     }
 
     fn holding() -> Collector {
-        Collector::netflow().with_pending(PendingLimits {
+        Collector::of(Family::Netflow).with_pending(PendingLimits {
             session_bytes: 1 << 10,
             max_age: Duration::from_mins(1),
         })
@@ -439,7 +413,7 @@ mod tests {
     #[test]
     fn netflow_v9_data_before_its_template_in_one_packet_is_decoded() {
         let packet = netflow_v9(9, &[octet_count_data(5), octet_count_template(0)]);
-        for mut collector in [holding(), Collector::netflow()] {
+        for mut collector in [holding(), Collector::of(Family::Netflow)] {
             let records = collect(&mut collector, 100, &packet);
             assert_eq!(records.len(), 1);
             assert_eq!(
@@ -447,7 +421,7 @@ mod tests {
                 Some(&Value::Unsigned32(5))
             );
         }
-        assert_eq!(Collector::netflow().pending(), None);
+        assert_eq!(Collector::of(Family::Netflow).pending(), None);
     }
 
     #[test]

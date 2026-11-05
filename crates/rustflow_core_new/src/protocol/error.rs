@@ -97,14 +97,7 @@ impl error::Error for ParseError {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match self {
             Self::Truncated(e) => Some(e),
-            Self::Version(_)
-            | Self::SetLength(_)
-            | Self::TemplateId(_)
-            | Self::MessageLength(_)
-            | Self::ScopeFieldCount(_)
-            | Self::AddressType(_)
-            | Self::AsPathSegmentType(_)
-            | Self::Utf8 => None,
+            _ => None,
         }
     }
 }

@@ -24,8 +24,7 @@ impl Registry {
         let mut registry = Self::empty();
         for &(id, name, data_type, semantics) in iana::ELEMENTS {
             registry.insert(InformationElement {
-                id,
-                enterprise_number: None,
+                id: ElementId::iana(id),
                 name: Cow::Borrowed(name),
                 data_type,
                 semantics,
@@ -37,7 +36,7 @@ impl Registry {
     /// Adds an element, replacing any with the same enterprise number and
     /// ID.
     pub fn insert(&mut self, element: InformationElement) {
-        Arc::make_mut(&mut self.elements).insert(element.element_id(), element);
+        Arc::make_mut(&mut self.elements).insert(element.id, element);
     }
 
     pub fn get(&self, element: ElementId) -> Option<&InformationElement> {
@@ -52,7 +51,7 @@ impl Registry {
         self.elements
             .values()
             .find(|element| element.name == name)
-            .map(InformationElement::element_id)
+            .map(|element| element.id)
     }
 }
 
@@ -69,8 +68,10 @@ mod tests {
 
     fn element(id: u16, enterprise_number: Option<u32>, name: &'static str) -> InformationElement {
         InformationElement {
-            id,
-            enterprise_number,
+            id: ElementId {
+                enterprise_number,
+                id,
+            },
             name: Cow::Borrowed(name),
             data_type: DataType::Unsigned32,
             semantics: Some(DataTypeSemantics::Quantity),
@@ -83,8 +84,7 @@ mod tests {
         assert_eq!(
             iana.get(ElementId::iana(1)),
             Some(&InformationElement {
-                id: 1,
-                enterprise_number: None,
+                id: ElementId::iana(1),
                 name: Cow::Borrowed("octetDeltaCount"),
                 data_type: DataType::Unsigned64,
                 semantics: Some(DataTypeSemantics::DeltaCounter),

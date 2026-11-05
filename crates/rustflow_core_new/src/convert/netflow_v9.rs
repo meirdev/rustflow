@@ -2,67 +2,45 @@
 //! same elements as IANA's IPFIX registry, which keeps NetFlow v9's
 //! numbers, so their fields are copied, with uptimes made absolute.
 
-use crate::convert::domains::Domains;
-use crate::convert::templated::{Context, convert_data, convert_options};
+use crate::convert::templated::{PacketHeader, Sets, Templated};
 use crate::convert::time::{TimeBase, Uptime};
-use crate::convert::{Protocol, Received, Record};
-use crate::protocol::netflow_v9::{FlowSet, Packet};
+use crate::convert::{Protocol, templated};
+use crate::protocol::netflow_v9::{FlowSet, OptionsTemplate, Packet, Template};
 
-/// Converts one exporter's NetFlow v9 packets, keeping what its options
-/// records said of each source ID, as a parser keeps its templates. Use one
-/// converter per exporter address.
-#[derive(Default)]
-pub struct Converter {
-    domains: Domains,
-}
+/// Converts one exporter's NetFlow v9 packets; see
+/// [`templated::Converter`].
+pub type Converter = templated::Converter<Packet>;
 
-impl Converter {
-    /// Converts a packet's records, adding them to `records`: its options
-    /// records first, with their scope, then its data records, with the
-    /// sampling the options records gave their source ID, if any.
-    pub fn convert(
-        &mut self,
-        packet: Packet,
-        received: &Received,
-        records: &mut impl Extend<Record>,
-    ) {
-        let header = &packet.header;
-        let context = Context {
-            protocol: Protocol::NetflowV9,
-            sequence_number: header.sequence_number,
-            domain_id: header.source_id,
-            received,
+impl Templated for Packet {
+    type Data = Template;
+    type Options = OptionsTemplate;
+
+    const PROTOCOL: Protocol = Protocol::NetflowV9;
+
+    fn header(&self) -> PacketHeader {
+        PacketHeader {
+            sequence_number: self.header.sequence_number,
+            domain_id: self.header.source_id,
             time: TimeBase {
-                export_time_ms: u64::from(header.unix_secs) * 1_000,
-                uptime: Uptime::AtExport(header.sys_uptime),
+                export_time_ms: u64::from(self.header.unix_secs) * 1_000,
+                uptime: Uptime::AtExport(self.header.sys_uptime),
             },
-        };
-        let (options, data): (Vec<_>, Vec<_>) = packet
-            .flow_sets
-            .into_iter()
-            .partition(|flow_set| matches!(flow_set, FlowSet::OptionsData(_)));
-        for flow_set in options {
-            if let FlowSet::OptionsData(set) = flow_set {
-                let domains = &mut self.domains;
-                records.extend(
-                    convert_options(&context, set)
-                        .inspect(|record| domains.learn(header.source_id, record)),
-                );
-            }
-        }
-
-        let domain = self.domains.get(header.source_id);
-        for flow_set in data {
-            if let FlowSet::Data(set) = flow_set {
-                convert_data(&context, domain, set, records);
-            }
         }
     }
 
-    /// The latest options record of each kind the exporter sent, with its
-    /// source ID.
-    pub fn options(&self) -> impl Iterator<Item = (u32, &Record)> {
-        self.domains.options()
+    fn into_sets(self) -> Sets<OptionsTemplate, Template> {
+        let mut sets = Sets {
+            options: Vec::new(),
+            data: Vec::new(),
+        };
+        for flow_set in self.flow_sets {
+            match flow_set {
+                FlowSet::OptionsData(set) => sets.options.push(set),
+                FlowSet::Data(set) => sets.data.push(set),
+                _ => {}
+            }
+        }
+        sets
     }
 }
 
@@ -72,7 +50,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::convert::Scope;
+    use crate::convert::{Received, Record, Scope};
     use crate::fixtures::udp_payloads;
     use crate::protocol::DataSet;
     use crate::protocol::information_element::{ElementId, iana};

@@ -25,13 +25,15 @@ pub(crate) fn uptime_to_unix_millis(
 }
 
 /// What a packet's relative times are relative to.
-pub(crate) struct TimeBase {
-    pub(crate) export_time_ms: u64,
-    pub(crate) uptime: Uptime,
+#[derive(Debug, Clone, Copy)]
+pub struct TimeBase {
+    pub export_time_ms: u64,
+    pub uptime: Uptime,
 }
 
 /// What an exporter's uptime counts from.
-pub(crate) enum Uptime {
+#[derive(Debug, Clone, Copy)]
+pub enum Uptime {
     /// NetFlow v9: the uptime the header gives at the export time.
     AtExport(u32),
     /// IPFIX: the exporter's last (re)initialization, if an options record

@@ -104,22 +104,10 @@ impl From<(u32, u16)> for ElementId {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct InformationElement {
-    pub id: u16,
-    /// The private enterprise number of a vendor's element; `None` for an
-    /// IANA element.
-    pub enterprise_number: Option<u32>,
+    pub id: ElementId,
     pub name: Cow<'static, str>,
     pub data_type: DataType,
     pub semantics: Option<DataTypeSemantics>,
-}
-
-impl InformationElement {
-    pub fn element_id(&self) -> ElementId {
-        ElementId {
-            enterprise_number: self.enterprise_number,
-            id: self.id,
-        }
-    }
 }
 
 #[cfg(test)]

@@ -223,8 +223,7 @@ fn enterprise_fields_are_looked_up_by_their_enterprise_number() {
 
     let mut registry = Registry::iana();
     registry.insert(InformationElement {
-        id: 1,
-        enterprise_number: Some(9),
+        id: ElementId::from((9, 1)),
         name: Cow::Borrowed("vendorCounter"),
         data_type: DataType::Unsigned32,
         semantics: Some(DataTypeSemantics::TotalCounter),
@@ -810,8 +809,7 @@ fn type_records_describe_elements_for_the_data_after_them() {
     assert_eq!(
         parser.element(DOMAIN, &VENDOR_FIELD),
         Some(&InformationElement {
-            id: 1,
-            enterprise_number: Some(VENDOR_ENTERPRISE_NUMBER),
+            id: ElementId::from((VENDOR_ENTERPRISE_NUMBER, 1)),
             name: Cow::Borrowed("vendorCounter"),
             data_type: DataType::Unsigned32,
             semantics: Some(DataTypeSemantics::TotalCounter),
@@ -943,7 +941,10 @@ fn the_enterprise_bit_of_a_described_id_is_ignored() {
             &[type_template(), type_records(&[with_bit])],
         ))
         .unwrap();
-    assert_eq!(parser.element(DOMAIN, &VENDOR_FIELD).map(|e| e.id), Some(1));
+    assert_eq!(
+        parser.element(DOMAIN, &VENDOR_FIELD).map(|e| e.id.id),
+        Some(1)
+    );
 }
 
 #[test]

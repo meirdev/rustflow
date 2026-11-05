@@ -2,17 +2,111 @@
 //! already: copied, with relative times made absolute and what conversion
 //! adds appended.
 
+use std::marker::PhantomData;
 use std::sync::Arc;
 
-use crate::convert::domains::{Domain, SAMPLING_KEYS, sampling_key};
+use crate::convert::domains::{Domain, Domains, SAMPLING_KEYS, sampling_key};
 use crate::convert::record::{Fields, Scope};
 use crate::convert::sampling::{Method, Sampling};
-use crate::convert::time::TimeBase;
+use crate::convert::time::{TimeBase, Uptime};
 use crate::convert::{Protocol, Received, Record, packet_fields};
 use crate::protocol::information_element::{ElementId, iana};
 use crate::protocol::netflow_v9::ScopeType;
 use crate::protocol::value::Value;
 use crate::protocol::{DataSet, ipfix, netflow_v9};
+
+/// A packet of a protocol whose records templates describe: NetFlow v9 and
+/// IPFIX.
+pub trait Templated {
+    type Data: DataTemplate;
+    type Options: OptionsTemplate;
+
+    const PROTOCOL: Protocol;
+
+    /// What the header says of every record in the packet.
+    fn header(&self) -> PacketHeader;
+
+    /// The packet's data sets of each kind.
+    fn into_sets(self) -> Sets<Self::Options, Self::Data>;
+}
+
+/// The data sets of a packet, by kind.
+pub struct Sets<O, D> {
+    pub options: Vec<DataSet<O>>,
+    pub data: Vec<DataSet<D>>,
+}
+
+/// What a packet's header says of every record in it.
+pub struct PacketHeader {
+    pub sequence_number: u32,
+    /// The observation domain ID, or the source ID in NetFlow v9.
+    pub domain_id: u32,
+    pub time: TimeBase,
+}
+
+/// Converts one exporter's packets of `P`, keeping what its options records
+/// said of each observation domain, as a parser keeps its templates. Use
+/// one converter per exporter address.
+pub struct Converter<P> {
+    domains: Domains,
+    packets: PhantomData<P>,
+}
+
+impl<P> Default for Converter<P> {
+    fn default() -> Self {
+        Self {
+            domains: Domains::default(),
+            packets: PhantomData,
+        }
+    }
+}
+
+impl<P: Templated> Converter<P> {
+    /// Converts a packet's records, adding them to `records`: its options
+    /// records first, with their scope, then its data records, with the
+    /// sampling the options records gave their observation domain, if any.
+    ///
+    /// Times relative to the export time (`flowStartDeltaMicroseconds`) are
+    /// made absolute from it; uptimes (`flowStartSysUpTime`) from the
+    /// exporter's uptime at export in NetFlow v9, and in IPFIX from its
+    /// `systemInitTimeMilliseconds`, once an options record gave it, and
+    /// are kept as they are until then.
+    pub fn convert(&mut self, packet: P, received: &Received, records: &mut impl Extend<Record>) {
+        let PacketHeader {
+            sequence_number,
+            domain_id,
+            time,
+        } = packet.header();
+        let mut context = Context {
+            protocol: P::PROTOCOL,
+            sequence_number,
+            domain_id,
+            received,
+            time,
+        };
+        let Sets { options, data } = packet.into_sets();
+        for set in options {
+            let domains = &mut self.domains;
+            records.extend(
+                convert_options(&context, set).inspect(|record| domains.learn(domain_id, record)),
+            );
+        }
+
+        let domain = self.domains.get(domain_id);
+        if let Uptime::BootedAt(boot_ms) = &mut context.time.uptime {
+            *boot_ms = domain.and_then(|domain| domain.system_init_time_ms);
+        }
+        for set in data {
+            convert_data(&context, domain, set, records);
+        }
+    }
+
+    /// The latest options record of each kind the exporter sent, with its
+    /// observation domain.
+    pub fn options(&self) -> impl Iterator<Item = (u32, &Record)> {
+        self.domains.options()
+    }
+}
 
 /// What the records of one packet share.
 pub(crate) struct Context<'a> {
@@ -24,7 +118,7 @@ pub(crate) struct Context<'a> {
 }
 
 /// The template of a data set: every value has an element.
-pub(crate) trait DataTemplate {
+pub trait DataTemplate {
     fn element_ids(&self) -> impl Iterator<Item = ElementId>;
 }
 
@@ -43,7 +137,7 @@ impl DataTemplate for netflow_v9::Template {
 }
 
 /// The template of an options data set: scope fields, then option fields.
-pub(crate) trait OptionsTemplate {
+pub trait OptionsTemplate {
     fn scope(&self) -> impl Iterator<Item = Scope>;
 
     fn option_element_ids(&self) -> impl Iterator<Item = ElementId>;
@@ -94,7 +188,7 @@ fn scope_element(scope: ScopeType) -> Scope {
 
 /// Converts the records of an options data set, each with its scope. They
 /// are few, so each is converted on its own.
-pub(crate) fn convert_options<'a, T: OptionsTemplate + 'a>(
+fn convert_options<'a, T: OptionsTemplate + 'a>(
     context: &'a Context,
     data: DataSet<T>,
 ) -> impl Iterator<Item = Record> + 'a {
@@ -147,16 +241,19 @@ struct Layout {
     section: bool,
     /// The elements of a whole record, additions included, by sampling
     /// shape, built as records of that shape come.
-    shapes: Vec<(usize, Arc<[ElementId]>)>,
+    shapes: [Option<Arc<[ElementId]>>; SHAPES],
 }
+
+/// How many element lists sampling can end a record with: none, and one
+/// per method, stated or not.
+const SHAPES: usize = 4;
 
 struct RelativeTime {
     index: usize,
     relative: ElementId,
 }
 
-/// Which element list sampling ends a record with: none, or one per
-/// method, stated or not.
+/// Which element list sampling ends a record with.
 fn shape(sampling: Option<Sampling>) -> usize {
     match sampling.map(|sampling| sampling.method) {
         None => 0,
@@ -168,11 +265,10 @@ fn shape(sampling: Option<Sampling>) -> usize {
 
 impl Layout {
     fn of(context: &Context, template: &impl DataTemplate) -> Self {
-        let mut own = Vec::new();
+        let elements: Vec<ElementId> = template.element_ids().collect();
+        let mut own = Vec::with_capacity(elements.len());
         let mut times = Vec::new();
-        let mut keys = [None; SAMPLING_KEYS.len()];
-        let mut section = false;
-        for (index, element) in template.element_ids().enumerate() {
+        for (index, &element) in elements.iter().enumerate() {
             match context.time.absolute_element(element) {
                 Some(absolute) => {
                     times.push(RelativeTime {
@@ -183,30 +279,26 @@ impl Layout {
                 }
                 None => own.push(element),
             }
-            if let Some(key) = sampling_key(element) {
-                let slot = SAMPLING_KEYS.iter().position(|&known| known == key);
-                if let Some(slot) = slot {
-                    keys[slot].get_or_insert(index);
-                }
-            }
-            if matches!(
-                element,
-                iana::DATA_LINK_FRAME_SECTION | iana::IP_HEADER_PACKET_SECTION
-            ) {
-                section = true;
-            }
         }
-        let sampling_keys = SAMPLING_KEYS
-            .iter()
-            .zip(keys)
-            .filter_map(|(&key, index)| Some((key, index?)))
-            .collect();
+        let position = |wanted: ElementId| {
+            elements
+                .iter()
+                .position(|&element| sampling_key(element) == Some(wanted))
+        };
         Self {
             own,
             times,
-            sampling_keys,
-            section,
-            shapes: Vec::new(),
+            sampling_keys: SAMPLING_KEYS
+                .iter()
+                .filter_map(|&key| Some((key, position(key)?)))
+                .collect(),
+            section: elements.iter().any(|&element| {
+                matches!(
+                    element,
+                    iana::DATA_LINK_FRAME_SECTION | iana::IP_HEADER_PACKET_SECTION
+                )
+            }),
+            shapes: Default::default(),
         }
     }
 
@@ -215,18 +307,15 @@ impl Layout {
         additions: &[ElementId],
         sampling: Option<Sampling>,
     ) -> Arc<[ElementId]> {
-        let shape = shape(sampling);
-        if let Some((_, elements)) = self.shapes.iter().find(|(known, _)| *known == shape) {
-            return Arc::clone(elements);
-        }
-        let mut elements = self.own.clone();
-        elements.extend_from_slice(additions);
-        if let Some(sampling) = sampling {
-            sampling.for_each(|element, _| elements.push(element));
-        }
-        let elements: Arc<[ElementId]> = elements.into();
-        self.shapes.push((shape, Arc::clone(&elements)));
-        elements
+        let Self { own, shapes, .. } = self;
+        Arc::clone(shapes[shape(sampling)].get_or_insert_with(|| {
+            let mut elements = own.clone();
+            elements.extend_from_slice(additions);
+            if let Some(sampling) = sampling {
+                sampling.for_each(|element, _| elements.push(element));
+            }
+            elements.into()
+        }))
     }
 }
 
@@ -234,7 +323,7 @@ impl Layout {
 /// keeping its values. A record carrying a packet section (RFC 5477) gets
 /// the fields dissecting it yields, those it does not have already. Records
 /// whose elements come out the same share them.
-pub(crate) fn convert_data<T: DataTemplate>(
+fn convert_data<T: DataTemplate>(
     context: &Context,
     domain: Option<&Domain>,
     data: DataSet<T>,
@@ -287,14 +376,11 @@ pub(crate) fn convert_data<T: DataTemplate>(
             }
         }
         let mut fields = Fields { elements, values };
-        let headers = packet_fields::find(fields.iter()).and_then(|section| {
-            let Value::OctetArray(bytes) = &fields.values[section.index] else {
+        let headers = packet_fields::find(fields.iter()).and_then(|(index, layer)| {
+            let Value::OctetArray(bytes) = &fields.values[index] else {
                 return None;
             };
-            let observed = section
-                .observed
-                .map_or(bytes.len(), |octets| octets.min(bytes.len()));
-            packet_fields::headers(section.layer, &bytes[..observed])
+            packet_fields::headers(layer, bytes)
         });
         if let Some(headers) = headers {
             packet_fields::add(headers, &mut |element, value| fields.add(element, value));

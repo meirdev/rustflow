@@ -83,6 +83,22 @@ pub enum Set {
     Unknown(u16),
 }
 
+impl Packet {
+    /// Whether the message carries templates, data or options.
+    pub fn has_templates(&self) -> bool {
+        self.sets
+            .iter()
+            .any(|set| matches!(set, Set::Templates(_) | Set::OptionsTemplates(_)))
+    }
+
+    /// Whether the message carries data whose template was not known.
+    pub fn has_undecoded(&self) -> bool {
+        self.sets
+            .iter()
+            .any(|set| matches!(set, Set::Undecoded { .. }))
+    }
+}
+
 /// A template, or with no fields, a template withdrawal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

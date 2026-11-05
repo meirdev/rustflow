@@ -239,7 +239,8 @@ mod tests {
             .write(&mut tcp, b"x")
             .unwrap();
         let pcap = capture(&[tcp, udp(&netflow_v5()), udp(&[1, 2, 3])]);
-        let mut reader = PcapReader::new(Cursor::new(pcap), Collector::netflow()).unwrap();
+        let mut reader =
+            PcapReader::new(Cursor::new(pcap), Collector::of(Family::Netflow)).unwrap();
 
         let Some(Read::Record(flow)) = reader.read().unwrap() else {
             panic!("expected the v5 flow");
@@ -264,7 +265,8 @@ mod tests {
     fn a_capture_cut_short_ends_at_its_error() {
         let mut pcap = capture(&[udp(&netflow_v5()), udp(&netflow_v5())]);
         pcap.truncate(pcap.len() - 10);
-        let mut reader = PcapReader::new(Cursor::new(pcap), Collector::netflow()).unwrap();
+        let mut reader =
+            PcapReader::new(Cursor::new(pcap), Collector::of(Family::Netflow)).unwrap();
 
         assert!(matches!(reader.read(), Ok(Some(Read::Record(_)))));
         assert!(reader.read().is_err());

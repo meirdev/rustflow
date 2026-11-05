@@ -2,8 +2,8 @@
 
 use std::collections::HashMap;
 
+use crate::convert::Record;
 use crate::convert::sampling::{Sampling, SamplingOptions};
-use crate::convert::{Record, Scope};
 use crate::protocol::information_element::{ElementId, iana};
 use crate::protocol::value::Value;
 
@@ -28,13 +28,6 @@ pub(crate) const SAMPLING_KEYS: [ElementId; 4] = [
     iana::INGRESS_INTERFACE,
     iana::EGRESS_INTERFACE,
     iana::LINE_CARD_ID,
-];
-
-/// Scopes that cover the whole observation domain.
-const DOMAIN_SCOPES: [ElementId; 3] = [
-    iana::OBSERVATION_DOMAIN_ID,
-    iana::EXPORTING_PROCESS_ID,
-    iana::METERING_PROCESS_ID,
 ];
 
 /// The key `element` stands for, if it keys sampling at all.
@@ -103,10 +96,9 @@ impl Domain {
             }
         }
         if let Some(sampling) = options.sampling() {
-            match applies_to(record) {
-                Applies::Domain => self.sampling = Some(sampling),
-                Applies::Only(key) => self.set_scoped_sampling(key, sampling),
-                Applies::Neither => {}
+            match scoped_to(record) {
+                Some(key) => self.set_scoped_sampling(key, sampling),
+                None => self.sampling = Some(sampling),
             }
         }
         self.keep(record);
@@ -156,41 +148,21 @@ impl Domain {
     }
 }
 
-/// What the sampling an options record states applies to.
-enum Applies {
-    Domain,
-    Only(SamplingKey),
-    /// Something else, such as a template, which says nothing of the
-    /// sampling of the domain's flows.
-    Neither,
-}
-
-/// A sampler named anywhere in the record keys its sampling, since many
-/// exporters name it among the option fields rather than in the scope.
-/// Otherwise the scope decides: an interface or a line card keys it, and
-/// scopes covering the whole domain leave it the domain's.
-fn applies_to(record: &Record) -> Applies {
+/// What the sampling an options record states is scoped to; `None` for
+/// the whole domain. A sampler named anywhere in the record keys it, since
+/// many exporters name the sampler among the option fields rather than in
+/// the scope; otherwise an interface or a line card in the scope does.
+fn scoped_to(record: &Record) -> Option<SamplingKey> {
     let sampler = record
         .scope_elements()
         .chain(record.iter())
-        .find(|(element, _)| sampling_key(*element) == Some(iana::SAMPLER_ID));
-    if let Some((_, value)) = sampler {
-        return value
-            .as_u64()
-            .map_or(Applies::Neither, |id| Applies::Only((iana::SAMPLER_ID, id)));
-    }
-    for (scope, value) in &record.scope {
-        match *scope {
-            Scope::Element(element) if DOMAIN_SCOPES.contains(&element) => {}
-            Scope::Element(element) if SAMPLING_KEYS.contains(&element) => {
-                return value
-                    .as_u64()
-                    .map_or(Applies::Neither, |id| Applies::Only((element, id)));
-            }
-            _ => return Applies::Neither,
-        }
-    }
-    Applies::Domain
+        .find(|(element, _)| sampling_key(*element) == Some(iana::SAMPLER_ID))
+        .map(|(_, value)| (iana::SAMPLER_ID, value));
+    let scoped = record
+        .scope_elements()
+        .find(|(element, _)| sampling_key(*element).is_some());
+    let (key, value) = sampler.or(scoped)?;
+    Some((key, value.as_u64()?))
 }
 
 #[cfg(test)]
@@ -245,7 +217,7 @@ mod tests {
     }
 
     #[test]
-    fn sampling_scoped_to_a_template_says_nothing_of_the_domain() {
+    fn sampling_under_any_other_scope_is_the_domains() {
         let mut domains = Domains::default();
         learn_scoped(
             &mut domains,
@@ -253,7 +225,7 @@ mod tests {
             (iana::TEMPLATE_ID, Value::Unsigned16(256)),
             &[(iana::SAMPLING_INTERVAL, Value::Unsigned32(10))],
         );
-        assert_eq!(domains.get(7).unwrap().sampling_for([]), None);
+        assert_eq!(domains.get(7).unwrap().sampling_for([]), one_in(10));
     }
 
     fn one_in(rate: u32) -> Option<Sampling> {

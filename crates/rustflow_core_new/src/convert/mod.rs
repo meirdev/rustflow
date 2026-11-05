@@ -25,7 +25,7 @@ mod packet_fields;
 mod record;
 mod sampling;
 pub mod sflow_v5;
-mod templated;
+pub mod templated;
 #[cfg(feature = "serde")]
 mod text;
 mod time;

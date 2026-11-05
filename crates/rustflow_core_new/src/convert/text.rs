@@ -53,36 +53,23 @@ impl TextRecord<'_> {
 
 impl Serialize for TextRecord<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let fields: Vec<(ElementId, &Value)> = self
-            .record
-            .scope_elements()
-            .chain(self.record.iter())
-            .filter(|(_, value)| has_text(value))
-            .collect();
-        let is_first = |index: usize| {
-            let element = fields[index].0;
-            fields[..index].iter().all(|&(seen, _)| seen != element)
-        };
-
-        let keys = (0..fields.len()).filter(|&index| is_first(index)).count();
-        let mut map = serializer.serialize_map(Some(keys))?;
-        for (index, &(element, value)) in fields.iter().enumerate() {
-            if !is_first(index) {
-                continue;
+        // Each element once, in order of first appearance, with every value
+        // it has.
+        let mut entries: Vec<(ElementId, Vec<Text>)> = Vec::new();
+        let fields = self.record.scope_elements().chain(self.record.iter());
+        for (element, value) in fields.filter(|(_, value)| has_text(value)) {
+            match entries.iter_mut().find(|(known, _)| *known == element) {
+                Some((_, values)) => values.push(Text(value)),
+                None => entries.push((element, vec![Text(value)])),
             }
-            let key = self.key(element);
-            let mut repeats = fields[index + 1..]
-                .iter()
-                .filter(|&&(other, _)| other == element)
-                .peekable();
-            if repeats.peek().is_none() {
-                map.serialize_entry(&key, &Text(value))?;
-            } else {
-                let values: Vec<Text> = std::iter::once(value)
-                    .chain(repeats.map(|&(_, value)| value))
-                    .map(Text)
-                    .collect();
-                map.serialize_entry(&key, &values)?;
+        }
+
+        let mut map = serializer.serialize_map(Some(entries.len()))?;
+        for (element, values) in &entries {
+            let key = self.key(*element);
+            match values.as_slice() {
+                [value] => map.serialize_entry(&key, value)?,
+                values => map.serialize_entry(&key, values)?,
             }
         }
         map.end()

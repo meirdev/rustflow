@@ -54,7 +54,7 @@ impl ElementTypes {
         let mut changed = false;
         for record in records {
             if let Some(element) = describe(template, record)
-                && registry.get(element.element_id()).is_none()
+                && registry.get(element.id).is_none()
             {
                 changed |= self.insert(domain, element);
             }
@@ -65,7 +65,7 @@ impl ElementTypes {
     fn insert(&mut self, domain: u32, element: InformationElement) -> bool {
         let full = self.len >= MAX_ELEMENTS;
         let elements = self.domains.entry(domain).or_default();
-        let key = element.element_id();
+        let key = element.id;
         match elements.get_mut(&key) {
             Some(Learned::Defined(known)) if *known == element => false,
             Some(Learned::Conflicting) => false,
@@ -144,8 +144,10 @@ fn describe(template: &OptionsTemplate, record: &[Value]) -> Option<InformationE
     });
 
     Some(InformationElement {
-        id,
-        enterprise_number,
+        id: ElementId {
+            enterprise_number,
+            id,
+        },
         name: Cow::Owned(name),
         data_type,
         semantics,

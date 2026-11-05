@@ -71,6 +71,22 @@ pub enum FlowSet {
     Unknown(u16),
 }
 
+impl Packet {
+    /// Whether the packet carries templates, data or options.
+    pub fn has_templates(&self) -> bool {
+        self.flow_sets
+            .iter()
+            .any(|set| matches!(set, FlowSet::Templates(_) | FlowSet::OptionsTemplates(_)))
+    }
+
+    /// Whether the packet carries data whose template was not known.
+    pub fn has_undecoded(&self) -> bool {
+        self.flow_sets
+            .iter()
+            .any(|set| matches!(set, FlowSet::Undecoded { .. }))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Template {
