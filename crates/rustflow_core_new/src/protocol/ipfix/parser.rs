@@ -89,29 +89,46 @@ impl Parser {
                 }
                 Set::OptionsTemplates(templates)
             }
-            id if id >= MIN_TEMPLATE_ID => match self.templates.get(domain, id) {
-                Some(entry) => {
-                    let records = body.many(|r| self.parse_record(r, domain, &entry.layout, 0));
-                    match &entry.template {
-                        TemplateRef::Data(template) => Set::Data(DataSet {
-                            template: Arc::clone(template),
-                            records,
-                        }),
-                        TemplateRef::Options(template) => Set::OptionsData(DataSet {
-                            template: Arc::clone(template),
-                            records,
-                        }),
-                    }
-                }
-                None => Set::Undecoded {
-                    set_id: id,
-                    body: body.remaining().to_vec(),
-                },
-            },
+            id if id >= MIN_TEMPLATE_ID => {
+                self.decode_data(domain, id, &mut body)
+                    .unwrap_or_else(|| Set::Undecoded {
+                        set_id: id,
+                        body: body.remaining().to_vec(),
+                    })
+            }
             id => Set::Unknown(id),
         };
         self.learn_types(domain, &set);
         Ok(set)
+    }
+
+    /// Retries only sets that lacked a template. Known sets retain the
+    /// template used on arrival, even if that ID has since been redefined.
+    pub(crate) fn resolve(&mut self, packet: &mut Packet) {
+        let domain = packet.header.observation_domain_id;
+        for set in &mut packet.sets {
+            if let Set::Undecoded { set_id, body } = set
+                && let Some(decoded) = self.decode_data(domain, *set_id, &mut Reader::new(body))
+            {
+                *set = decoded;
+                self.learn_types(domain, set);
+            }
+        }
+    }
+
+    fn decode_data(&self, domain: u32, id: u16, body: &mut Reader) -> Option<Set> {
+        let entry = self.templates.get(domain, id)?;
+        let records = body.many(|r| self.parse_record(r, domain, &entry.layout, 0));
+        Some(match &entry.template {
+            TemplateRef::Data(template) => Set::Data(DataSet {
+                template: Arc::clone(template),
+                records,
+            }),
+            TemplateRef::Options(template) => Set::OptionsData(DataSet {
+                template: Arc::clone(template),
+                records,
+            }),
+        })
     }
 
     /// Learns the types an options data set's type records describe.

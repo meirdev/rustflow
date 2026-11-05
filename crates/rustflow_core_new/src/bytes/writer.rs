@@ -23,8 +23,9 @@ impl<'a> Writer<'a> {
         self.buf.truncate(len);
     }
 
-    /// Runs `write`, keeping what it wrote only if it succeeds: on an
-    /// error, the buffer is as it was.
+    /// Appends with `write`, truncating back to the starting length on an
+    /// error. The callback must not change bytes before that starting
+    /// length: truncation cannot undo overwrites of existing data.
     pub fn transaction<E>(
         &mut self,
         write: impl FnOnce(&mut Self) -> Result<(), E>,

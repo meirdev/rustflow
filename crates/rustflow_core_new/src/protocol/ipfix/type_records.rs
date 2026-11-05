@@ -21,8 +21,9 @@ const MAX_NAME_LENGTH: usize = 256;
 /// What type records said about the elements of each observation domain.
 #[derive(Clone, Default)]
 pub(super) struct ElementTypes {
-    domains: HashMap<u32, HashMap<ElementId, Learned>>,
-    len: usize,
+    // One bounded map also prevents rejected records from allocating an
+    // unbounded number of empty observation-domain maps.
+    elements: HashMap<(u32, ElementId), Learned>,
 }
 
 #[derive(Clone)]
@@ -35,7 +36,7 @@ enum Learned {
 
 impl ElementTypes {
     pub(super) fn get(&self, domain: u32, element: ElementId) -> Option<&InformationElement> {
-        match self.domains.get(&domain)?.get(&element)? {
+        match self.elements.get(&(domain, element))? {
             Learned::Defined(element) => Some(element),
             Learned::Conflicting => None,
         }
@@ -63,10 +64,9 @@ impl ElementTypes {
     }
 
     fn insert(&mut self, domain: u32, element: InformationElement) -> bool {
-        let full = self.len >= MAX_ELEMENTS;
-        let elements = self.domains.entry(domain).or_default();
-        let key = element.id;
-        match elements.get_mut(&key) {
+        let full = self.elements.len() >= MAX_ELEMENTS;
+        let key = (domain, element.id);
+        match self.elements.get_mut(&key) {
             Some(Learned::Defined(known)) if *known == element => false,
             Some(Learned::Conflicting) => false,
             Some(learned) => {
@@ -74,8 +74,7 @@ impl ElementTypes {
                 true
             }
             None if !full => {
-                elements.insert(key, Learned::Defined(element));
-                self.len += 1;
+                self.elements.insert(key, Learned::Defined(element));
                 true
             }
             None => false,
@@ -229,6 +228,26 @@ mod tests {
         let last = u16::try_from(MAX_ELEMENTS).unwrap();
         assert!(types.get(7, ElementId::from((9, last - 1))).is_some());
         assert!(types.get(7, ElementId::from((9, last))).is_none());
+    }
+
+    #[test]
+    fn a_full_cache_does_not_allocate_empty_domains() {
+        let template = type_template();
+        let registry = Registry::empty();
+        let records: Vec<_> = (0..MAX_ELEMENTS)
+            .map(|id| type_record(u16::try_from(id).unwrap(), String::new()))
+            .collect();
+        let mut types = ElementTypes::default();
+        assert!(types.learn(7, &template, &records, &registry));
+        for domain in 100..200 {
+            assert!(!types.learn(domain, &template, &records[..1], &registry));
+        }
+        assert_eq!(types.elements.len(), MAX_ELEMENTS);
+
+        // Reaching capacity must still allow an existing definition to
+        // become conflicting; otherwise its old type would remain trusted.
+        assert!(types.learn(7, &template, &[type_record(0, "changed".into())], &registry));
+        assert!(types.get(7, ElementId::from((9, 0))).is_none());
     }
 
     #[test]

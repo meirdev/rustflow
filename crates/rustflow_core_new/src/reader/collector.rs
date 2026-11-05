@@ -5,9 +5,10 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
-use crate::convert::{Received, Record, ipfix, netflow_v5, netflow_v9, sflow_v5};
+use crate::convert::templated::{self, Templated};
+use crate::convert::{Received, Record, netflow_v5, sflow_v5};
 use crate::protocol::information_element::Registry;
-use crate::protocol::{Family, ParseError, Protocol};
+use crate::protocol::{Family, ParseError, Protocol, ipfix, netflow_v9};
 use crate::reader::pending::{Held, PendingLimits, PendingStats};
 
 /// Sessions one collector may keep state for; the network decides how many
@@ -33,60 +34,53 @@ pub struct Collector {
 #[derive(Default)]
 struct Session {
     last_seen: Option<Instant>,
-    netflow_v9: Option<State<crate::protocol::netflow_v9::Parser, netflow_v9::Converter>>,
-    ipfix: Option<State<crate::protocol::ipfix::Parser, ipfix::Converter>>,
-    held: Held,
+    netflow_v9: Option<State<netflow_v9::Parser>>,
+    ipfix: Option<State<ipfix::Parser>>,
 }
 
 /// One protocol's state in a session: the parser keeping its templates,
-/// the converter keeping what its options records said.
-struct State<P, C> {
+/// the converter keeping what its options records said, and the sets held
+/// for templates not received yet.
+struct State<P: TemplatedParser> {
     parser: P,
-    converter: C,
+    converter: templated::Converter<P::Packet>,
+    held: Held<P::Packet>,
 }
 
-/// The state a templated protocol keeps per session: its parser and
-/// converter.
-trait TemplatedState {
-    type Packet;
+/// A templated protocol's parser, as the collector drives it.
+trait TemplatedParser {
+    type Packet: Templated;
 
     fn new(registry: Registry, timeout: Duration) -> Self;
 
     fn parse(&mut self, datagram: &[u8]) -> Result<Self::Packet, ParseError>;
 
-    fn convert(
-        &mut self,
-        packet: Self::Packet,
-        received: &Received,
-        records: &mut impl Extend<Record>,
-    );
+    /// Decodes the sets that lacked a template with the templates known
+    /// now; sets decoded already keep the template they were decoded with.
+    fn resolve(&mut self, packet: &mut Self::Packet);
 
     fn has_templates(packet: &Self::Packet) -> bool;
 
     fn has_undecoded(packet: &Self::Packet) -> bool;
+
+    /// Takes the sets that lack a template out of `packet`, as a packet of
+    /// their own.
+    fn take_undecoded(packet: &mut Self::Packet) -> Self::Packet;
 }
 
-impl TemplatedState for State<crate::protocol::netflow_v9::Parser, netflow_v9::Converter> {
-    type Packet = crate::protocol::netflow_v9::Packet;
+impl TemplatedParser for netflow_v9::Parser {
+    type Packet = netflow_v9::Packet;
 
     fn new(registry: Registry, timeout: Duration) -> Self {
-        Self {
-            parser: crate::protocol::netflow_v9::Parser::new(registry, timeout),
-            converter: netflow_v9::Converter::default(),
-        }
+        Self::new(registry, timeout)
     }
 
     fn parse(&mut self, datagram: &[u8]) -> Result<Self::Packet, ParseError> {
-        self.parser.parse(datagram)
+        Self::parse(self, datagram)
     }
 
-    fn convert(
-        &mut self,
-        packet: Self::Packet,
-        received: &Received,
-        records: &mut impl Extend<Record>,
-    ) {
-        self.converter.convert(packet, received, records);
+    fn resolve(&mut self, packet: &mut Self::Packet) {
+        Self::resolve(self, packet);
     }
 
     fn has_templates(packet: &Self::Packet) -> bool {
@@ -96,29 +90,33 @@ impl TemplatedState for State<crate::protocol::netflow_v9::Parser, netflow_v9::C
     fn has_undecoded(packet: &Self::Packet) -> bool {
         packet.has_undecoded()
     }
+
+    fn take_undecoded(packet: &mut Self::Packet) -> Self::Packet {
+        netflow_v9::Packet {
+            header: packet.header.clone(),
+            flow_sets: packet
+                .flow_sets
+                .extract_if(.., |set| {
+                    matches!(set, netflow_v9::FlowSet::Undecoded { .. })
+                })
+                .collect(),
+        }
+    }
 }
 
-impl TemplatedState for State<crate::protocol::ipfix::Parser, ipfix::Converter> {
-    type Packet = crate::protocol::ipfix::Packet;
+impl TemplatedParser for ipfix::Parser {
+    type Packet = ipfix::Packet;
 
     fn new(registry: Registry, timeout: Duration) -> Self {
-        Self {
-            parser: crate::protocol::ipfix::Parser::new(registry, timeout),
-            converter: ipfix::Converter::default(),
-        }
+        Self::new(registry, timeout)
     }
 
     fn parse(&mut self, datagram: &[u8]) -> Result<Self::Packet, ParseError> {
-        self.parser.parse(datagram)
+        Self::parse(self, datagram)
     }
 
-    fn convert(
-        &mut self,
-        packet: Self::Packet,
-        received: &Received,
-        records: &mut impl Extend<Record>,
-    ) {
-        self.converter.convert(packet, received, records);
+    fn resolve(&mut self, packet: &mut Self::Packet) {
+        Self::resolve(self, packet);
     }
 
     fn has_templates(packet: &Self::Packet) -> bool {
@@ -127,6 +125,39 @@ impl TemplatedState for State<crate::protocol::ipfix::Parser, ipfix::Converter> 
 
     fn has_undecoded(packet: &Self::Packet) -> bool {
         packet.has_undecoded()
+    }
+
+    fn take_undecoded(packet: &mut Self::Packet) -> Self::Packet {
+        ipfix::Packet {
+            header: packet.header.clone(),
+            sets: packet
+                .sets
+                .extract_if(.., |set| matches!(set, ipfix::Set::Undecoded { .. }))
+                .collect(),
+        }
+    }
+}
+
+impl<P: TemplatedParser> State<P> {
+    fn new(registry: Registry, timeout: Duration) -> Self {
+        Self {
+            parser: P::new(registry, timeout),
+            converter: templated::Converter::default(),
+            held: Held::default(),
+        }
+    }
+
+    /// Converts what `packet` has templates for, adding the records to
+    /// `records`; the sets that still lack one, if any.
+    fn convert(
+        &mut self,
+        mut packet: P::Packet,
+        received: &Received,
+        records: &mut impl Extend<Record>,
+    ) -> Option<P::Packet> {
+        let undecoded = P::has_undecoded(&packet).then(|| P::take_undecoded(&mut packet));
+        self.converter.convert(packet, received, records);
+        undecoded
     }
 }
 
@@ -146,14 +177,17 @@ impl Collector {
         }
     }
 
-    /// Holds NetFlow v9 and IPFIX datagrams whose data came before its
-    /// template, within `limits`, and converts them once a later datagram of
-    /// their session brings templates, before that datagram's own records.
-    /// Their records keep the receive time of the datagram they came in.
+    /// Holds the NetFlow v9 and IPFIX data sets whose template has not
+    /// come, within `limits` for each protocol of a session, and converts
+    /// them once a later datagram of their session brings templates, before
+    /// that datagram's own records. Their records keep the receive time of
+    /// the datagram they came in. The other sets of a datagram are
+    /// converted at once, and a datagram held through template arrivals
+    /// that are not its own does not get younger.
     ///
     /// A template ID an exporter reuses for another template within
-    /// `max_age` decodes the datagrams held for the old one wrongly (RFC
-    /// 7011 section 9); a short `max_age` keeps that window small.
+    /// `max_age` decodes the sets held for the old one wrongly (RFC 7011
+    /// section 9); a short `max_age` keeps that window small.
     pub fn with_pending(mut self, limits: PendingLimits) -> Self {
         self.pending = Some(limits);
         self
@@ -163,11 +197,7 @@ impl Collector {
     /// [`Collector::with_pending`] set limits.
     pub fn pending(&self) -> Option<PendingStats> {
         self.pending.map(|_| PendingStats {
-            held_bytes: self
-                .sessions
-                .values()
-                .map(|session| session.held.bytes())
-                .sum(),
+            held_bytes: self.sessions.values().map(Session::held_bytes).sum(),
             dropped_datagrams: self.dropped,
         })
     }
@@ -194,13 +224,11 @@ impl Collector {
             ),
             Protocol::NetflowV9 => {
                 self.collect_templated(received, datagram, records, |session| {
-                    (&mut session.netflow_v9, &mut session.held)
+                    &mut session.netflow_v9
                 })?;
             }
             Protocol::Ipfix => {
-                self.collect_templated(received, datagram, records, |session| {
-                    (&mut session.ipfix, &mut session.held)
-                })?;
+                self.collect_templated(received, datagram, records, |session| &mut session.ipfix)?;
             }
             Protocol::SflowV5 => sflow_v5::convert(
                 crate::protocol::sflow_v5::parse(datagram)?,
@@ -212,48 +240,46 @@ impl Collector {
     }
 
     /// Collects a datagram of a templated protocol through its session's
-    /// state and held datagrams, `parts_of` the session, with the datagrams
-    /// held for templates it brings converted first.
-    fn collect_templated<T: TemplatedState>(
+    /// state, `state_of` the session, with the sets held for templates it
+    /// brings converted first.
+    fn collect_templated<P: TemplatedParser>(
         &mut self,
         received: Received,
         datagram: &[u8],
         records: &mut impl Extend<Record>,
-        parts_of: impl Fn(&mut Session) -> (&mut Option<T>, &mut Held),
+        state_of: impl Fn(&mut Session) -> &mut Option<State<P>>,
     ) -> Result<(), ParseError> {
         let (registry, timeout, limits) = (self.registry.clone(), self.timeout, self.pending);
         let Some(session) = self.session(received.exporter) else {
             return Ok(());
         };
-        let (state, held) = parts_of(session);
-        let state = state.get_or_insert_with(|| T::new(registry, timeout));
+        let state = state_of(session).get_or_insert_with(|| State::new(registry, timeout));
         let mut dropped = 0;
-        let mut packet = state.parse(datagram)?;
-        if T::has_templates(&packet) {
+        let mut packet = state.parser.parse(datagram)?;
+        if P::has_templates(&packet) {
             if let Some(limits) = limits {
-                let (taken, aged) = held.take(limits);
+                let (taken, aged) = state.held.take(limits);
                 dropped += aged;
-                for (received, datagram) in taken {
-                    match state.parse(&datagram) {
-                        Ok(packet) if T::has_undecoded(&packet) => {
-                            dropped += held.push(limits, received, &datagram);
-                        }
-                        Ok(packet) => state.convert(packet, &received, records),
-                        Err(_) => dropped += 1,
+                for held in taken {
+                    let still_held = held.retry(|mut packet, received| {
+                        state.parser.resolve(&mut packet);
+                        state.convert(packet, received, records)
+                    });
+                    if let Some(held) = still_held {
+                        state.held.keep(held);
                     }
                 }
             }
             // The template came after the data in the same datagram.
-            if T::has_undecoded(&packet) {
-                packet = state.parse(datagram)?;
+            if P::has_undecoded(&packet) {
+                state.parser.resolve(&mut packet);
             }
         }
-        if let Some(limits) = limits
-            && T::has_undecoded(&packet)
+        if let Some(undecoded) = state.convert(packet, &received, records)
+            && let Some(limits) = limits
         {
-            dropped += held.push(limits, received, datagram);
+            dropped += state.held.push(limits, received, undecoded, datagram.len());
         }
-        state.convert(packet, &received, records);
         self.dropped += dropped;
         Ok(())
     }
@@ -283,8 +309,13 @@ impl Collector {
         let new = !self.sessions.contains_key(&exporter);
         if now >= self.next_sweep || (new && self.sessions.len() >= MAX_SESSIONS) {
             let timeout = self.timeout;
-            self.sessions
-                .retain(|_, session| session.last_seen.is_some_and(|seen| now - seen < timeout));
+            self.sessions.retain(|_, session| {
+                let alive = session.last_seen.is_some_and(|seen| now - seen < timeout);
+                if !alive {
+                    self.dropped += session.held_datagrams();
+                }
+                alive
+            });
             self.next_sweep = now + timeout;
         }
         if new && self.sessions.len() >= MAX_SESSIONS {
@@ -293,6 +324,20 @@ impl Collector {
         let session = self.sessions.entry(exporter).or_default();
         session.last_seen = Some(now);
         Some(session)
+    }
+}
+
+impl Session {
+    fn held_bytes(&self) -> usize {
+        self.netflow_v9
+            .as_ref()
+            .map_or(0, |state| state.held.bytes())
+            + self.ipfix.as_ref().map_or(0, |state| state.held.bytes())
+    }
+
+    fn held_datagrams(&self) -> u64 {
+        (self.netflow_v9.as_ref().map_or(0, |state| state.held.len())
+            + self.ipfix.as_ref().map_or(0, |state| state.held.len())) as u64
     }
 }
 
@@ -325,6 +370,23 @@ mod tests {
 
     fn octet_count_data(octets: u32) -> Vec<u8> {
         set(256, &octets.to_be_bytes())
+    }
+
+    fn template(set_id: u16, template_id: u16, element: u16) -> Vec<u8> {
+        set(set_id, &words(&[template_id, 1, element, 4]))
+    }
+
+    fn octets(records: &[Record]) -> Vec<u64> {
+        records
+            .iter()
+            .map(|record| {
+                record
+                    .first(iana::OCTET_DELTA_COUNT)
+                    .unwrap()
+                    .as_u64()
+                    .unwrap()
+            })
+            .collect()
     }
 
     fn ipfix(sequence_number: u32, sets: &[Vec<u8>]) -> Vec<u8> {
@@ -425,6 +487,242 @@ mod tests {
     }
 
     #[test]
+    fn retrying_a_mixed_packet_does_not_repeat_already_decoded_records() {
+        for (packet, template_set) in [
+            (ipfix as fn(u32, &[Vec<u8>]) -> Vec<u8>, 2),
+            (netflow_v9, 0),
+        ] {
+            let mut collector = holding();
+            collect(
+                &mut collector,
+                100,
+                &packet(1, &[octet_count_template(template_set)]),
+            );
+            let records = collect(
+                &mut collector,
+                101,
+                &packet(
+                    2,
+                    &[
+                        octet_count_data(5),
+                        set(257, &6u32.to_be_bytes()),
+                        set(258, &7u32.to_be_bytes()),
+                    ],
+                ),
+            );
+            assert_eq!(octets(&records), [5]);
+
+            // Release each missing set independently, without repeating 5 or 6.
+            for (id, expected) in [(257, 6), (258, 7)] {
+                let records = collect(
+                    &mut collector,
+                    102,
+                    &packet(3, &[template(template_set, id, iana::OCTET_DELTA_COUNT.id)]),
+                );
+                assert_eq!(octets(&records), [expected]);
+                assert_eq!(records[0].sequence_number, 2);
+                assert_eq!(
+                    records[0].first(iana::COLLECTION_TIME_MILLISECONDS),
+                    Some(&Value::DateTimeMilliseconds(101_000))
+                );
+            }
+            assert_eq!(collector.pending().unwrap().held_bytes, 0);
+        }
+    }
+
+    #[test]
+    fn pending_datagrams_of_other_protocols_survive_a_template_arrival() {
+        let mut collector = holding();
+        collect(&mut collector, 100, &ipfix(1, &[octet_count_data(5)]));
+        collect(&mut collector, 101, &netflow_v9(2, &[octet_count_data(6)]));
+
+        let records = collect(&mut collector, 102, &ipfix(3, &[octet_count_template(2)]));
+        assert_eq!(octets(&records), [5]);
+        assert_eq!(records[0].protocol, Protocol::Ipfix);
+        assert_eq!(collector.pending().unwrap().dropped_datagrams, 0);
+
+        let records = collect(
+            &mut collector,
+            103,
+            &netflow_v9(4, &[octet_count_template(0)]),
+        );
+        assert_eq!(octets(&records), [6]);
+        assert_eq!(records[0].protocol, Protocol::NetflowV9);
+        assert_eq!(collector.pending().unwrap().held_bytes, 0);
+    }
+
+    #[test]
+    fn resolving_missing_sets_does_not_reinterpret_known_sets() {
+        for (packet, template_set) in [
+            (ipfix as fn(u32, &[Vec<u8>]) -> Vec<u8>, 2),
+            (netflow_v9, 0),
+        ] {
+            let mut collector = holding();
+            collect(
+                &mut collector,
+                100,
+                &packet(1, &[octet_count_template(template_set)]),
+            );
+            let records = collect(
+                &mut collector,
+                101,
+                &packet(
+                    2,
+                    &[
+                        octet_count_data(5),
+                        set(257, &6u32.to_be_bytes()),
+                        template(template_set, 256, iana::PACKET_DELTA_COUNT.id),
+                        template(template_set, 257, iana::OCTET_DELTA_COUNT.id),
+                    ],
+                ),
+            );
+            // Set 256 was already decoded using the definition preceding it.
+            assert_eq!(octets(&records), [5, 6]);
+        }
+    }
+
+    #[test]
+    fn retrying_pending_data_does_not_restore_an_old_template() {
+        for (packet, template_set) in [
+            (ipfix as fn(u32, &[Vec<u8>]) -> Vec<u8>, 2),
+            (netflow_v9, 0),
+        ] {
+            let mut collector = holding();
+            collect(
+                &mut collector,
+                100,
+                &packet(
+                    1,
+                    &[
+                        octet_count_template(template_set),
+                        set(257, &6u32.to_be_bytes()),
+                    ],
+                ),
+            );
+            collect(
+                &mut collector,
+                101,
+                &packet(
+                    2,
+                    &[
+                        template(template_set, 256, iana::PACKET_DELTA_COUNT.id),
+                        template(template_set, 257, iana::OCTET_DELTA_COUNT.id),
+                    ],
+                ),
+            );
+            let records = collect(&mut collector, 102, &packet(3, &[octet_count_data(7)]));
+            assert_eq!(
+                records[0].first(iana::PACKET_DELTA_COUNT),
+                Some(&Value::Unsigned32(7))
+            );
+            assert_eq!(records[0].first(iana::OCTET_DELTA_COUNT), None);
+        }
+    }
+
+    #[test]
+    fn pending_templates_are_scoped_by_exporter_port_and_domain() {
+        let mut collector = holding();
+        let mut other_port = received(100);
+        other_port.exporter.set_port(2056);
+        let mut other_domain = ipfix(2, &[octet_count_data(6)]);
+        other_domain[12..16].copy_from_slice(&8u32.to_be_bytes());
+
+        collect(&mut collector, 100, &ipfix(1, &[octet_count_data(5)]));
+        collector
+            .collect(
+                other_port,
+                &ipfix(3, &[octet_count_data(7)]),
+                &mut Vec::new(),
+            )
+            .unwrap();
+        collect(&mut collector, 100, &other_domain);
+        let records = collect(&mut collector, 101, &ipfix(4, &[octet_count_template(2)]));
+        assert_eq!(octets(&records), [5]);
+
+        let mut template = ipfix(5, &[octet_count_template(2)]);
+        template[12..16].copy_from_slice(&8u32.to_be_bytes());
+        assert_eq!(octets(&collect(&mut collector, 102, &template)), [6]);
+        let mut records = Vec::new();
+        collector
+            .collect(
+                other_port,
+                &ipfix(6, &[octet_count_template(2)]),
+                &mut records,
+            )
+            .unwrap();
+        assert_eq!(octets(&records), [7]);
+        assert_eq!(
+            records[0].first(iana::EXPORTER_TRANSPORT_PORT),
+            Some(&Value::Unsigned16(2056))
+        );
+        assert_eq!(collector.pending().unwrap(), PendingStats::default());
+    }
+
+    #[test]
+    fn each_protocol_of_a_session_has_the_pending_budget() {
+        let v9 = netflow_v9(2, &[octet_count_data(6)]);
+        let ipfix_data = ipfix(1, &[octet_count_data(5)]);
+        let mut collector = Collector::of(Family::Netflow).with_pending(PendingLimits {
+            session_bytes: v9.len(),
+            max_age: Duration::from_mins(1),
+        });
+        collect(&mut collector, 100, &ipfix_data);
+        collect(&mut collector, 101, &v9);
+        assert_eq!(
+            collector.pending().unwrap(),
+            PendingStats {
+                held_bytes: ipfix_data.len() + v9.len(),
+                dropped_datagrams: 0,
+            }
+        );
+        assert_eq!(
+            octets(&collect(
+                &mut collector,
+                102,
+                &ipfix(3, &[octet_count_template(2)])
+            )),
+            [5]
+        );
+        assert_eq!(
+            octets(&collect(
+                &mut collector,
+                103,
+                &netflow_v9(4, &[octet_count_template(0)])
+            )),
+            [6]
+        );
+        assert_eq!(collector.pending().unwrap().held_bytes, 0);
+    }
+
+    #[test]
+    fn refusing_pending_data_still_emits_the_known_records() {
+        let mut collector = Collector::of(Family::Netflow).with_pending(PendingLimits {
+            session_bytes: 0,
+            max_age: Duration::from_mins(1),
+        });
+        let records = collect(
+            &mut collector,
+            100,
+            &ipfix(
+                1,
+                &[
+                    octet_count_template(2),
+                    octet_count_data(5),
+                    set(257, &6u32.to_be_bytes()),
+                ],
+            ),
+        );
+        assert_eq!(octets(&records), [5]);
+        assert_eq!(
+            collector.pending().unwrap(),
+            PendingStats {
+                held_bytes: 0,
+                dropped_datagrams: 1,
+            }
+        );
+    }
+
+    #[test]
     fn a_session_forgotten_frees_what_it_held() {
         let mut collector = Collector::new(Family::Netflow, Registry::iana(), Duration::ZERO)
             .with_pending(PendingLimits {
@@ -440,5 +738,6 @@ mod tests {
             .collect(other, &ipfix(1, &[]), &mut Vec::new())
             .unwrap();
         assert_eq!(collector.pending().unwrap().held_bytes, 0);
+        assert_eq!(collector.pending().unwrap().dropped_datagrams, 1);
     }
 }
