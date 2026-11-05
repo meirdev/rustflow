@@ -35,8 +35,6 @@ const HEADER_SIZE: usize = 16;
 const SET_HEADER_SIZE: usize = 4;
 /// Template ID and Data Records Length.
 const LIST_GROUP_HEADER_SIZE: usize = 4;
-/// A template record's ID and field count, all a withdrawal has.
-const TEMPLATE_RECORD_HEADER_SIZE: usize = 4;
 const ENTERPRISE_BIT: u16 = 0x8000;
 /// How deep lists may nest before the rest is kept undecoded. The exporter
 /// controls the nesting, and each level costs stack.
@@ -76,8 +74,7 @@ pub enum Set {
     OptionsTemplates(Vec<Arc<OptionsTemplate>>),
     Data(DataSet<Template>),
     OptionsData(DataSet<OptionsTemplate>),
-    /// Data whose template is unknown or expired, as sent: [`Parser::decode`]
-    /// decodes it once a later message brings the template.
+    /// Data whose template is unknown or expired, as sent.
     Undecoded {
         set_id: u16,
         body: Vec<u8>,

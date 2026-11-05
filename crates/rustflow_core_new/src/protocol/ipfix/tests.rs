@@ -537,58 +537,55 @@ fn a_list_whose_content_does_not_decode_to_its_end_keeps_its_bytes() {
 }
 
 #[test]
-fn a_set_longer_than_its_message_fails_it_and_undoes_its_templates() {
+fn parsing_stops_at_a_malformed_set_and_keeps_the_sets_before_it() {
     let mut parser = Parser::default();
     let mut overlong = octet_count_data(5);
     overlong[2..4].copy_from_slice(&40u16.to_be_bytes());
-    let malformed = message(DOMAIN, &[octet_count_template(), overlong]);
-    assert!(matches!(
-        parser.parse(&malformed),
-        Err(ParseError::Truncated(_))
-    ));
+    let packet = parser
+        .parse(&message(DOMAIN, &[octet_count_template(), overlong]))
+        .unwrap();
+    assert!(matches!(packet.sets[..], [Set::Templates(_)]));
 
     let data = parser
         .parse(&message(DOMAIN, &[octet_count_data(5)]))
         .unwrap();
-    assert!(matches!(data.sets[0], Set::Undecoded { set_id: 256, .. }));
+    assert_eq!(data_set(&data.sets[0]).records, [[Value::Unsigned32(5)]]);
 }
 
 #[test]
-fn a_record_cut_short_by_its_set_fails_the_message() {
+fn a_record_cut_short_by_its_set_is_left_out() {
     let template = set(
         TEMPLATE_SET_ID,
         &template(256, &[field(iana::INTERFACE_NAME, VARIABLE_LENGTH)]),
     );
     // A name of ten octets, of which the set holds three.
     let data = set(256, &[10, b'e', b't', b'h']);
-    assert!(matches!(
-        Parser::default().parse(&message(DOMAIN, &[template, data])),
-        Err(ParseError::Truncated(_))
-    ));
+    let packet = Parser::default()
+        .parse(&message(DOMAIN, &[template, data]))
+        .unwrap();
+    assert!(data_set(&packet.sets[1]).records.is_empty());
 }
 
 #[test]
-fn a_template_cut_short_by_its_set_fails_the_message() {
+fn a_template_cut_short_by_its_set_is_left_out() {
     let mut fields = template(256, &[field(iana::OCTET_DELTA_COUNT, 4)]);
     // Three fields claimed, one given.
     fields[2..4].copy_from_slice(&3u16.to_be_bytes());
     let templates = set(TEMPLATE_SET_ID, &fields);
-    assert!(matches!(
-        Parser::default().parse(&message(DOMAIN, &[templates])),
-        Err(ParseError::Truncated(_))
-    ));
+    let packet = Parser::default()
+        .parse(&message(DOMAIN, &[templates]))
+        .unwrap();
+    assert_eq!(packet.sets, [Set::Templates(Vec::new())]);
 }
 
 #[test]
-fn octets_left_after_the_last_set_fail_the_message() {
+fn octets_left_after_the_last_set_are_ignored() {
     let mut datagram = message(DOMAIN, &[octet_count_template()]);
     datagram.extend([0; 2]);
     let length = u16::try_from(datagram.len()).unwrap();
     datagram[2..4].copy_from_slice(&length.to_be_bytes());
-    assert!(matches!(
-        Parser::default().parse(&datagram),
-        Err(ParseError::Truncated(_))
-    ));
+    let packet = Parser::default().parse(&datagram).unwrap();
+    assert!(matches!(packet.sets[..], [Set::Templates(_)]));
 }
 
 #[test]
@@ -1026,25 +1023,6 @@ fn written(packet: &Packet) -> Vec<u8> {
     let mut buf = Vec::new();
     write(packet, &mut buf).unwrap();
     buf
-}
-
-#[test]
-fn undecoded_data_decodes_once_its_template_arrives() {
-    let mut parser = Parser::default();
-    let early = parser
-        .parse(&message(DOMAIN, &[octet_count_data(5)]))
-        .unwrap();
-    let Set::Undecoded { set_id, body } = &early.sets[0] else {
-        panic!("expected an undecoded set");
-    };
-    assert_eq!(parser.decode(DOMAIN, *set_id, body), Ok(None));
-
-    parser
-        .parse(&message(DOMAIN, &[octet_count_template()]))
-        .unwrap();
-    let set = parser.decode(DOMAIN, *set_id, body).unwrap().unwrap();
-    assert_eq!(data_set(&set).records, [[Value::Unsigned32(5)]]);
-    assert_eq!(parser.decode(8, *set_id, body), Ok(None));
 }
 
 #[test]

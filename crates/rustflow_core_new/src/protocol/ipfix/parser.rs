@@ -1,4 +1,3 @@
-use std::mem;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -6,7 +5,7 @@ use super::type_records::ElementTypes;
 use super::*;
 use crate::bytes::{Reader, Truncated};
 use crate::protocol::information_element::{DataType, InformationElement, Registry};
-use crate::protocol::template_cache::{Entry, Replaced, Slot, TemplateCache};
+use crate::protocol::template_cache::{Entry, Slot, TemplateCache};
 use crate::protocol::value::{Value, decode};
 use crate::protocol::{DataSet, ParseError};
 
@@ -24,21 +23,10 @@ use crate::protocol::{DataSet, ParseError};
 /// Type records (RFC 5610) describe elements the registry lacks: from then
 /// on, the domain's templates decode those elements by the described type,
 /// templates received earlier included.
-///
-/// A malformed message is discarded whole (RFC 7011 section 9.1): the
-/// templates and type records it carried before the fault are undone.
 pub struct Parser {
     registry: Registry,
     element_types: ElementTypes,
     templates: TemplateCache<Entry<TemplateRef>>,
-    /// What the message being parsed changed, to undo if it is malformed.
-    changes: Changes,
-}
-
-#[derive(Default)]
-struct Changes {
-    templates: Vec<Replaced<Entry<TemplateRef>>>,
-    element_types: Option<ElementTypes>,
 }
 
 impl Parser {
@@ -50,14 +38,12 @@ impl Parser {
             registry,
             element_types: ElementTypes::default(),
             templates: TemplateCache::new(timeout),
-            changes: Changes::default(),
         }
     }
 
-    /// Parses an IPFIX message. A message whose lengths do not hold, such as
-    /// a set longer than the message or a record cut short by the end of its
-    /// set, is malformed and fails whole. Bytes after the message's length
-    /// are ignored.
+    /// Parses an IPFIX message. Parsing stops at the first set that is
+    /// malformed or truncated; the sets before it are kept. Bytes after the
+    /// message's length are ignored.
     pub fn parse(&mut self, datagram: &[u8]) -> Result<Packet, ParseError> {
         let mut r = Reader::new(datagram);
         let header = parse_header(&mut r)?;
@@ -65,34 +51,9 @@ impl Parser {
             .checked_sub(HEADER_SIZE)
             .ok_or(ParseError::MessageLength(header.length))?;
         let mut body = r.sub(body_length)?;
-        let domain = header.observation_domain_id;
-        let sets = self.parse_sets(&mut body, domain);
-        let changes = mem::take(&mut self.changes);
-        match sets {
-            Ok(sets) => Ok(Packet { header, sets }),
-            Err(error) => {
-                self.undo(domain, changes);
-                Err(error)
-            }
-        }
-    }
+        let sets = body.many(|r| self.parse_set(r, header.observation_domain_id));
 
-    fn parse_sets(&mut self, body: &mut Reader, domain: u32) -> Result<Vec<Set>, ParseError> {
-        let mut sets = Vec::new();
-        while !body.is_empty() {
-            sets.push(self.parse_set(body, domain)?);
-        }
-        Ok(sets)
-    }
-
-    fn undo(&mut self, domain: u32, changes: Changes) {
-        for replaced in changes.templates.into_iter().rev() {
-            self.templates.undo(replaced);
-        }
-        if let Some(element_types) = changes.element_types {
-            self.element_types = element_types;
-            self.refresh_layouts(domain);
-        }
+        Ok(Packet { header, sets })
     }
 
     fn parse_set(&mut self, r: &mut Reader, domain: u32) -> Result<Set, ParseError> {
@@ -105,7 +66,8 @@ impl Parser {
 
         let set = match set_id {
             TEMPLATE_SET_ID => {
-                let templates: Vec<_> = parse_templates(&mut body, parse_template)?
+                let templates: Vec<_> = body
+                    .many(parse_template)
                     .into_iter()
                     .map(Arc::new)
                     .collect();
@@ -116,7 +78,8 @@ impl Parser {
                 Set::Templates(templates)
             }
             OPTIONS_TEMPLATE_SET_ID => {
-                let templates: Vec<_> = parse_templates(&mut body, parse_options_template)?
+                let templates: Vec<_> = body
+                    .many(parse_options_template)
                     .into_iter()
                     .map(Arc::new)
                     .collect();
@@ -126,8 +89,20 @@ impl Parser {
                 }
                 Set::OptionsTemplates(templates)
             }
-            id if id >= MIN_TEMPLATE_ID => match self.data_set(domain, id, body)? {
-                Some(set) => set,
+            id if id >= MIN_TEMPLATE_ID => match self.templates.get(domain, id) {
+                Some(entry) => {
+                    let records = body.many(|r| self.parse_record(r, domain, &entry.layout, 0));
+                    match &entry.template {
+                        TemplateRef::Data(template) => Set::Data(DataSet {
+                            template: Arc::clone(template),
+                            records,
+                        }),
+                        TemplateRef::Options(template) => Set::OptionsData(DataSet {
+                            template: Arc::clone(template),
+                            records,
+                        }),
+                    }
+                }
                 None => Set::Undecoded {
                     set_id: id,
                     body: body.remaining().to_vec(),
@@ -135,57 +110,8 @@ impl Parser {
             },
             id => Set::Unknown(id),
         };
-        if matches!(set, Set::OptionsData(_)) && self.changes.element_types.is_none() {
-            self.changes.element_types = Some(self.element_types.clone());
-        }
         self.learn_types(domain, &set);
         Ok(set)
-    }
-
-    /// Decodes the body of a [`Set::Undecoded`] of `domain` by its template,
-    /// once a later message brought it; `Ok(None)` while it is still
-    /// unknown. A body its records do not fit is no set of that template,
-    /// as when the exporter gave the template ID to another.
-    pub fn decode(
-        &mut self,
-        domain: u32,
-        set_id: u16,
-        body: &[u8],
-    ) -> Result<Option<Set>, ParseError> {
-        let Some(set) = self.data_set(domain, set_id, Reader::new(body))? else {
-            return Ok(None);
-        };
-        self.learn_types(domain, &set);
-        Ok(Some(set))
-    }
-
-    /// The records of data set `set_id` by its template; `None` without one.
-    fn data_set(
-        &self,
-        domain: u32,
-        set_id: u16,
-        mut body: Reader,
-    ) -> Result<Option<Set>, ParseError> {
-        let Some(entry) = self.templates.get(domain, set_id) else {
-            return Ok(None);
-        };
-        let records = body.many(|r| self.parse_record(r, domain, &entry.layout, 0));
-        // What the records leave is padding, shorter than any record (RFC
-        // 7011 section 3.3.1); a record's worth or more is a record cut
-        // short by the end of the set.
-        if body.len() >= min_record_length(&entry.layout).max(1) {
-            self.parse_record(&mut body, domain, &entry.layout, 0)?;
-        }
-        Ok(Some(match &entry.template {
-            TemplateRef::Data(template) => Set::Data(DataSet {
-                template: Arc::clone(template),
-                records,
-            }),
-            TemplateRef::Options(template) => Set::OptionsData(DataSet {
-                template: Arc::clone(template),
-                records,
-            }),
-        }))
     }
 
     /// Learns the types an options data set's type records describe.
@@ -217,10 +143,8 @@ impl Parser {
             domain,
             template.fields(),
         );
-        let replaced = self
-            .templates
+        self.templates
             .insert_entry(domain, template_id, template, layout);
-        self.changes.templates.push(replaced);
     }
 
     fn refresh_layouts(&mut self, domain: u32) {
@@ -399,42 +323,6 @@ fn parse_header(r: &mut Reader) -> Result<Header, ParseError> {
         sequence_number,
         observation_domain_id,
     })
-}
-
-/// The templates of a template set, up to its padding or a record that is no
-/// template, such as one of a reserved ID. A template cut short by the end
-/// of its set makes the message malformed.
-fn parse_templates<T>(
-    body: &mut Reader,
-    parse: fn(&mut Reader) -> Result<T, ParseError>,
-) -> Result<Vec<T>, ParseError> {
-    let mut templates = Vec::new();
-    // Padding is shorter than any record (RFC 7011 section 3.3.1), and the
-    // shortest template record is a withdrawal's header.
-    while body.len() >= TEMPLATE_RECORD_HEADER_SIZE {
-        let mut attempt = *body;
-        match parse(&mut attempt) {
-            Ok(template) => {
-                *body = attempt;
-                templates.push(template);
-            }
-            Err(ParseError::Truncated(truncated)) => return Err(truncated.into()),
-            Err(_) => break,
-        }
-    }
-    Ok(templates)
-}
-
-/// Octets in the shortest record of `layout`: each variable-length field
-/// takes at least its length octet.
-fn min_record_length(layout: &[Slot]) -> usize {
-    layout
-        .iter()
-        .map(|slot| match slot.field_length {
-            VARIABLE_LENGTH => 1,
-            length => usize::from(length),
-        })
-        .sum()
 }
 
 /// Every item `parse` reads until `r` is empty; content an item cannot be

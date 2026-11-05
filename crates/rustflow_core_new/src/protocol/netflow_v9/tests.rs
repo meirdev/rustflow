@@ -395,24 +395,6 @@ fn flow_set_lengths(datagram: &[u8]) -> Vec<u16> {
 }
 
 #[test]
-fn undecoded_data_decodes_once_its_template_arrives() {
-    let mut parser = parser();
-    let early = parser
-        .parse(&packet(SOURCE_ID, &[octet_count_data(42)]))
-        .unwrap();
-    let FlowSet::Undecoded { flow_set_id, body } = &early.flow_sets[0] else {
-        panic!("expected an undecoded FlowSet");
-    };
-    assert_eq!(parser.decode(SOURCE_ID, *flow_set_id, body), None);
-
-    parser
-        .parse(&packet(SOURCE_ID, &[octet_count_template()]))
-        .unwrap();
-    let flow_set = parser.decode(SOURCE_ID, *flow_set_id, body).unwrap();
-    assert_eq!(data_set(&flow_set).records, [[Value::Unsigned32(42)]]);
-}
-
-#[test]
 fn undecoded_data_is_written_as_sent() {
     let datagram = packet(SOURCE_ID, &[octet_count_data(42)]);
     let parsed = parser().parse(&datagram).unwrap();

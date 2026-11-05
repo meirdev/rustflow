@@ -62,8 +62,7 @@ pub enum FlowSet {
     OptionsTemplates(Vec<Arc<OptionsTemplate>>),
     Data(DataSet<Template>),
     OptionsData(DataSet<OptionsTemplate>),
-    /// Data whose template is unknown or expired, as sent: [`Parser::decode`]
-    /// decodes it once a later packet brings the template.
+    /// Data whose template is unknown or expired, as sent.
     Undecoded {
         flow_set_id: u16,
         body: Vec<u8>,

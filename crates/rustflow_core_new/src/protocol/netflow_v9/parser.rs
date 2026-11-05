@@ -92,41 +92,29 @@ impl Parser {
                 }
                 FlowSet::OptionsTemplates(templates)
             }
-            id if id >= MIN_TEMPLATE_ID => {
-                self.data_flow_set(source_id, id, body)
-                    .unwrap_or_else(|| FlowSet::Undecoded {
-                        flow_set_id: id,
-                        body: body.remaining().to_vec(),
-                    })
-            }
+            id if id >= MIN_TEMPLATE_ID => match self.templates.get(source_id, id) {
+                Some(entry) => {
+                    let records = body.many(|r| parse_record(r, &entry.layout));
+                    match &entry.template {
+                        CachedTemplate::Data(template) => FlowSet::Data(DataSet {
+                            template: Arc::clone(template),
+                            records,
+                        }),
+                        CachedTemplate::Options(template) => FlowSet::OptionsData(DataSet {
+                            template: Arc::clone(template),
+                            records,
+                        }),
+                    }
+                }
+                None => FlowSet::Undecoded {
+                    flow_set_id: id,
+                    body: body.remaining().to_vec(),
+                },
+            },
             id => FlowSet::Unknown(id),
         };
 
         Ok(flow_set)
-    }
-
-    /// Decodes the body of a [`FlowSet::Undecoded`] of `source_id` by its
-    /// template, once a later packet brought it; `None` while it is still
-    /// unknown.
-    pub fn decode(&self, source_id: u32, flow_set_id: u16, body: &[u8]) -> Option<FlowSet> {
-        self.data_flow_set(source_id, flow_set_id, Reader::new(body))
-    }
-
-    /// The records of data FlowSet `flow_set_id` by its template; `None`
-    /// without one.
-    fn data_flow_set(&self, source_id: u32, flow_set_id: u16, mut body: Reader) -> Option<FlowSet> {
-        let entry = self.templates.get(source_id, flow_set_id)?;
-        let records = body.many(|r| parse_record(r, &entry.layout));
-        Some(match &entry.template {
-            CachedTemplate::Data(template) => FlowSet::Data(DataSet {
-                template: Arc::clone(template),
-                records,
-            }),
-            CachedTemplate::Options(template) => FlowSet::OptionsData(DataSet {
-                template: Arc::clone(template),
-                records,
-            }),
-        })
     }
 
     fn layout(&self, fields: &[Field]) -> impl Iterator<Item = Slot> {
