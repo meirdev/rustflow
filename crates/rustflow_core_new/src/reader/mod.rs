@@ -1,8 +1,9 @@
 //! The Collecting Process of an IPFIX Mediator (RFC 6183 section 5.1),
 //! read from: NetFlow v5, NetFlow v9 and IPFIX datagrams on one socket, or
 //! sFlow v5 on another, from any mix of exporters, as records of IPFIX
-//! information elements. With the `pcap` feature, a [`PcapReader`] reads
-//! them from a capture of the datagrams instead.
+//! information elements. With the `tokio` feature, an [`AsyncReader`]
+//! awaits the datagrams instead of blocking on them; with the `pcap`
+//! feature, a [`PcapReader`] reads them from a capture of the datagrams.
 //!
 //! Options records are records too, with the scope they describe, so
 //! nothing an exporter says is lost. Flows alone are one adapter away:
@@ -38,6 +39,8 @@
 //! }
 //! ```
 
+#[cfg(feature = "tokio")]
+pub use async_socket::AsyncReader;
 pub use collector::Collector;
 pub use options::OptionsTable;
 #[cfg(feature = "pcap")]
@@ -48,6 +51,8 @@ pub use socket::Reader;
 
 pub use crate::convert::{Family, Protocol, Received, Record, Scope};
 
+#[cfg(feature = "tokio")]
+mod async_socket;
 mod collector;
 mod options;
 #[cfg(feature = "pcap")]
