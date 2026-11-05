@@ -62,7 +62,7 @@ impl Converter {
 
 #[cfg(test)]
 mod tests {
-    use std::net::{IpAddr, Ipv4Addr};
+    use std::net::{Ipv4Addr, SocketAddr};
     use std::sync::Arc;
 
     use rustflow_protocol::DataSet;
@@ -129,7 +129,7 @@ mod tests {
 
     fn received() -> Received {
         Received {
-            exporter: IpAddr::V4(Ipv4Addr::new(192, 0, 2, 254)),
+            exporter: SocketAddr::from(([192, 0, 2, 254], 2055)),
             time: None,
         }
     }

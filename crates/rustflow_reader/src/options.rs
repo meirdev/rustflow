@@ -3,7 +3,7 @@
 //! statistics.
 
 use std::collections::HashMap;
-use std::net::IpAddr;
+use std::net::SocketAddr;
 
 use rustflow_convert::{Record, Scope};
 use rustflow_protocol::information_element::{ElementId, iana};
@@ -18,13 +18,13 @@ const MAX_RECORDS_PER_DOMAIN: usize = 1024;
 /// observation domain, scope and set of elements.
 #[derive(Debug, Default)]
 pub struct OptionsTable {
-    domains: HashMap<(IpAddr, u32), Vec<Record>>,
+    domains: HashMap<(SocketAddr, u32), Vec<Record>>,
 }
 
 impl OptionsTable {
     /// Keeps `record`, an options record from `exporter`, in place of the
     /// one it supersedes: that of the same scope and elements.
-    pub fn insert(&mut self, exporter: IpAddr, record: Record) {
+    pub fn insert(&mut self, exporter: SocketAddr, record: Record) {
         let domain = record
             .first(iana::ORIGINAL_OBSERVATION_DOMAIN_ID)
             .and_then(Value::as_u64)
@@ -49,7 +49,7 @@ impl OptionsTable {
     /// `scope`.
     pub fn get<'a>(
         &'a self,
-        exporter: IpAddr,
+        exporter: SocketAddr,
         domain: u32,
         scope: &'a [(Scope, Value)],
     ) -> impl Iterator<Item = &'a Record> {
@@ -62,12 +62,12 @@ impl OptionsTable {
 
     /// Every options record that carries `element`, with the exporter it
     /// came from.
-    pub fn by_element(&self, element: ElementId) -> impl Iterator<Item = (IpAddr, &Record)> {
+    pub fn by_element(&self, element: ElementId) -> impl Iterator<Item = (SocketAddr, &Record)> {
         self.iter()
             .filter(move |(_, record)| record.elements.contains(&element))
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (IpAddr, &Record)> {
+    pub fn iter(&self) -> impl Iterator<Item = (SocketAddr, &Record)> {
         self.domains.iter().flat_map(|(&(exporter, _), records)| {
             records.iter().map(move |record| (exporter, record))
         })

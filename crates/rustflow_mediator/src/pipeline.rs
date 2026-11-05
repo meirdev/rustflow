@@ -95,9 +95,9 @@ impl Pipeline {
         let mut result = Ok(());
         for mut exporter in self.exporters {
             let items = batches.gather(&exporter.inputs);
-            let exported =
-                export(exporter.inner.as_mut(), &items).and_then(|()| exporter.inner.finish());
-            result = result.and(named(&exporter.name, exported));
+            let exported = export(exporter.inner.as_mut(), &items);
+            let finished = exporter.inner.finish();
+            result = result.and(named(&exporter.name, exported.and(finished)));
         }
         result
     }
@@ -261,6 +261,15 @@ impl Builder {
         let resolve = |name: &str, inputs: &[String]| -> Result<Vec<Node>, Error> {
             if inputs.is_empty() {
                 return Err(Error::NoInputs(name.to_owned()));
+            }
+            if let Some(input) = inputs
+                .iter()
+                .find(|input| inputs.iter().filter(|other| other == input).count() > 1)
+            {
+                return Err(Error::DuplicateInput {
+                    component: name.to_owned(),
+                    input: input.clone(),
+                });
             }
             inputs
                 .iter()
@@ -540,7 +549,7 @@ pub(crate) mod tests {
                     Item::Record(record(6)),
                     Item::Record(record(17)),
                     Item::Control(Control::SessionClosed {
-                        exporter: [192, 0, 2, 1].into(),
+                        exporter: ([192, 0, 2, 1], 4739).into(),
                     }),
                 ],
             )
@@ -635,6 +644,42 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn an_exporter_whose_last_export_fails_still_finishes() {
+        /// Accepts the first batch, rejects the next, and remembers
+        /// whether it was finished.
+        struct Flaky(Shared);
+
+        impl Exporter for Flaky {
+            fn export(&mut self, items: &[Item]) -> io::Result<()> {
+                let mut out = self.0.lock().unwrap();
+                if !out.items.is_empty() {
+                    return Err(io::Error::other("disk full"));
+                }
+                out.items.extend_from_slice(items);
+                Ok(())
+            }
+
+            fn finish(self: Box<Self>) -> io::Result<()> {
+                self.0.lock().unwrap().finished = true;
+                Ok(())
+            }
+        }
+
+        let out = Shared::default();
+        let mut pipeline = Pipeline::builder(["flows"])
+            .process("hold", ["flows"], Box::new(Hold::default()))
+            .exporter("out", ["flows", "hold"], Box::new(Flaky(Arc::clone(&out))))
+            .build()
+            .unwrap();
+        let flows = pipeline.source("flows").unwrap();
+        pipeline.push(flows, vec![Item::Record(record(1))]).unwrap();
+
+        let error = pipeline.finish().unwrap_err();
+        assert_eq!(error.to_string(), "out: disk full");
+        assert!(out.lock().unwrap().finished);
+    }
+
+    #[test]
     fn a_failing_exporter_does_not_stop_the_others() {
         let (exporter, out) = collect();
         let mut pipeline = Pipeline::builder(["flows"])
@@ -667,6 +712,10 @@ pub(crate) mod tests {
         assert_eq!(
             error(Pipeline::builder(["flows"]).exporter("out", Vec::<String>::new(), collect().0)),
             "out: no inputs"
+        );
+        assert_eq!(
+            error(Pipeline::builder(["flows"]).exporter("out", ["flows", "flows"], collect().0)),
+            "out: input 'flows' is named twice"
         );
         assert_eq!(
             error(

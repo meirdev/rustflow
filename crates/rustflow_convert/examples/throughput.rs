@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufReader, Read};
-use std::net::IpAddr;
+use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use rustflow_convert::{Received, Record, ipfix, netflow_v5, netflow_v9, sflow_v5};
@@ -23,7 +23,7 @@ const PCAP_GLOBAL_HEADER_LEN: usize = 24;
 const PCAP_RECORD_HEADER_LEN: usize = 16;
 
 struct Datagram {
-    exporter: IpAddr,
+    exporter: SocketAddr,
     payload: Vec<u8>,
 }
 
@@ -84,7 +84,7 @@ fn report(name: &str, counts: &Counts, elapsed: Duration) {
 
 fn run(
     datagrams: &[Datagram],
-    state: &mut HashMap<IpAddr, Exporter>,
+    state: &mut HashMap<SocketAddr, Exporter>,
     convert: bool,
 ) -> (Counts, Duration) {
     let mut counts = Counts::default();
@@ -195,7 +195,7 @@ fn read_datagrams(path: &str, budget: u64) -> io::Result<Vec<Datagram>> {
         if let Some((exporter, payload)) = rustflow_dissect::udp_payload(link_type, &frame) {
             bytes += payload.len() as u64;
             datagrams.push(Datagram {
-                exporter,
+                exporter: SocketAddr::new(exporter, 0),
                 payload: payload.to_vec(),
             });
         }

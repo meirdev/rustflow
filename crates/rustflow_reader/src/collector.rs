@@ -2,7 +2,7 @@
 //! between datagrams.
 
 use std::collections::HashMap;
-use std::net::IpAddr;
+use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use rustflow_convert::{Received, Record, ipfix, netflow_v5, netflow_v9, sflow_v5};
@@ -14,14 +14,15 @@ use rustflow_protocol::information_element::Registry;
 const MAX_EXPORTERS: usize = 65_536;
 
 /// Turns datagrams into records. One parser and converter per protocol
-/// serve each exporter address: templates and options are told apart by
-/// exporter, as RFC 7011 requires. An exporter not heard from for the
-/// template timeout is forgotten, its templates having expired by then;
-/// datagrams of a new exporter past [`MAX_EXPORTERS`] are dropped.
+/// serve each exporter transport address: templates and options are
+/// scoped by transport session, as RFC 7011 requires, so two exporting
+/// processes on one host are told apart by their ports. An exporter not heard
+/// from for the template timeout is forgotten, its templates having expired by
+/// then; datagrams of a new exporter past [`MAX_EXPORTERS`] are dropped.
 pub struct Collector {
     registry: Registry,
     timeout: Duration,
-    exporters: HashMap<IpAddr, Exporter>,
+    exporters: HashMap<SocketAddr, Exporter>,
     next_sweep: Instant,
 }
 
@@ -100,7 +101,7 @@ impl Collector {
 
     /// The exporter's state, marked as heard from now; `None` for a new
     /// exporter past [`MAX_EXPORTERS`].
-    fn exporter(&mut self, address: IpAddr) -> Option<&mut Exporter> {
+    fn exporter(&mut self, address: SocketAddr) -> Option<&mut Exporter> {
         let now = Instant::now();
         let new = !self.exporters.contains_key(&address);
         if now >= self.next_sweep || (new && self.exporters.len() >= MAX_EXPORTERS) {

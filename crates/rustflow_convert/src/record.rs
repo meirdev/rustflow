@@ -1,4 +1,4 @@
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -72,8 +72,11 @@ impl Record {
 /// (RFC 6183 section 5.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Received {
-    /// The address the datagram came from: its exporter.
-    pub exporter: IpAddr,
+    /// The transport address the datagram came from: its exporter's, which
+    /// with the collector's own identifies the transport session (RFC 7011
+    /// section 3.1). Templates and sessions are scoped by it, so two
+    /// exporting processes on one host are told apart.
+    pub exporter: SocketAddr,
     /// When the datagram was received, if known.
     pub time: Option<SystemTime>,
 }
@@ -88,11 +91,13 @@ pub(crate) struct Fields {
 
 impl Fields {
     /// The fields conversion adds to every record of a packet: the
-    /// exporter, its observation domain if the protocol has one, and when
-    /// the packet was received (RFC 6183 section 7).
+    /// exporter and its port, its observation domain if the protocol has
+    /// one, and when the packet was received (RFC 6183 section 7). The
+    /// port has no "original" element, so `exporterTransportPort` carries
+    /// it.
     pub(crate) fn additions(received: &Received, observation_domain_id: Option<u32>) -> Self {
         let mut additions = Self::default();
-        match received.exporter {
+        match received.exporter.ip() {
             IpAddr::V4(address) => {
                 additions.push(
                     iana::ORIGINAL_EXPORTER_IPV4_ADDRESS,
@@ -106,6 +111,10 @@ impl Fields {
                 );
             }
         }
+        additions.push(
+            iana::EXPORTER_TRANSPORT_PORT,
+            Value::Unsigned16(received.exporter.port()),
+        );
         if let Some(domain) = observation_domain_id {
             additions.push(
                 iana::ORIGINAL_OBSERVATION_DOMAIN_ID,

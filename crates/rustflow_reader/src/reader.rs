@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::io;
-use std::net::{IpAddr, SocketAddr, ToSocketAddrs, UdpSocket};
+use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 use std::time::{Duration, SystemTime};
 
 use rustflow_convert::{Received, Record};
@@ -26,7 +26,10 @@ pub enum Read {
     /// No datagram before the read timeout.
     Timeout,
     /// A datagram that could not be parsed.
-    Malformed { exporter: IpAddr, error: ParseError },
+    Malformed {
+        exporter: SocketAddr,
+        error: ParseError,
+    },
 }
 
 impl Reader {
@@ -73,7 +76,7 @@ impl Reader {
                 Err(e) => return Err(e),
             };
             let received = Received {
-                exporter: from.ip(),
+                exporter: from,
                 time: Some(SystemTime::now()),
             };
             if let Err(error) =
@@ -81,12 +84,12 @@ impl Reader {
                     .collect(received, &self.buf[..len], &mut self.pending)
             {
                 return Ok(Read::Malformed {
-                    exporter: from.ip(),
+                    exporter: from,
                     error,
                 });
             }
             for record in self.pending.iter().filter(|record| record.is_options()) {
-                self.options.insert(from.ip(), record.clone());
+                self.options.insert(from, record.clone());
             }
         }
     }
@@ -241,7 +244,8 @@ mod tests {
             Scope::Element(iana::OBSERVATION_DOMAIN_ID),
             Value::Unsigned32(7),
         )];
-        let kept: Vec<_> = reader.options().get(addr.ip(), 7, &scope).collect();
+        let exporter = sender.local_addr().unwrap();
+        let kept: Vec<_> = reader.options().get(exporter, 7, &scope).collect();
         assert_eq!(kept.len(), 1);
         assert_eq!(
             kept[0].first(iana::SAMPLING_INTERVAL),

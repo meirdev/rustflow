@@ -145,14 +145,14 @@ fn whole_ratio(part: u32, whole: u64) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use std::net::{IpAddr, Ipv4Addr};
+    use std::net::{Ipv4Addr, SocketAddr};
 
     use super::*;
     use crate::Received;
 
     fn added(sampling: Sampling) -> Vec<(ElementId, Value)> {
         let received = Received {
-            exporter: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            exporter: SocketAddr::from((Ipv4Addr::LOCALHOST, 2055)),
             time: None,
         };
         let mut additions = Fields::additions(&received, None);
@@ -161,7 +161,7 @@ mod tests {
             .elements
             .into_iter()
             .zip(additions.values)
-            .skip(1)
+            .skip(2)
             .collect()
     }
 

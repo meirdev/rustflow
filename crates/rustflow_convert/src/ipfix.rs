@@ -64,7 +64,7 @@ impl Converter {
 
 #[cfg(test)]
 mod tests {
-    use std::net::{IpAddr, Ipv4Addr};
+    use std::net::{Ipv4Addr, SocketAddr};
     use std::sync::Arc;
 
     use etherparse::PacketBuilder;
@@ -131,7 +131,7 @@ mod tests {
             sets,
         };
         let received = Received {
-            exporter: IpAddr::V4(Ipv4Addr::new(192, 0, 2, 254)),
+            exporter: SocketAddr::from(([192, 0, 2, 254], 4739)),
             time: None,
         };
         let mut records = Vec::new();
@@ -251,7 +251,7 @@ mod tests {
             })],
         };
         let received = Received {
-            exporter: IpAddr::V4(Ipv4Addr::new(192, 0, 2, 254)),
+            exporter: SocketAddr::from(([192, 0, 2, 254], 6343)),
             time: None,
         };
         let mut records = Vec::new();

@@ -117,7 +117,7 @@ fn record_values(record: &FlowRecord, millis: impl Fn(u32) -> Value) -> [Value; 
 
 #[cfg(test)]
 mod tests {
-    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use rustflow_protocol::netflow_v5::{self, Header};
@@ -166,7 +166,7 @@ mod tests {
         }
     }
 
-    fn received_from(exporter: IpAddr, time: Option<SystemTime>) -> Received {
+    fn received_from(exporter: SocketAddr, time: Option<SystemTime>) -> Received {
         Received { exporter, time }
     }
 
@@ -177,7 +177,7 @@ mod tests {
     }
 
     fn exporter() -> Received {
-        received_from(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 254)), None)
+        received_from(SocketAddr::from(([192, 0, 2, 254], 2055)), None)
     }
 
     #[test]
@@ -241,6 +241,10 @@ mod tests {
             Some(&Value::Ipv4Address(Ipv4Addr::new(192, 0, 2, 254)))
         );
         assert_eq!(
+            ipv4[0].first(iana::EXPORTER_TRANSPORT_PORT),
+            Some(&Value::Unsigned16(2055))
+        );
+        assert_eq!(
             ipv4[0].first(iana::COLLECTION_TIME_MILLISECONDS),
             Some(&Value::DateTimeMilliseconds(1_700_000_001_250))
         );
@@ -248,7 +252,7 @@ mod tests {
 
         let ipv6 = converted(
             packet(0),
-            &received_from(IpAddr::V6(Ipv6Addr::LOCALHOST), None),
+            &received_from(SocketAddr::from((Ipv6Addr::LOCALHOST, 2055)), None),
         );
         assert_eq!(
             ipv6[0].first(iana::ORIGINAL_EXPORTER_IPV6_ADDRESS),

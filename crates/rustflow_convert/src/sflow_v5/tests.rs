@@ -1,4 +1,4 @@
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 
 use etherparse::{PacketBuilder, VlanId};
@@ -43,7 +43,7 @@ fn converted(samples: Vec<Sample>) -> Vec<Record> {
         samples,
     };
     let received = Received {
-        exporter: IpAddr::V4(Ipv4Addr::new(192, 0, 2, 254)),
+        exporter: SocketAddr::from(([192, 0, 2, 254], 6343)),
         time: None,
     };
     let mut records = Vec::new();
@@ -360,7 +360,7 @@ fn real_datagrams_convert_their_flow_samples() {
     let mut records = Vec::new();
     let mut flow_samples = 0;
     let received = Received {
-        exporter: IpAddr::V4(Ipv4Addr::new(192, 0, 2, 10)),
+        exporter: SocketAddr::from(([192, 0, 2, 10], 6343)),
         time: None,
     };
     for datagram in udp_payloads("sflow_v5_sanity.pcap") {

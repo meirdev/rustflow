@@ -1,4 +1,4 @@
-use std::net::IpAddr;
+use std::net::SocketAddr;
 
 use rustflow_convert::Record;
 
@@ -12,17 +12,19 @@ pub enum Item {
 
 /// What a Collecting Process knows besides records (RFC 6183 section
 /// 5.1), in order with them: a withdrawal comes after the last record it
-/// affects.
+/// affects. A transport session is identified by its exporter's transport
+/// address, as the records are through `exporterTransportPort` and
+/// `originalExporterIPv4Address` or its IPv6 form.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Control {
     /// An exporter was heard from for the first time, or again after its
     /// session closed.
-    SessionOpened { exporter: IpAddr },
+    SessionOpened { exporter: SocketAddr },
     /// An exporter's transport session ended; its templates are no longer
     /// valid.
-    SessionClosed { exporter: IpAddr },
+    SessionClosed { exporter: SocketAddr },
     TemplateWithdrawn {
-        exporter: IpAddr,
+        exporter: SocketAddr,
         domain: u32,
         template_id: u16,
     },

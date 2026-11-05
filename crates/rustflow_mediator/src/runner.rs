@@ -94,12 +94,12 @@ impl Runner {
         let mut feeds: Vec<Option<Feed>> = (0..sources.len())
             .map(|i| {
                 Some(Feed {
-                    readers: readers_of(Node::Source(i)),
+                    readers: Readers(readers_of(Node::Source(i))),
                 })
             })
             .collect();
-        let process_readers: Vec<Vec<Inbox>> = (0..processes.len())
-            .map(|i| readers_of(Node::Process(i)))
+        let process_readers: Vec<Readers> = (0..processes.len())
+            .map(|i| Readers(readers_of(Node::Process(i))))
             .collect();
 
         let mut threads = Vec::with_capacity(processes.len() + exporters.len());
@@ -122,7 +122,7 @@ impl Runner {
         let mut meter_threads = Vec::with_capacity(meters.len());
         for (i, meter) in meters.into_iter().enumerate() {
             let feed = feeds[first_meter + i].take().unwrap_or_else(|| Feed {
-                readers: Vec::new(),
+                readers: Readers(Vec::new()),
             });
             let stop = stop.clone();
             meter_threads.push(spawn(&sources[first_meter + i], move || {
@@ -190,7 +190,7 @@ impl Runner {
 /// A collector's end of the queue into the pipeline. Dropping it tells
 /// the components it feeds that this collector is done.
 pub struct Feed {
-    readers: Vec<Inbox>,
+    readers: Readers,
 }
 
 impl Feed {
@@ -200,13 +200,18 @@ impl Feed {
         if items.is_empty() {
             return Ok(());
         }
-        fan_out(&self.readers, items).map_err(|_| Closed)
+        fan_out(&self.readers.0, items).map_err(|_| Closed)
     }
 }
 
-impl Drop for Feed {
+/// The inboxes of the components reading one source or process. Dropping
+/// it tells them that it ended, so that a panic ends what it fed as a
+/// return does, and shutdown does not wait on them forever.
+struct Readers(Vec<Inbox>);
+
+impl Drop for Readers {
     fn drop(&mut self) {
-        for reader in &self.readers {
+        for reader in &self.0 {
             let _ = reader.send(Message::Finish);
         }
     }
@@ -249,7 +254,7 @@ fn fan_out(readers: &[Inbox], items: Vec<Item>) -> Result<(), ()> {
     Ok(())
 }
 
-fn run_process(mut process: Component<Box<dyn Process>>, rx: Receiver<Message>, readers: &[Inbox]) {
+fn run_process(mut process: Component<Box<dyn Process>>, rx: Receiver<Message>, readers: &Readers) {
     let mut inputs_left = process.inputs.len();
     while let Ok(message) = rx.recv() {
         let mut out = Output::default();
@@ -269,15 +274,12 @@ fn run_process(mut process: Component<Box<dyn Process>>, rx: Receiver<Message>, 
             }
         }
         let items = out.into_items();
-        if !items.is_empty() && fan_out(readers, items).is_err() {
+        if !items.is_empty() && fan_out(&readers.0, items).is_err() {
             break;
         }
         if inputs_left == 0 {
             break;
         }
-    }
-    for reader in readers {
-        let _ = reader.send(Message::Finish);
     }
 }
 
@@ -520,6 +522,33 @@ mod tests {
         runner.stop().set();
         runner.finish().unwrap();
         assert!(!out.lock().unwrap().items.is_empty());
+    }
+
+    #[test]
+    fn a_process_that_panics_ends_what_it_feeds() {
+        struct Panics;
+
+        impl Process for Panics {
+            fn item(&mut self, _: Item, _: &mut Output) {
+                panic!("a bug");
+            }
+        }
+
+        let out = Shared::default();
+        let pipeline = Pipeline::builder(["netflow"])
+            .process("bug", ["netflow"], Box::new(Panics))
+            .exporter("files", ["bug"], Box::new(Collect(Arc::clone(&out))))
+            .build()
+            .unwrap();
+        let netflow = pipeline.source("netflow").unwrap();
+        let mut runner = Runner::spawn(pipeline, Schedule::default(), |e| panic!("{e}")).unwrap();
+        let feed = runner.feed(netflow).unwrap();
+        feed.push(vec![Item::Record(record(6))]).unwrap();
+        drop(feed);
+
+        let error = runner.finish().unwrap_err();
+        assert!(error.to_string().contains("panicked"), "{error}");
+        assert!(out.lock().unwrap().finished);
     }
 
     #[test]

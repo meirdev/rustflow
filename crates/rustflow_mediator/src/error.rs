@@ -20,6 +20,11 @@ pub enum Error {
     DuplicateName(String),
     /// A component with no inputs would never receive anything.
     NoInputs(String),
+    /// An input named twice by one component.
+    DuplicateInput {
+        component: String,
+        input: String,
+    },
     /// An input naming no source and no process.
     UnknownInput {
         component: String,
@@ -41,6 +46,9 @@ impl fmt::Display for Error {
             Self::Component { name, source } => write!(f, "{name}: {source}"),
             Self::DuplicateName(name) => write!(f, "the name '{name}' is used twice"),
             Self::NoInputs(name) => write!(f, "{name}: no inputs"),
+            Self::DuplicateInput { component, input } => {
+                write!(f, "{component}: input '{input}' is named twice")
+            }
             Self::UnknownInput { component, input } => {
                 write!(f, "{component}: unknown input '{input}'")
             }
