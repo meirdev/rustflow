@@ -10,7 +10,7 @@
 //! was applied to the flows that follow them.
 
 pub use record::{Received, Record, Scope};
-pub use rustflow_protocol::Protocol;
+pub use rustflow_protocol::{Family, Protocol};
 
 mod domain;
 #[cfg(test)]

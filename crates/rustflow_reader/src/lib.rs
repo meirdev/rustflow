@@ -1,15 +1,15 @@
 //! The Collecting Process of an IPFIX Mediator (RFC 6183 section 5.1),
-//! read from: NetFlow v5, NetFlow v9, IPFIX and sFlow v5 datagrams, from
-//! any mix of exporters on one socket, as records of IPFIX information
-//! elements.
+//! read from: NetFlow v5, NetFlow v9 and IPFIX datagrams on one socket, or
+//! sFlow v5 on another, from any mix of exporters, as records of IPFIX
+//! information elements.
 //!
 //! Options records are records too, with the scope they describe, so
 //! nothing an exporter says is lost. Flows alone are one adapter away:
 //!
 //! ```no_run
-//! use rustflow_reader::Reader;
+//! use rustflow_reader::{Family, Reader};
 //!
-//! let reader = Reader::bind("0.0.0.0:9995").unwrap();
+//! let reader = Reader::bind("0.0.0.0:9995", Family::Netflow).unwrap();
 //! for flow in reader.flows() {
 //!     println!("{:?}", flow.unwrap());
 //! }
@@ -19,9 +19,9 @@
 //!
 //! ```no_run
 //! use rustflow_protocol::information_element::iana;
-//! use rustflow_reader::{Read, Reader};
+//! use rustflow_reader::{Family, Read, Reader};
 //!
-//! let mut reader = Reader::bind("0.0.0.0:9995").unwrap();
+//! let mut reader = Reader::bind("0.0.0.0:9995", Family::Netflow).unwrap();
 //! loop {
 //!     match reader.read().unwrap() {
 //!         Read::Record(record) if record.is_options() => {
@@ -40,7 +40,7 @@
 pub use collector::Collector;
 pub use options::OptionsTable;
 pub use reader::{Flows, Read, Reader};
-pub use rustflow_convert::{Protocol, Received, Record, Scope};
+pub use rustflow_convert::{Family, Protocol, Received, Record, Scope};
 
 mod collector;
 mod options;

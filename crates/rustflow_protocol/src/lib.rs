@@ -7,7 +7,7 @@
 //! each one is.
 
 pub use error::{ParseError, WriteError};
-pub use protocol::Protocol;
+pub use protocol::{Family, Protocol};
 pub use record::DataSet;
 
 mod error;

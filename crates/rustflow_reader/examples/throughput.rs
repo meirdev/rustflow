@@ -7,8 +7,10 @@
 //!
 //! The capture's UDP payloads are read into memory first, up to the byte
 //! budget (512 MB by default), so that only parsing and conversion are
-//! timed. A first pass through the collector learns the templates; the
-//! timed passes follow: one parsing alone, one collecting.
+//! timed. The capture is taken as NetFlow and IPFIX, or as sFlow with
+//! `sflow` as a third argument. A first pass through the collector learns
+//! the templates; the timed passes follow: one parsing alone, one
+//! collecting.
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -16,7 +18,8 @@ use std::io::{self, BufReader, Read};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
-use rustflow_protocol::{ParseError, Protocol, ipfix, netflow_v5, netflow_v9, sflow_v5};
+use rustflow_protocol::information_element::Registry;
+use rustflow_protocol::{Family, ParseError, Protocol, ipfix, netflow_v5, netflow_v9, sflow_v5};
 use rustflow_reader::{Collector, Received, Record};
 
 const PCAP_GLOBAL_HEADER_LEN: usize = 24;
@@ -39,6 +42,10 @@ fn main() -> io::Result<()> {
     let mut args = std::env::args().skip(1);
     let path = args.next().expect("a pcap path");
     let budget: u64 = args.next().map_or(512, |mb| mb.parse().expect("MB"));
+    let family = match args.next().as_deref() {
+        Some("sflow") => Family::Sflow,
+        _ => Family::Netflow,
+    };
     let datagrams = read_datagrams(&path, budget << 20)?;
     let bytes: u64 = datagrams.iter().map(|d| d.payload.len() as u64).sum();
     let exporters = datagrams
@@ -52,14 +59,14 @@ fn main() -> io::Result<()> {
         bytes as f64 / 1e6
     );
 
-    let mut collector = Collector::default();
+    let mut collector = Collector::new(family, Registry::iana(), Duration::from_mins(10));
     let (warm_up, _) = collect(&datagrams, &mut collector);
     println!(
         "warm-up: {} records, {} datagrams failed to parse",
         warm_up.records, warm_up.errors
     );
     let mut parsers = HashMap::new();
-    let (counts, elapsed) = parse(&datagrams, &mut parsers);
+    let (counts, elapsed) = parse(family, &datagrams, &mut parsers);
     report("parse", &counts, elapsed);
     let (counts, elapsed) = collect(&datagrams, &mut collector);
     report("parse + convert", &counts, elapsed);
@@ -111,13 +118,14 @@ fn collect(datagrams: &[Datagram], collector: &mut Collector) -> (Counts, Durati
 /// Parsing alone, with the templated parsers kept per exporter as the
 /// collector keeps them.
 fn parse(
+    family: Family,
     datagrams: &[Datagram],
     parsers: &mut HashMap<SocketAddr, (netflow_v9::Parser, ipfix::Parser)>,
 ) -> (Counts, Duration) {
     timed(datagrams, |datagram| {
         let payload = &datagram.payload;
         let parsers = parsers.entry(datagram.exporter).or_default();
-        Ok(match Protocol::of(payload)? {
+        Ok(match Protocol::of(family, payload)? {
             Protocol::NetflowV5 => netflow_v5::parse(payload)?.flow_records.len(),
             Protocol::NetflowV9 => parsers
                 .0

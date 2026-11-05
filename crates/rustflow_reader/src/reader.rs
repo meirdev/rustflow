@@ -4,7 +4,7 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 use std::time::{Duration, SystemTime};
 
 use rustflow_convert::{Received, Record};
-use rustflow_protocol::ParseError;
+use rustflow_protocol::{Family, ParseError};
 
 use crate::collector::Collector;
 use crate::options::OptionsTable;
@@ -32,8 +32,14 @@ pub enum Read {
 }
 
 impl Reader {
-    pub fn bind(addr: impl ToSocketAddrs) -> io::Result<Self> {
-        Ok(Self::new(UdpSocket::bind(addr)?, Collector::default()))
+    /// Reads `family` from a socket bound to `addr`, with the usual
+    /// registry and template timeout; see [`Reader::new`] for others.
+    pub fn bind(addr: impl ToSocketAddrs, family: Family) -> io::Result<Self> {
+        let collector = match family {
+            Family::Netflow => Collector::netflow(),
+            Family::Sflow => Collector::sflow(),
+        };
+        Ok(Self::new(UdpSocket::bind(addr)?, collector))
     }
 
     pub fn new(socket: UdpSocket, collector: Collector) -> Self {
@@ -169,8 +175,8 @@ mod tests {
         [&words(&[id, length])[..], body].concat()
     }
 
-    fn reader() -> (Reader, UdpSocket, SocketAddr) {
-        let reader = Reader::bind("127.0.0.1:0")
+    fn reader(family: Family) -> (Reader, UdpSocket, SocketAddr) {
+        let reader = Reader::bind("127.0.0.1:0", family)
             .unwrap()
             .with_read_timeout(Some(Duration::from_millis(200)))
             .unwrap();
@@ -181,7 +187,7 @@ mod tests {
 
     #[test]
     fn records_of_every_protocol_are_read_in_order_and_options_are_kept() {
-        let (mut reader, sender, addr) = reader();
+        let (mut reader, sender, addr) = reader(Family::Netflow);
         // Template 256: octetDeltaCount(1); options template 257 scoped by
         // observationDomainId(149) with samplingInterval(34).
         let templates = ipfix(&[
@@ -206,32 +212,7 @@ mod tests {
         let data = ipfix(&[set(256, &5u32.to_be_bytes())]);
         // A NetFlow v5 header announcing one record, and an empty record.
         let v5 = [words(&[5, 1]), vec![0; 20 + 48]].concat();
-        // An sFlow datagram from agent 192.0.2.1 with one flow sample of no
-        // records: version, address type and address, sub-agent, sequence,
-        // uptime, sample count; then the sample's format, length and body.
-        let sflow: Vec<u8> = [
-            5,
-            1,
-            0xc000_0201,
-            0,
-            1,
-            0,
-            1,
-            1,
-            32,
-            1,
-            1,
-            1000,
-            0,
-            0,
-            0,
-            0,
-            0,
-        ]
-        .iter()
-        .flat_map(|word: &u32| word.to_be_bytes())
-        .collect();
-        for datagram in [&templates, &options, &data, &v5, &sflow, &[1, 2, 3][..]] {
+        for datagram in [&templates, &options, &data, &v5, &sflow(), &[1, 2, 3][..]] {
             sender.send_to(datagram, addr).unwrap();
         }
 
@@ -257,14 +238,8 @@ mod tests {
             panic!("expected the v5 flow");
         };
         assert_eq!(flow.protocol, Protocol::NetflowV5);
-        let Read::Record(flow) = reader.read().unwrap() else {
-            panic!("expected the sFlow flow");
-        };
-        assert_eq!(flow.protocol, Protocol::SflowV5);
-        assert_eq!(
-            flow.first(iana::SAMPLING_POPULATION),
-            Some(&Value::Unsigned32(1000))
-        );
+        // sFlow is not NetFlow's business, nor is garbage.
+        assert!(matches!(reader.read().unwrap(), Read::Malformed { .. }));
         assert!(matches!(reader.read().unwrap(), Read::Malformed { .. }));
         assert!(matches!(reader.read().unwrap(), Read::Timeout));
 
@@ -285,9 +260,53 @@ mod tests {
         );
     }
 
+    /// An sFlow datagram from agent 192.0.2.1 with one flow sample of no
+    /// records: version, address type and address, sub-agent, sequence,
+    /// uptime, sample count; then the sample's format, length and body.
+    fn sflow() -> Vec<u8> {
+        let words: [u32; 17] = [
+            5,
+            1,
+            0xc000_0201,
+            0,
+            1,
+            0,
+            1,
+            1,
+            32,
+            1,
+            1,
+            1000,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ];
+        words.iter().flat_map(|word| word.to_be_bytes()).collect()
+    }
+
+    #[test]
+    fn an_sflow_reader_reads_sflow_alone() {
+        let (mut reader, sender, addr) = reader(Family::Sflow);
+        let v5 = [words(&[5, 1]), vec![0; 20 + 48]].concat();
+        for datagram in [&sflow(), &v5] {
+            sender.send_to(datagram, addr).unwrap();
+        }
+        let Read::Record(flow) = reader.read().unwrap() else {
+            panic!("expected the sFlow flow");
+        };
+        assert_eq!(flow.protocol, Protocol::SflowV5);
+        assert_eq!(
+            flow.first(iana::SAMPLING_POPULATION),
+            Some(&Value::Unsigned32(1000))
+        );
+        assert!(matches!(reader.read().unwrap(), Read::Malformed { .. }));
+    }
+
     #[test]
     fn flows_leave_options_records_out() {
-        let (reader, sender, addr) = reader();
+        let (reader, sender, addr) = reader(Family::Netflow);
         let templates = ipfix(&[set(
             3,
             &words(&[
