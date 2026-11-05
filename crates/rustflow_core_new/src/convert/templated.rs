@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::convert::domains::Domain;
 use crate::convert::record::{Fields, Scope};
 use crate::convert::sampling::{Method, Sampling};
-use crate::convert::time::uptime_to_unix_millis;
+use crate::convert::time::TimeBase;
 use crate::convert::{Protocol, Received, Record, packet_fields};
 use crate::protocol::information_element::{ElementId, iana};
 use crate::protocol::netflow_v9::ScopeType;
@@ -21,93 +21,6 @@ pub(crate) struct Context<'a> {
     pub(crate) domain_id: u32,
     pub(crate) received: &'a Received,
     pub(crate) time: TimeBase,
-}
-
-/// What a packet's relative times are relative to.
-pub(crate) struct TimeBase {
-    pub(crate) export_time_ms: u64,
-    pub(crate) uptime: Uptime,
-}
-
-/// What an exporter's uptime counts from.
-pub(crate) enum Uptime {
-    /// NetFlow v9: the uptime the header gives at the export time.
-    AtExport(u32),
-    /// IPFIX: the exporter's last (re)initialization, if an options record
-    /// gave it.
-    BootedAt(Option<u64>),
-}
-
-impl TimeBase {
-    /// The absolute element a relative time's values become, if they can
-    /// be made absolute; `None` for any other element.
-    fn absolute_element(&self, element: ElementId) -> Option<ElementId> {
-        match element {
-            iana::FLOW_START_SYS_UP_TIME => self
-                .uptimes_convert()
-                .then_some(iana::FLOW_START_MILLISECONDS),
-            iana::FLOW_END_SYS_UP_TIME => self
-                .uptimes_convert()
-                .then_some(iana::FLOW_END_MILLISECONDS),
-            iana::FLOW_START_DELTA_MICROSECONDS => Some(iana::FLOW_START_MILLISECONDS),
-            iana::FLOW_END_DELTA_MICROSECONDS => Some(iana::FLOW_END_MILLISECONDS),
-            _ => None,
-        }
-    }
-
-    /// Makes a relative time's value absolute, giving the element it then
-    /// is; any other element, or a value that cannot be made absolute, is
-    /// left as it is.
-    fn make_absolute(&self, element: ElementId, value: &mut Value) -> ElementId {
-        match self.absolute_element(element) {
-            Some(absolute) => match self.absolute_value(element, value) {
-                Some(time) => {
-                    *value = time;
-                    absolute
-                }
-                None => element,
-            },
-            None => element,
-        }
-    }
-
-    fn uptimes_convert(&self) -> bool {
-        match self.uptime {
-            Uptime::AtExport(_) => true,
-            Uptime::BootedAt(boot_ms) => boot_ms.is_some(),
-        }
-    }
-
-    /// The absolute time a value of `relative` stands for; `None` for a
-    /// value that cannot be made absolute.
-    fn absolute_value(&self, relative: ElementId, value: &Value) -> Option<Value> {
-        let millis = match relative {
-            iana::FLOW_START_SYS_UP_TIME | iana::FLOW_END_SYS_UP_TIME => self.uptime(value)?,
-            iana::FLOW_START_DELTA_MICROSECONDS | iana::FLOW_END_DELTA_MICROSECONDS => {
-                self.before_export(value)?
-            }
-            _ => return None,
-        };
-        Some(Value::DateTimeMilliseconds(millis))
-    }
-
-    fn uptime(&self, value: &Value) -> Option<u64> {
-        let uptime_ms = value.as_u64()?;
-        match self.uptime {
-            Uptime::AtExport(sys_uptime_ms) => uptime_to_unix_millis(
-                self.export_time_ms,
-                sys_uptime_ms,
-                u32::try_from(uptime_ms).ok()?,
-            ),
-            Uptime::BootedAt(boot_ms) => boot_ms?.checked_add(uptime_ms),
-        }
-    }
-
-    /// A time given as microseconds before the export time.
-    fn before_export(&self, value: &Value) -> Option<u64> {
-        let export_time_us = self.export_time_ms.checked_mul(1_000)?;
-        Some(export_time_us.checked_sub(value.as_u64()?)? / 1_000)
-    }
 }
 
 /// The template of a data set: every value has an element.
