@@ -1647,6 +1647,7 @@ dependencies = [
  "etherparse",
  "jiff",
  "num_enum",
+ "pcap-file",
  "rustc-hash",
  "serde",
  "serde_json",

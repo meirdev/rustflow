@@ -1,7 +1,8 @@
 //! The Collecting Process of an IPFIX Mediator (RFC 6183 section 5.1),
 //! read from: NetFlow v5, NetFlow v9 and IPFIX datagrams on one socket, or
 //! sFlow v5 on another, from any mix of exporters, as records of IPFIX
-//! information elements.
+//! information elements. With the `pcap` feature, a [`PcapReader`] reads
+//! them from a capture of the datagrams instead.
 //!
 //! Options records are records too, with the scope they describe, so
 //! nothing an exporter says is lost. Flows alone are one adapter away:
@@ -39,10 +40,16 @@
 
 pub use collector::Collector;
 pub use options::OptionsTable;
-pub use socket::{Flows, Read, Reader};
+#[cfg(feature = "pcap")]
+pub use pcap::PcapReader;
+pub use read::{Flows, Read};
+pub use socket::Reader;
 
 pub use crate::convert::{Family, Protocol, Received, Record, Scope};
 
 mod collector;
 mod options;
+#[cfg(feature = "pcap")]
+mod pcap;
+mod read;
 mod socket;

@@ -1,52 +1,32 @@
-use std::collections::VecDeque;
 use std::io;
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 use std::time::{Duration, SystemTime};
 
 use crate::convert::{Received, Record};
-use crate::protocol::{Family, ParseError};
+use crate::protocol::Family;
 use crate::reader::collector::Collector;
 use crate::reader::options::OptionsTable;
+use crate::reader::read::{Flows, Queue, Read};
 
 /// Reads records from a UDP socket, whatever protocol each datagram is in.
 pub struct Reader {
     socket: UdpSocket,
     buf: Vec<u8>,
-    collector: Collector,
-    pending: VecDeque<Record>,
-}
-
-/// What one read turned up.
-#[derive(Debug)]
-pub enum Read {
-    /// A flow, or an options record with its scope.
-    Record(Record),
-    /// No datagram before the read timeout.
-    Timeout,
-    /// A datagram that could not be parsed.
-    Malformed {
-        exporter: SocketAddr,
-        error: ParseError,
-    },
+    queue: Queue,
 }
 
 impl Reader {
     /// Reads `family` from a socket bound to `addr`, with the usual
     /// registry and template timeout; see [`Reader::new`] for others.
     pub fn bind(addr: impl ToSocketAddrs, family: Family) -> io::Result<Self> {
-        let collector = match family {
-            Family::Netflow => Collector::netflow(),
-            Family::Sflow => Collector::sflow(),
-        };
-        Ok(Self::new(UdpSocket::bind(addr)?, collector))
+        Ok(Self::new(UdpSocket::bind(addr)?, Collector::of(family)))
     }
 
     pub fn new(socket: UdpSocket, collector: Collector) -> Self {
         Self {
             socket,
             buf: vec![0; 65_535],
-            collector,
-            pending: VecDeque::new(),
+            queue: Queue::new(collector),
         }
     }
 
@@ -63,15 +43,15 @@ impl Reader {
 
     /// The latest options records read, by exporter, domain and scope.
     pub fn options(&self) -> OptionsTable<'_> {
-        OptionsTable(&self.collector)
+        OptionsTable(&self.queue.collector)
     }
 
     /// The next record, in the order the exporters sent them. Datagrams
     /// that carry no records, such as template-only ones, are read past.
     pub fn read(&mut self) -> io::Result<Read> {
         loop {
-            if let Some(record) = self.pending.pop_front() {
-                return Ok(Read::Record(record));
+            if let Some(read) = self.queue.pop() {
+                return Ok(read);
             }
             let (len, from) = match self.socket.recv_from(&mut self.buf) {
                 Ok(received) => received,
@@ -82,14 +62,8 @@ impl Reader {
                 exporter: from,
                 time: Some(SystemTime::now()),
             };
-            if let Err(error) =
-                self.collector
-                    .collect(received, &self.buf[..len], &mut self.pending)
-            {
-                return Ok(Read::Malformed {
-                    exporter: from,
-                    error,
-                });
+            if let Some(malformed) = self.queue.collect(received, &self.buf[..len]) {
+                return Ok(malformed);
             }
         }
     }
@@ -123,24 +97,6 @@ impl Iterator for Reader {
                 Err(e) => return Some(Err(e)),
             }
         }
-    }
-}
-
-/// The flows of a reader; see [`Reader::flows`].
-pub struct Flows(Reader);
-
-impl Flows {
-    pub fn reader(&self) -> &Reader {
-        &self.0
-    }
-}
-
-impl Iterator for Flows {
-    type Item = io::Result<Record>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0
-            .find(|record| !record.as_ref().is_ok_and(Record::is_options))
     }
 }
 

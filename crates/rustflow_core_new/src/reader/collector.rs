@@ -43,8 +43,8 @@ struct Templated<P, C> {
 
 impl Collector {
     /// Collects `family`, with fields looked up in `registry`; a template
-    /// expires `timeout` after it was last received. [`Collector::netflow`]
-    /// and [`Collector::sflow`] take the usual registry and timeout.
+    /// expires `timeout` after it was last received. [`Collector::of`] takes
+    /// the usual registry and timeout.
     pub fn new(family: Family, registry: Registry, timeout: Duration) -> Self {
         Self {
             family,
@@ -55,12 +55,18 @@ impl Collector {
         }
     }
 
+    /// Collects `family` with IANA's registry and templates that expire
+    /// after ten minutes.
+    pub fn of(family: Family) -> Self {
+        Self::new(family, Registry::iana(), Duration::from_mins(10))
+    }
+
     pub fn netflow() -> Self {
-        Self::new(Family::Netflow, Registry::iana(), Duration::from_mins(10))
+        Self::of(Family::Netflow)
     }
 
     pub fn sflow() -> Self {
-        Self::new(Family::Sflow, Registry::iana(), Duration::from_mins(10))
+        Self::of(Family::Sflow)
     }
 
     /// Converts a datagram's records, adding them to `records`, by the

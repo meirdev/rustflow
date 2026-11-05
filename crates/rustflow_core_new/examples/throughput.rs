@@ -14,18 +14,17 @@
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, BufReader, Read};
+use std::io;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
+use pcap_file::pcap::PcapReader;
+use rustflow_core_new::dissect::udp_payload;
 use rustflow_core_new::protocol::information_element::Registry;
 use rustflow_core_new::protocol::{
     Family, ParseError, Protocol, ipfix, netflow_v5, netflow_v9, sflow_v5,
 };
 use rustflow_core_new::reader::{Collector, Received, Record};
-
-const PCAP_GLOBAL_HEADER_LEN: usize = 24;
-const PCAP_RECORD_HEADER_LEN: usize = 16;
 
 struct Datagram {
     exporter: SocketAddr,
@@ -154,29 +153,17 @@ fn parse(
     })
 }
 
-/// The UDP payloads of a little-endian pcap, up to `budget` bytes of them.
+/// The UDP payloads of a capture, up to `budget` bytes of them.
 fn read_datagrams(path: &str, budget: u64) -> io::Result<Vec<Datagram>> {
-    let mut file = BufReader::with_capacity(1 << 20, File::open(path)?);
-    let mut global = [0; PCAP_GLOBAL_HEADER_LEN];
-    file.read_exact(&mut global)?;
-    assert_eq!(
-        global[..4],
-        [0xd4, 0xc3, 0xb2, 0xa1],
-        "a little-endian pcap"
-    );
-    let link_type = u32::from_le_bytes(global[20..24].try_into().unwrap());
-
+    let mut pcap = PcapReader::new(File::open(path)?).map_err(io::Error::other)?;
+    let link_type = pcap.header().datalink.into();
     let mut datagrams = Vec::new();
     let mut bytes = 0;
-    let mut header = [0; PCAP_RECORD_HEADER_LEN];
-    let mut frame = Vec::new();
-    while bytes < budget && file.read_exact(&mut header).is_ok() {
-        let captured = u32::from_le_bytes(header[8..12].try_into().unwrap());
-        frame.resize(captured as usize, 0);
-        file.read_exact(&mut frame)?;
-        if let Some((exporter, payload)) =
-            rustflow_core_new::dissect::udp_payload(link_type, &frame)
-        {
+    while bytes < budget
+        && let Some(packet) = pcap.next_packet()
+    {
+        let packet = packet.map_err(io::Error::other)?;
+        if let Some((exporter, payload)) = udp_payload(link_type, &packet.data) {
             bytes += payload.len() as u64;
             datagrams.push(Datagram {
                 exporter,
