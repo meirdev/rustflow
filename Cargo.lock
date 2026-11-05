@@ -1569,10 +1569,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rustflow_bytes"
-version = "0.19.0"
-
-[[package]]
 name = "rustflow_cli"
 version = "0.19.0"
 dependencies = [
@@ -1622,17 +1618,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rustflow_convert"
-version = "0.19.0"
-dependencies = [
- "etherparse",
- "rustflow_dissect",
- "rustflow_protocol",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "rustflow_core"
 version = "0.19.0"
 dependencies = [
@@ -1656,10 +1641,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "rustflow_dissect"
+name = "rustflow_core_new"
 version = "0.19.0"
 dependencies = [
  "etherparse",
+ "jiff",
+ "num_enum",
+ "rustc-hash",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1708,31 +1698,9 @@ dependencies = [
 name = "rustflow_mediator"
 version = "0.19.0"
 dependencies = [
- "rustflow_convert",
- "rustflow_protocol",
+ "rustflow_core_new",
  "serde",
  "toml",
-]
-
-[[package]]
-name = "rustflow_protocol"
-version = "0.19.0"
-dependencies = [
- "jiff",
- "num_enum",
- "rustc-hash",
- "rustflow_bytes",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "rustflow_reader"
-version = "0.19.0"
-dependencies = [
- "rustflow_convert",
- "rustflow_dissect",
- "rustflow_protocol",
 ]
 
 [[package]]

@@ -1,9 +1,0 @@
-[package]
-name = "rustflow_bytes"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-repository.workspace = true
-description = "Big-endian reading and writing of byte buffers for flow protocols"
-
-[dependencies]

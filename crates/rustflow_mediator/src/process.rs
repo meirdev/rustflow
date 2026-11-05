@@ -1,6 +1,6 @@
 use std::time::SystemTime;
 
-use rustflow_convert::Record;
+use rustflow_core_new::convert::Record;
 
 use crate::Item;
 

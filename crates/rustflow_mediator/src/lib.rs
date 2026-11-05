@@ -63,7 +63,7 @@ pub use pipeline::{Builder, Pipeline, SourceId};
 pub use process::{Output, Process};
 pub use registry::{Built, Registry};
 pub use runner::{Closed, Feed, Runner, Schedule};
-pub use rustflow_convert::{Received, Record};
+pub use rustflow_core_new::convert::{Received, Record};
 
 mod config;
 mod error;
