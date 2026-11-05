@@ -26,9 +26,9 @@ impl Record {
 /// A record serialized as a map from element names to values in their
 /// RFC 7373 textual representation, which [`Record::text`] makes.
 ///
-/// - An options record's scope values come first, as on the wire. NetFlow v9
-///   scope types are not Information Elements, with no name to be keyed by, and
-///   are left out.
+/// - An options record's scope values come first, as on the wire. A NetFlow v9
+///   scope of an unassigned type is no Information Element, with no name to be
+///   keyed by, and is left out.
 /// - An element the registry does not name is keyed by its number alone, the
 ///   partial IESpec `(id)` or `(pen/id)` of RFC 7013 section 10.1.
 /// - Lists, which must not be used in textual representations (RFC 7373 section
@@ -216,7 +216,7 @@ mod tests {
                     Scope::Element(iana::OBSERVATION_DOMAIN_ID),
                     Value::Unsigned32(7),
                 ),
-                (Scope::Type(ScopeType::Interface), Value::Unsigned32(2)),
+                (Scope::Type(ScopeType::Unassigned(9)), Value::Unsigned32(2)),
             ],
             vec![(iana::SAMPLING_INTERVAL, Value::Unsigned32(100))],
         );

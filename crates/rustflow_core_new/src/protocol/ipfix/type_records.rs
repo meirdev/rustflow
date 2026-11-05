@@ -19,12 +19,13 @@ const MAX_ELEMENTS: usize = 1024;
 const MAX_NAME_LENGTH: usize = 256;
 
 /// What type records said about the elements of each observation domain.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct ElementTypes {
     domains: HashMap<u32, HashMap<ElementId, Learned>>,
     len: usize,
 }
 
+#[derive(Clone)]
 enum Learned {
     Defined(InformationElement),
     /// Type records disagreed, so the element is ignored (RFC 5610 section

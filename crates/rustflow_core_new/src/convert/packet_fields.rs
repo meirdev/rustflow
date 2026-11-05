@@ -22,30 +22,75 @@ pub(crate) enum Layer {
     Ip,
 }
 
-/// The section among `fields`, by position, if it starts at a header that
-/// can be dissected: a `dataLinkFrameSection` of an Ethernet frame, or else
-/// an `ipHeaderPacketSection`, neither cut short of its start by a
-/// `sectionOffset`.
-pub(crate) fn find<'a>(
-    fields: impl Iterator<Item = (ElementId, &'a Value)>,
-) -> Option<(usize, Layer)> {
-    let (mut frame, mut packet) = (None, None);
+/// The packet section elements, which `sectionOffset` and
+/// `sectionExportedOctets` apply to in order: the first to the first
+/// section, the second to the second (RFC 7133 section 3.2.2).
+const SECTIONS: [ElementId; 5] = [
+    iana::IP_HEADER_PACKET_SECTION,
+    iana::IP_PAYLOAD_PACKET_SECTION,
+    iana::DATA_LINK_FRAME_SECTION,
+    iana::MPLS_LABEL_STACK_SECTION,
+    iana::MPLS_PAYLOAD_PACKET_SECTION,
+];
+
+/// A packet section of a record that starts at a header that can be
+/// dissected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Section {
+    /// The section's field.
+    pub(crate) index: usize,
+    pub(crate) layer: Layer,
+    /// Octets observed, when the section is longer: the rest is padding
+    /// (RFC 7133 section 3.2.3).
+    pub(crate) observed: Option<usize>,
+}
+
+/// The section among `fields` to dissect, if one starts at a header: a
+/// `dataLinkFrameSection` of an Ethernet frame, or else an
+/// `ipHeaderPacketSection`, with no `sectionOffset` of its own.
+pub(crate) fn find<'a>(fields: impl Iterator<Item = (ElementId, &'a Value)>) -> Option<Section> {
+    let mut sections = Vec::new();
+    let (mut offsets, mut observed) = (Vec::new(), Vec::new());
     let mut ethernet = true;
     for (index, (element, value)) in fields.enumerate() {
-        match (element, value) {
-            (iana::DATA_LINK_FRAME_SECTION, Value::OctetArray(_)) => frame = Some(index),
-            (iana::IP_HEADER_PACKET_SECTION, Value::OctetArray(_)) => packet = Some(index),
-            (iana::DATA_LINK_FRAME_TYPE, _) => {
+        match element {
+            _ if SECTIONS.contains(&element) => {
+                sections.push((index, element, matches!(value, Value::OctetArray(_))));
+            }
+            iana::DATA_LINK_FRAME_TYPE => {
                 ethernet = value.as_u64() == Some(ETHERNET_FRAME_TYPE);
             }
-            (iana::SECTION_OFFSET, _) if value.as_u64() != Some(0) => return None,
+            iana::SECTION_OFFSET => offsets.push(value.as_u64()),
+            iana::SECTION_EXPORTED_OCTETS => observed.push(value.as_u64()),
             _ => {}
         }
     }
-    frame
+    let last = |wanted| {
+        sections
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|&(_, &(_, element, bytes))| element == wanted && bytes)
+            .map(|(nth, &(index, ..))| (nth, index))
+    };
+    let (nth, index, layer) = last(iana::DATA_LINK_FRAME_SECTION)
         .filter(|_| ethernet)
-        .map(|index| (index, Layer::Ethernet))
-        .or_else(|| packet.map(|index| (index, Layer::Ip)))
+        .map(|(nth, index)| (nth, index, Layer::Ethernet))
+        .or_else(|| {
+            last(iana::IP_HEADER_PACKET_SECTION).map(|(nth, index)| (nth, index, Layer::Ip))
+        })?;
+    if offsets.get(nth).is_some_and(|&offset| offset != Some(0)) {
+        return None;
+    }
+    Some(Section {
+        index,
+        layer,
+        observed: observed
+            .get(nth)
+            .copied()
+            .flatten()
+            .and_then(|octets| usize::try_from(octets).ok()),
+    })
 }
 
 /// The headers of a section, peeled through any tunnels.
@@ -235,20 +280,27 @@ mod tests {
             find(fields.iter().map(|(element, value)| (*element, value)))
         };
         let bytes = Value::OctetArray(frame.clone());
+        let at = |index, layer| {
+            Some(Section {
+                index,
+                layer,
+                observed: None,
+            })
+        };
         assert_eq!(
             section(&[(iana::DATA_LINK_FRAME_SECTION, bytes.clone())]),
-            Some((0, Layer::Ethernet))
+            at(0, Layer::Ethernet)
         );
         assert_eq!(
             section(&[(iana::IP_HEADER_PACKET_SECTION, bytes.clone())]),
-            Some((0, Layer::Ip))
+            at(0, Layer::Ip)
         );
         assert_eq!(
             section(&[
                 (iana::IP_HEADER_PACKET_SECTION, bytes.clone()),
                 (iana::DATA_LINK_FRAME_SECTION, bytes.clone()),
             ]),
-            Some((1, Layer::Ethernet))
+            at(1, Layer::Ethernet)
         );
         assert_eq!(
             section(&[
@@ -267,6 +319,32 @@ mod tests {
         assert_eq!(
             section(&[(iana::OCTET_DELTA_COUNT, Value::Unsigned64(1))]),
             None
+        );
+    }
+
+    #[test]
+    fn offsets_and_observed_octets_apply_to_sections_in_order() {
+        let bytes = Value::OctetArray(frame());
+        let section = |fields: &[(ElementId, Value)]| {
+            find(fields.iter().map(|(element, value)| (*element, value)))
+        };
+        // The offset is the first section's, an MPLS label stack's.
+        assert_eq!(
+            section(&[
+                (
+                    iana::MPLS_LABEL_STACK_SECTION,
+                    Value::OctetArray(vec![0; 4])
+                ),
+                (iana::SECTION_OFFSET, Value::Unsigned16(4)),
+                (iana::DATA_LINK_FRAME_SECTION, bytes.clone()),
+                (iana::SECTION_EXPORTED_OCTETS, Value::Unsigned16(4)),
+                (iana::SECTION_EXPORTED_OCTETS, Value::Unsigned16(20)),
+            ]),
+            Some(Section {
+                index: 2,
+                layer: Layer::Ethernet,
+                observed: Some(20),
+            })
         );
     }
 }

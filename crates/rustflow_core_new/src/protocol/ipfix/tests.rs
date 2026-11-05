@@ -494,23 +494,101 @@ fn basic_lists_hold_values_of_one_element() {
     );
 }
 
-#[test]
-fn a_basic_list_of_zero_length_elements_ends() {
+/// A list field, holding `content` after a template of that one field.
+fn list_field(list: ElementId, content: &[u8]) -> Value {
     let template = set(
         TEMPLATE_SET_ID,
-        &template(256, &[field(iana::BASIC_LIST, VARIABLE_LENGTH)]),
+        &template(256, &[field(list, VARIABLE_LENGTH)]),
     );
-    let list = [vec![255], field(iana::OCTET_DELTA_COUNT, 0), vec![1, 2]].concat();
-    let data = set(256, &variable(&list));
-
+    let data = set(256, &variable(content));
     let packet = Parser::default()
         .parse(&message(DOMAIN, &[template, data]))
         .unwrap();
+    only_value(&packet).clone()
+}
 
-    let Value::BasicList(list) = only_value(&packet) else {
-        panic!("expected a basic list");
-    };
-    assert!(list.values.is_empty());
+#[test]
+fn a_list_whose_content_does_not_decode_to_its_end_keeps_its_bytes() {
+    // Zero-length elements, then two octets no element can hold.
+    let elements = [vec![255], field(iana::OCTET_DELTA_COUNT, 0), vec![1, 2]].concat();
+    assert_eq!(
+        list_field(iana::BASIC_LIST, &elements),
+        Value::OctetArray(elements)
+    );
+
+    // A four-octet element, then two octets.
+    let cut_short = [
+        vec![255],
+        field(iana::OCTET_DELTA_COUNT, 4),
+        vec![0, 0, 0, 1, 0, 2],
+    ]
+    .concat();
+    assert_eq!(
+        list_field(iana::BASIC_LIST, &cut_short),
+        Value::OctetArray(cut_short)
+    );
+
+    // A group whose length is shorter than its own header.
+    let group = [255, 1, 0, 0, 2];
+    assert_eq!(
+        list_field(iana::SUB_TEMPLATE_MULTI_LIST, &group),
+        Value::OctetArray(group.to_vec())
+    );
+}
+
+#[test]
+fn a_set_longer_than_its_message_fails_it_and_undoes_its_templates() {
+    let mut parser = Parser::default();
+    let mut overlong = octet_count_data(5);
+    overlong[2..4].copy_from_slice(&40u16.to_be_bytes());
+    let malformed = message(DOMAIN, &[octet_count_template(), overlong]);
+    assert!(matches!(
+        parser.parse(&malformed),
+        Err(ParseError::Truncated(_))
+    ));
+
+    let data = parser
+        .parse(&message(DOMAIN, &[octet_count_data(5)]))
+        .unwrap();
+    assert!(matches!(data.sets[0], Set::Undecoded { set_id: 256, .. }));
+}
+
+#[test]
+fn a_record_cut_short_by_its_set_fails_the_message() {
+    let template = set(
+        TEMPLATE_SET_ID,
+        &template(256, &[field(iana::INTERFACE_NAME, VARIABLE_LENGTH)]),
+    );
+    // A name of ten octets, of which the set holds three.
+    let data = set(256, &[10, b'e', b't', b'h']);
+    assert!(matches!(
+        Parser::default().parse(&message(DOMAIN, &[template, data])),
+        Err(ParseError::Truncated(_))
+    ));
+}
+
+#[test]
+fn a_template_cut_short_by_its_set_fails_the_message() {
+    let mut fields = template(256, &[field(iana::OCTET_DELTA_COUNT, 4)]);
+    // Three fields claimed, one given.
+    fields[2..4].copy_from_slice(&3u16.to_be_bytes());
+    let templates = set(TEMPLATE_SET_ID, &fields);
+    assert!(matches!(
+        Parser::default().parse(&message(DOMAIN, &[templates])),
+        Err(ParseError::Truncated(_))
+    ));
+}
+
+#[test]
+fn octets_left_after_the_last_set_fail_the_message() {
+    let mut datagram = message(DOMAIN, &[octet_count_template()]);
+    datagram.extend([0; 2]);
+    let length = u16::try_from(datagram.len()).unwrap();
+    datagram[2..4].copy_from_slice(&length.to_be_bytes());
+    assert!(matches!(
+        Parser::default().parse(&datagram),
+        Err(ParseError::Truncated(_))
+    ));
 }
 
 #[test]
@@ -959,14 +1037,14 @@ fn undecoded_data_decodes_once_its_template_arrives() {
     let Set::Undecoded { set_id, body } = &early.sets[0] else {
         panic!("expected an undecoded set");
     };
-    assert_eq!(parser.decode(DOMAIN, *set_id, body), None);
+    assert_eq!(parser.decode(DOMAIN, *set_id, body), Ok(None));
 
     parser
         .parse(&message(DOMAIN, &[octet_count_template()]))
         .unwrap();
-    let set = parser.decode(DOMAIN, *set_id, body).unwrap();
+    let set = parser.decode(DOMAIN, *set_id, body).unwrap().unwrap();
     assert_eq!(data_set(&set).records, [[Value::Unsigned32(5)]]);
-    assert_eq!(parser.decode(8, *set_id, body), None);
+    assert_eq!(parser.decode(8, *set_id, body), Ok(None));
 }
 
 #[test]

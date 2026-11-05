@@ -76,7 +76,7 @@ mod tests {
     use crate::fixtures::udp_payloads;
     use crate::protocol::DataSet;
     use crate::protocol::information_element::{ElementId, iana};
-    use crate::protocol::netflow_v9::{self, Field, Header, OptionsTemplate, ScopeType, Template};
+    use crate::protocol::netflow_v9::{self, Field, Header, OptionsTemplate, Template};
     use crate::protocol::value::Value;
 
     const SOURCE_ID: u32 = 7;
@@ -209,7 +209,10 @@ mod tests {
         assert_eq!(records.len(), 2);
         assert_eq!(
             records[0].scope,
-            [(Scope::Type(ScopeType::System), Value::Unsigned32(0))]
+            [(
+                Scope::Element(iana::EXPORTING_PROCESS_ID),
+                Value::Unsigned32(0)
+            )]
         );
         assert_eq!(
             records[0].first(iana::SAMPLING_INTERVAL),

@@ -107,7 +107,6 @@ macro_rules! for_each_flow_field {
             src_vlan: U16 optional,
             dst_vlan: U16 optional,
             observation_domain_id: U32 optional,
-            template_id: U16 optional,
             forwarding_status: U32 optional,
         }
     };
@@ -192,8 +191,6 @@ pub struct CommonFlow {
     pub dst_vlan: Option<u16>,
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub observation_domain_id: Option<u32>,
-    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
-    pub template_id: Option<u16>,
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub forwarding_status: Option<u32>,
 }
@@ -357,7 +354,6 @@ impl From<&Record> for CommonFlow {
             ),
             dst_vlan: unsigned(record, &[iana::POST_VLAN_ID]),
             observation_domain_id: unsigned(record, &[iana::ORIGINAL_OBSERVATION_DOMAIN_ID]),
-            template_id: unsigned(record, &[iana::TEMPLATE_ID]),
             forwarding_status: unsigned(record, &[iana::FORWARDING_STATUS]),
         }
     }
@@ -440,9 +436,9 @@ mod tests {
     #[test]
     fn the_field_list_names_every_field_of_the_struct() {
         let names = names(&CommonFlow::new(FlowType::Ipfix));
-        assert_eq!(names.len(), 38);
+        assert_eq!(names.len(), 37);
         assert_eq!(names[0], "flow_type");
-        assert_eq!(names[37], "forwarding_status");
+        assert_eq!(names[36], "forwarding_status");
     }
 
     #[test]

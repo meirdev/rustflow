@@ -2,19 +2,49 @@
 
 use std::collections::HashMap;
 
-use crate::convert::Record;
 use crate::convert::sampling::{Sampling, SamplingOptions};
-use crate::protocol::information_element::iana;
+use crate::convert::{Record, Scope};
+use crate::protocol::information_element::{ElementId, iana};
 use crate::protocol::value::Value;
 
 /// Observation domains one exporter may have state for; it decides how
 /// many it names.
 const MAX_DOMAINS: usize = 1024;
 
-/// Samplers one domain may have rates for, and options records of
-/// distinct kinds it may keep; the exporter decides how many it sends.
+/// Scoped samplings one domain may have, and options records of distinct
+/// kinds it may keep; the exporter decides how many it sends.
 const MAX_SAMPLERS: usize = 1024;
 const MAX_OPTIONS: usize = 1024;
+
+/// What a sampling can be scoped to: a sampler or selector, the interface a
+/// packet came in or went out on, or a line card, by the element naming it
+/// and its value.
+pub(crate) type SamplingKey = (ElementId, u64);
+
+/// The elements a sampling is scoped by, in the order a data record's are
+/// tried. A sampler and a selector share one key, [`iana::SAMPLER_ID`].
+pub(crate) const SAMPLING_KEYS: [ElementId; 4] = [
+    iana::SAMPLER_ID,
+    iana::INGRESS_INTERFACE,
+    iana::EGRESS_INTERFACE,
+    iana::LINE_CARD_ID,
+];
+
+/// Scopes that cover the whole observation domain.
+const DOMAIN_SCOPES: [ElementId; 3] = [
+    iana::OBSERVATION_DOMAIN_ID,
+    iana::EXPORTING_PROCESS_ID,
+    iana::METERING_PROCESS_ID,
+];
+
+/// The key `element` stands for, if it keys sampling at all.
+pub(crate) fn sampling_key(element: ElementId) -> Option<ElementId> {
+    match element {
+        iana::SELECTOR_ID => Some(iana::SAMPLER_ID),
+        element if SAMPLING_KEYS.contains(&element) => Some(element),
+        _ => None,
+    }
+}
 
 #[derive(Default)]
 pub(crate) struct Domains(HashMap<u32, Domain>);
@@ -48,13 +78,13 @@ impl Domains {
 /// said.
 #[derive(Debug, Default)]
 pub(crate) struct Domain {
-    /// From options records that name no sampler.
+    /// From options records scoped to the whole domain.
     sampling: Option<Sampling>,
-    /// From options records that name a sampler (`samplerId` or
-    /// `selectorId`), for the data records that name the same one.
-    sampler_sampling: HashMap<u64, Sampling>,
-    /// The sampling all of `sampler_sampling` share, if they agree.
-    shared_sampler_sampling: Option<Sampling>,
+    /// From options records scoped to a sampler, an interface or a line
+    /// card, for the data records naming the same one.
+    scoped_sampling: HashMap<SamplingKey, Sampling>,
+    /// The sampling all of `scoped_sampling` share, if they agree.
+    shared_scoped_sampling: Option<Sampling>,
     pub(crate) system_init_time_ms: Option<u64>,
     /// The latest options record of each kind: of each scope and set of
     /// elements.
@@ -73,7 +103,11 @@ impl Domain {
             }
         }
         if let Some(sampling) = options.sampling() {
-            self.set_sampling(sampler_id(record), sampling);
+            match applies_to(record) {
+                Applies::Domain => self.sampling = Some(sampling),
+                Applies::Only(key) => self.set_scoped_sampling(key, sampling),
+                Applies::Neither => {}
+            }
         }
         self.keep(record);
     }
@@ -90,47 +124,73 @@ impl Domain {
         }
     }
 
-    fn set_sampling(&mut self, sampler_id: Option<u64>, sampling: Sampling) {
-        match sampler_id {
-            None => self.sampling = Some(sampling),
-            Some(id) if self.sampler_sampling.len() < MAX_SAMPLERS => {
-                self.sampler_sampling.insert(id, sampling);
-            }
-            Some(id) => {
-                if let Some(known) = self.sampler_sampling.get_mut(&id) {
-                    *known = sampling;
-                }
-            }
+    fn set_scoped_sampling(&mut self, key: SamplingKey, sampling: Sampling) {
+        if self.scoped_sampling.len() < MAX_SAMPLERS {
+            self.scoped_sampling.insert(key, sampling);
+        } else if let Some(known) = self.scoped_sampling.get_mut(&key) {
+            *known = sampling;
         }
-        let mut samplings = self.sampler_sampling.values();
-        self.shared_sampler_sampling = samplings
+        let mut samplings = self.scoped_sampling.values();
+        self.shared_scoped_sampling = samplings
             .next()
             .copied()
             .filter(|first| samplings.all(|sampling| sampling == first));
     }
 
-    /// The sampling of a data record naming `sampler_id`: its sampler's,
-    /// or else the domain's. A record that names no known sampler, in a
-    /// domain without sampling of its own, takes the samplers' when they
-    /// agree: many exporters name the sampler only in the options record.
-    pub(crate) fn sampling_for(&self, sampler_id: Option<u64>) -> Option<Sampling> {
-        if self.sampler_sampling.is_empty() {
+    /// The sampling of a data record carrying `keys`, tried in turn: the
+    /// one scoped to the first with one, or else the domain's. A record
+    /// that matches none, in a domain without sampling of its own, takes
+    /// the scoped samplings when they agree: many exporters name the
+    /// sampler or interface only in the options record.
+    pub(crate) fn sampling_for(
+        &self,
+        keys: impl IntoIterator<Item = SamplingKey>,
+    ) -> Option<Sampling> {
+        if self.scoped_sampling.is_empty() {
             return self.sampling;
         }
-        sampler_id
-            .and_then(|id| self.sampler_sampling.get(&id).copied())
+        keys.into_iter()
+            .find_map(|key| self.scoped_sampling.get(&key).copied())
             .or(self.sampling)
-            .or(self.shared_sampler_sampling)
+            .or(self.shared_scoped_sampling)
     }
 }
 
-/// The sampler an options record names, in its scope or its fields.
-fn sampler_id(record: &Record) -> Option<u64> {
-    record
+/// What the sampling an options record states applies to.
+enum Applies {
+    Domain,
+    Only(SamplingKey),
+    /// Something else, such as a template, which says nothing of the
+    /// sampling of the domain's flows.
+    Neither,
+}
+
+/// A sampler named anywhere in the record keys its sampling, since many
+/// exporters name it among the option fields rather than in the scope.
+/// Otherwise the scope decides: an interface or a line card keys it, and
+/// scopes covering the whole domain leave it the domain's.
+fn applies_to(record: &Record) -> Applies {
+    let sampler = record
         .scope_elements()
         .chain(record.iter())
-        .find(|(element, _)| matches!(*element, iana::SAMPLER_ID | iana::SELECTOR_ID))
-        .and_then(|(_, value)| value.as_u64())
+        .find(|(element, _)| sampling_key(*element) == Some(iana::SAMPLER_ID));
+    if let Some((_, value)) = sampler {
+        return value
+            .as_u64()
+            .map_or(Applies::Neither, |id| Applies::Only((iana::SAMPLER_ID, id)));
+    }
+    for (scope, value) in &record.scope {
+        match *scope {
+            Scope::Element(element) if DOMAIN_SCOPES.contains(&element) => {}
+            Scope::Element(element) if SAMPLING_KEYS.contains(&element) => {
+                return value
+                    .as_u64()
+                    .map_or(Applies::Neither, |id| Applies::Only((element, id)));
+            }
+            _ => return Applies::Neither,
+        }
+    }
+    Applies::Domain
 }
 
 #[cfg(test)]
@@ -143,18 +203,57 @@ mod tests {
     use crate::protocol::information_element::ElementId;
 
     fn learn(domains: &mut Domains, domain: u32, fields: &[(ElementId, Value)]) {
+        let scope = (iana::OBSERVATION_DOMAIN_ID, Value::Unsigned32(domain));
+        learn_scoped(domains, domain, scope, fields);
+    }
+
+    fn learn_scoped(
+        domains: &mut Domains,
+        domain: u32,
+        (scope, value): (ElementId, Value),
+        fields: &[(ElementId, Value)],
+    ) {
         let (elements, values): (Vec<_>, Vec<_>) = fields.iter().cloned().unzip();
         let record = Record {
             protocol: Protocol::Ipfix,
             sequence_number: 0,
-            scope: vec![(
-                Scope::Element(iana::OBSERVATION_DOMAIN_ID),
-                Value::Unsigned32(domain),
-            )],
+            scope: vec![(Scope::Element(scope), value)],
             elements: Arc::from(elements),
             values,
         };
         domains.learn(domain, &record);
+    }
+
+    #[test]
+    fn interface_sampling_applies_to_that_interfaces_records_alone() {
+        let mut domains = Domains::default();
+        for (interface, rate) in [(1, 10), (2, 20)] {
+            learn_scoped(
+                &mut domains,
+                7,
+                (iana::INGRESS_INTERFACE, Value::Unsigned32(interface)),
+                &[(iana::SAMPLING_INTERVAL, Value::Unsigned32(rate))],
+            );
+        }
+        let domain = domains.get(7).unwrap();
+        assert_eq!(
+            domain.sampling_for([(iana::INGRESS_INTERFACE, 2)]),
+            one_in(20)
+        );
+        assert_eq!(domain.sampling_for([(iana::INGRESS_INTERFACE, 3)]), None);
+        assert_eq!(domain.sampling_for([]), None);
+    }
+
+    #[test]
+    fn sampling_scoped_to_a_template_says_nothing_of_the_domain() {
+        let mut domains = Domains::default();
+        learn_scoped(
+            &mut domains,
+            7,
+            (iana::TEMPLATE_ID, Value::Unsigned16(256)),
+            &[(iana::SAMPLING_INTERVAL, Value::Unsigned32(10))],
+        );
+        assert_eq!(domains.get(7).unwrap().sampling_for([]), None);
     }
 
     fn one_in(rate: u32) -> Option<Sampling> {
@@ -174,8 +273,8 @@ mod tests {
         learn(&mut domains, 7, &sampler(2, 20));
         let domain = domains.get(7).unwrap();
 
-        assert_eq!(domain.sampling_for(Some(2)), one_in(20));
-        assert_eq!(domain.sampling_for(None), None);
+        assert_eq!(domain.sampling_for([(iana::SAMPLER_ID, 2)]), one_in(20));
+        assert_eq!(domain.sampling_for([]), None);
 
         learn(
             &mut domains,
@@ -183,8 +282,8 @@ mod tests {
             &[(iana::SAMPLING_INTERVAL, Value::Unsigned32(5))],
         );
         let domain = domains.get(7).unwrap();
-        assert_eq!(domain.sampling_for(None), one_in(5));
-        assert_eq!(domain.sampling_for(Some(9)), one_in(5));
+        assert_eq!(domain.sampling_for([]), one_in(5));
+        assert_eq!(domain.sampling_for([(iana::SAMPLER_ID, 9)]), one_in(5));
     }
 
     #[test]
@@ -201,7 +300,7 @@ mod tests {
             );
         }
         assert_eq!(
-            domains.get(7).unwrap().sampling_for(None),
+            domains.get(7).unwrap().sampling_for([]),
             Some(Sampling {
                 rate: 100,
                 method: Some(Method::Random),

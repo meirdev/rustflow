@@ -43,6 +43,13 @@ struct Received<T> {
     at: Instant,
 }
 
+/// What [`TemplateCache::insert`] replaced, for [`TemplateCache::undo`] to
+/// put back.
+pub(crate) struct Replaced<T> {
+    key: (u32, u16),
+    template: Option<Received<T>>,
+}
+
 impl<T> TemplateCache<Entry<T>> {
     /// Stores a template with the layout of its records; see
     /// [`TemplateCache::insert`].
@@ -52,9 +59,9 @@ impl<T> TemplateCache<Entry<T>> {
         template_id: u16,
         template: T,
         layout: Box<[Slot]>,
-    ) {
+    ) -> Replaced<Entry<T>> {
         let fields = layout.len();
-        self.insert(domain, template_id, Entry { template, layout }, fields);
+        self.insert(domain, template_id, Entry { template, layout }, fields)
     }
 }
 
@@ -73,7 +80,13 @@ impl<T> TemplateCache<T> {
     /// its ID right away. One that would take the cache past [`MAX_FIELDS`]
     /// is refused, and the one it replaces is dropped all the same: its data
     /// would otherwise be read by the old layout.
-    pub(crate) fn insert(&mut self, domain: u32, template_id: u16, template: T, fields: usize) {
+    pub(crate) fn insert(
+        &mut self,
+        domain: u32,
+        template_id: u16,
+        template: T,
+        fields: usize,
+    ) -> Replaced<T> {
         let now = Instant::now();
         if self.next_sweep.is_some_and(|sweep| now >= sweep) {
             self.remove_expired(now);
@@ -98,8 +111,27 @@ impl<T> TemplateCache<T> {
         } else {
             self.templates.remove(&key)
         };
-        if let Some(replaced) = replaced {
+        if let Some(replaced) = &replaced {
             self.fields -= replaced.fields;
+        }
+        Replaced {
+            key,
+            template: replaced,
+        }
+    }
+
+    /// Puts back what an insert replaced, undoing it; undoing several
+    /// inserts takes them in reverse order.
+    pub(crate) fn undo(&mut self, replaced: Replaced<T>) {
+        if let Some(inserted) = self.templates.remove(&replaced.key) {
+            self.fields -= inserted.fields;
+        }
+        if let Some(template) = replaced.template {
+            self.fields += template.fields;
+            if let Some(expiry) = template.at.checked_add(self.timeout) {
+                self.next_expiry = Some(self.next_expiry.map_or(expiry, |next| next.min(expiry)));
+            }
+            self.templates.insert(replaced.key, template);
         }
     }
 
@@ -233,5 +265,18 @@ mod tests {
         assert_eq!(cache.get(7, 256), Some(&"changed"));
         assert_eq!(cache.get(7, 257), Some(&"changed"));
         assert_eq!(cache.get(8, 256), Some(&"c"));
+    }
+
+    #[test]
+    fn an_undone_insert_puts_back_what_it_replaced() {
+        let mut cache = cache();
+        cache.insert(7, 256, "kept", 2);
+        let replacing = cache.insert(7, 256, "replacing", 3);
+        let new = cache.insert(7, 257, "new", 4);
+        cache.undo(new);
+        cache.undo(replacing);
+        assert_eq!(cache.get(7, 256), Some(&"kept"));
+        assert_eq!(cache.get(7, 257), None);
+        assert_eq!(cache.fields, 2);
     }
 }

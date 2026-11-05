@@ -25,8 +25,9 @@ pub struct Record {
     pub values: Vec<Value>,
 }
 
-/// What a scope value names: an element's value in IPFIX, a scope type's in
-/// NetFlow v9.
+/// What a scope value names: an element's value, as IPFIX scopes and the
+/// NetFlow v9 scope types it has elements for are; or else, for a v9 scope
+/// type unassigned when RFC 3954 was written, that type's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Scope {
     Element(ElementId),
@@ -124,6 +125,28 @@ impl Fields {
             );
         }
         additions
+    }
+
+    /// The additions a record of `elements` lacks. A record from an
+    /// upstream Mediator names its Original Exporter, observation domain and
+    /// collection time already; those are kept, not joined by what this
+    /// collector saw of the Mediator (RFC 7119 sections 5 and 6).
+    pub(crate) fn lacking(self, elements: &[ElementId]) -> Self {
+        let has = |element| elements.contains(&element);
+        let names_exporter =
+            has(iana::ORIGINAL_EXPORTER_IPV4_ADDRESS) || has(iana::ORIGINAL_EXPORTER_IPV6_ADDRESS);
+        let (elements, values) = self
+            .elements
+            .into_iter()
+            .zip(self.values)
+            .filter(|&(element, _)| match element {
+                iana::ORIGINAL_EXPORTER_IPV4_ADDRESS
+                | iana::ORIGINAL_EXPORTER_IPV6_ADDRESS
+                | iana::EXPORTER_TRANSPORT_PORT => !names_exporter && !has(element),
+                element => !has(element),
+            })
+            .unzip();
+        Self { elements, values }
     }
 
     pub(crate) fn push(&mut self, element: ElementId, value: Value) {

@@ -129,23 +129,29 @@ impl<H: Clone> Pending<H> {
     }
 
     /// The sets `decode` decodes now, put back together by the datagram
-    /// they came in, oldest first; `decode` gives `None` for a set whose
-    /// template is still unknown, which stays held.
-    pub(crate) fn release<S>(
+    /// they came in, oldest first. `decode` gives `Ok(None)` for a set whose
+    /// template is still unknown, which stays held, and an error for one its
+    /// template does not fit, which is dropped.
+    pub(crate) fn release<S, E>(
         &mut self,
         budget: &mut Budget,
-        mut decode: impl FnMut(u32, u16, &[u8]) -> Option<S>,
+        mut decode: impl FnMut(u32, u16, &[u8]) -> Result<Option<S>, E>,
     ) -> Vec<(Received, H, Vec<S>)> {
         let mut released: Vec<(Received, H, Vec<S>)> = Vec::new();
         let mut last_datagram = None;
         let mut kept = VecDeque::new();
         for held in self.sets.drain(..) {
-            let Some(set) = decode(held.domain, held.set_id, &held.body) else {
+            let decoded = decode(held.domain, held.set_id, &held.body);
+            if let Ok(None) = decoded {
                 kept.push_back(held);
                 continue;
-            };
+            }
             self.bytes -= held.body.len();
             budget.stats.held_bytes -= held.body.len();
+            let Ok(Some(set)) = decoded else {
+                budget.stats.dropped_sets += 1;
+                continue;
+            };
             match released.last_mut() {
                 Some((_, _, sets)) if last_datagram == Some(held.datagram) => sets.push(set),
                 _ => released.push((held.received, held.header, vec![set])),
@@ -203,7 +209,9 @@ mod tests {
         set_id: u16,
     ) -> Vec<(&'static str, Vec<usize>)> {
         pending
-            .release(budget, |_, id, body| (id == set_id).then_some(body.len()))
+            .release(budget, |_, id, body| {
+                Ok::<_, ()>((id == set_id).then_some(body.len()))
+            })
             .into_iter()
             .map(|(_, header, sets)| (header, sets))
             .collect()
@@ -269,6 +277,21 @@ mod tests {
             budget.stats,
             PendingStats {
                 held_bytes: 4,
+                dropped_sets: 1
+            }
+        );
+    }
+
+    #[test]
+    fn a_set_its_template_does_not_fit_is_dropped() {
+        let (mut pending, mut budget) = (Pending::default(), budget(100, 100));
+        hold(&mut pending, &mut budget, "misfit", &[(256, 4)]);
+        let released = pending.release(&mut budget, |_, _, _| Err::<Option<usize>, _>(()));
+        assert!(released.is_empty());
+        assert_eq!(
+            budget.stats,
+            PendingStats {
+                held_bytes: 0,
                 dropped_sets: 1
             }
         );

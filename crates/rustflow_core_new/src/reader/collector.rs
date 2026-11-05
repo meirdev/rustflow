@@ -163,7 +163,7 @@ impl Collector {
                         }) {
                             let parser = &state.parser;
                             let late = state.pending.release(budget, |source_id, id, body| {
-                                parser.decode(source_id, id, body)
+                                Ok::<_, ParseError>(parser.decode(source_id, id, body))
                             });
                             for (received, header, flow_sets) in late {
                                 let packet = Packet { header, flow_sets };

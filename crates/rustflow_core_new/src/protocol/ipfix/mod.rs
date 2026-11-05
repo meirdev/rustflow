@@ -35,6 +35,8 @@ const HEADER_SIZE: usize = 16;
 const SET_HEADER_SIZE: usize = 4;
 /// Template ID and Data Records Length.
 const LIST_GROUP_HEADER_SIZE: usize = 4;
+/// A template record's ID and field count, all a withdrawal has.
+const TEMPLATE_RECORD_HEADER_SIZE: usize = 4;
 const ENTERPRISE_BIT: u16 = 0x8000;
 /// How deep lists may nest before the rest is kept undecoded. The exporter
 /// controls the nesting, and each level costs stack.

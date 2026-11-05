@@ -203,6 +203,55 @@ mod tests {
     }
 
     #[test]
+    fn a_padded_section_is_dissected_only_as_far_as_was_observed() {
+        let mut padded = frame()[..14].to_vec();
+        padded.resize(frame().len(), 0);
+        let records = converted(
+            &mut Converter::default(),
+            vec![data(&[
+                (iana::DATA_LINK_FRAME_SECTION, Value::OctetArray(padded)),
+                (iana::SECTION_EXPORTED_OCTETS, Value::Unsigned16(14)),
+            ])],
+        );
+        let record = &records[0];
+        assert_eq!(
+            record.first(iana::SOURCE_MAC_ADDRESS),
+            Some(&Value::MacAddress([2; 6]))
+        );
+        assert_eq!(record.first(iana::DESTINATION_IPV4_ADDRESS), None);
+    }
+
+    #[test]
+    fn a_record_from_an_upstream_mediator_keeps_its_original_exporter() {
+        let original = Ipv4Addr::new(10, 0, 0, 1);
+        let records = converted(
+            &mut Converter::default(),
+            vec![data(&[
+                (
+                    iana::ORIGINAL_EXPORTER_IPV4_ADDRESS,
+                    Value::Ipv4Address(original),
+                ),
+                (iana::ORIGINAL_OBSERVATION_DOMAIN_ID, Value::Unsigned32(3)),
+                (iana::OCTET_DELTA_COUNT, Value::Unsigned64(1)),
+            ])],
+        );
+        let record = &records[0];
+        assert_eq!(
+            record
+                .all(iana::ORIGINAL_EXPORTER_IPV4_ADDRESS)
+                .collect::<Vec<_>>(),
+            [&Value::Ipv4Address(original)]
+        );
+        assert_eq!(
+            record
+                .all(iana::ORIGINAL_OBSERVATION_DOMAIN_ID)
+                .collect::<Vec<_>>(),
+            [&Value::Unsigned32(3)]
+        );
+        assert_eq!(record.first(iana::EXPORTER_TRANSPORT_PORT), None);
+    }
+
+    #[test]
     fn a_section_not_at_the_start_of_the_packet_is_left_alone() {
         let records = converted(
             &mut Converter::default(),

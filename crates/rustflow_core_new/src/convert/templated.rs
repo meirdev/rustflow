@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use crate::convert::domains::Domain;
+use crate::convert::domains::{Domain, SAMPLING_KEYS, sampling_key};
 use crate::convert::record::{Fields, Scope};
 use crate::convert::sampling::{Method, Sampling};
 use crate::convert::time::TimeBase;
@@ -65,7 +65,7 @@ impl OptionsTemplate for netflow_v9::OptionsTemplate {
     fn scope(&self) -> impl Iterator<Item = Scope> {
         self.scope_fields
             .iter()
-            .map(|field| Scope::Type(ScopeType::from(field.field_type)))
+            .map(|field| scope_element(ScopeType::from(field.field_type)))
     }
 
     fn option_element_ids(&self) -> impl Iterator<Item = ElementId> {
@@ -75,15 +75,40 @@ impl OptionsTemplate for netflow_v9::OptionsTemplate {
     }
 }
 
+/// The IPFIX element whose value a NetFlow v9 scope type gives (RFC 3954
+/// section 6.1 names the types, RFC 7011 section 3.4.2.1 the elements): the
+/// interface an Interface scope gives is taken as the one packets come in
+/// on, the System as the Exporting Process, and the Cache as the Metering
+/// Process filling it. An unassigned type has none.
+fn scope_element(scope: ScopeType) -> Scope {
+    let element = match scope {
+        ScopeType::System => iana::EXPORTING_PROCESS_ID,
+        ScopeType::Interface => iana::INGRESS_INTERFACE,
+        ScopeType::LineCard => iana::LINE_CARD_ID,
+        ScopeType::Cache => iana::METERING_PROCESS_ID,
+        ScopeType::Template => iana::TEMPLATE_ID,
+        ScopeType::Unassigned(_) => return Scope::Type(scope),
+    };
+    Scope::Element(element)
+}
+
 /// Converts the records of an options data set, each with its scope. They
 /// are few, so each is converted on its own.
 pub(crate) fn convert_options<'a, T: OptionsTemplate + 'a>(
     context: &'a Context,
     data: DataSet<T>,
 ) -> impl Iterator<Item = Record> + 'a {
-    let base = Fields::additions(context.received, Some(context.domain_id));
-    let mut last_elements = None;
     let template = data.template;
+    let named: Vec<ElementId> = template
+        .scope()
+        .filter_map(|scope| match scope {
+            Scope::Element(element) => Some(element),
+            Scope::Type(_) => None,
+        })
+        .chain(template.option_element_ids())
+        .collect();
+    let base = Fields::additions(context.received, Some(context.domain_id)).lacking(&named);
+    let mut last_elements = None;
     let scope_len = template.scope().count();
     data.records.into_iter().map(move |mut values| {
         let mut option_values = values.split_off(scope_len.min(values.len()));
@@ -114,8 +139,9 @@ struct Layout {
     /// element.
     own: Vec<ElementId>,
     times: Vec<RelativeTime>,
-    /// The field naming the record's sampler.
-    sampler: Option<usize>,
+    /// The fields that may key the record's sampling, by the element they
+    /// key it as, in the order [`SAMPLING_KEYS`] tries them.
+    sampling_keys: Vec<(ElementId, usize)>,
     /// Whether a record may carry a packet section, whose fields vary with
     /// its bytes.
     section: bool,
@@ -144,7 +170,7 @@ impl Layout {
     fn of(context: &Context, template: &impl DataTemplate) -> Self {
         let mut own = Vec::new();
         let mut times = Vec::new();
-        let mut sampler = None;
+        let mut keys = [None; SAMPLING_KEYS.len()];
         let mut section = false;
         for (index, element) in template.element_ids().enumerate() {
             match context.time.absolute_element(element) {
@@ -157,16 +183,28 @@ impl Layout {
                 }
                 None => own.push(element),
             }
-            match element {
-                iana::SAMPLER_ID | iana::SELECTOR_ID => sampler = sampler.or(Some(index)),
-                iana::DATA_LINK_FRAME_SECTION | iana::IP_HEADER_PACKET_SECTION => section = true,
-                _ => {}
+            if let Some(key) = sampling_key(element) {
+                let slot = SAMPLING_KEYS.iter().position(|&known| known == key);
+                if let Some(slot) = slot {
+                    keys[slot].get_or_insert(index);
+                }
+            }
+            if matches!(
+                element,
+                iana::DATA_LINK_FRAME_SECTION | iana::IP_HEADER_PACKET_SECTION
+            ) {
+                section = true;
             }
         }
+        let sampling_keys = SAMPLING_KEYS
+            .iter()
+            .zip(keys)
+            .filter_map(|(&key, index)| Some((key, index?)))
+            .collect();
         Self {
             own,
             times,
-            sampler,
+            sampling_keys,
             section,
             shapes: Vec::new(),
         }
@@ -202,12 +240,15 @@ pub(crate) fn convert_data<T: DataTemplate>(
     data: DataSet<T>,
     records: &mut impl Extend<Record>,
 ) {
-    let base = Fields::additions(context.received, Some(context.domain_id));
     let mut layout = Layout::of(context, &*data.template);
+    let base = Fields::additions(context.received, Some(context.domain_id)).lacking(&layout.own);
     let mut last_elements = None;
     records.extend(data.records.into_iter().map(|mut values| {
-        let sampler_id = layout.sampler.and_then(|index| values.get(index)?.as_u64());
-        let sampling = domain.and_then(|domain| domain.sampling_for(sampler_id));
+        let keys = layout
+            .sampling_keys
+            .iter()
+            .filter_map(|&(key, index)| Some((key, values.get(index)?.as_u64()?)));
+        let sampling = domain.and_then(|domain| domain.sampling_for(keys));
         let mut all_absolute = true;
         for time in &layout.times {
             match values
@@ -246,11 +287,14 @@ pub(crate) fn convert_data<T: DataTemplate>(
             }
         }
         let mut fields = Fields { elements, values };
-        let headers = packet_fields::find(fields.iter()).and_then(|(index, layer)| {
-            let Value::OctetArray(bytes) = &fields.values[index] else {
+        let headers = packet_fields::find(fields.iter()).and_then(|section| {
+            let Value::OctetArray(bytes) = &fields.values[section.index] else {
                 return None;
             };
-            packet_fields::headers(layer, bytes)
+            let observed = section
+                .observed
+                .map_or(bytes.len(), |octets| octets.min(bytes.len()));
+            packet_fields::headers(section.layer, &bytes[..observed])
         });
         if let Some(headers) = headers {
             packet_fields::add(headers, &mut |element, value| fields.add(element, value));
