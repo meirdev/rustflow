@@ -1,285 +1,92 @@
 # Library
 
-The parsing and normalization used by `rustflow collect` is published as a library, so
-NetFlow, IPFIX, and sFlow can be decoded inside your own application.
+The collector is built on `rustflow_core_new`, which parses NetFlow v5, NetFlow v9, IPFIX and sFlow v5, converts what they carry into records of IPFIX information elements, reads datagrams from sockets and captures, and writes records out again as packets. The crate is in the repository under `crates/rustflow_core_new` and is not published yet; it replaces the earlier `rustflow_lib` and `rustflow_core` crates, which are no longer maintained.
 
-The crate is named `rustflow_lib` because `rustflow` was already taken on crates.io.
+The crate's own [README](../crates/rustflow_core_new/README.md) describes its structure, the specifications it implements and every API in detail. What follows is the short version.
 
-```toml
-[dependencies]
-rustflow_lib = "0.19"
-```
+## Reading flows
 
-## Reading Flows From the Network
-
-`NetflowReader` and `SflowReader` bind a UDP socket and yield normalized
-[common flows](output.md#common-flow). Both implement `Iterator`, so a collector is a
-`for` loop:
+A `Reader` is bound to a socket for one family: `Family::Netflow` reads NetFlow v5, NetFlow v9 and IPFIX, told apart by the version at the start of each datagram; `Family::Sflow` reads sFlow v5.
 
 ```rust
-use rustflow_lib::NetflowReader;
+use rustflow_core_new::reader::{Family, Reader};
 
-fn main() -> std::io::Result<()> {
-    let reader = NetflowReader::bind("0.0.0.0:9995")?;
-
-    for flow in reader {
-        let flow = flow?;
-        println!("{} -> {} {} bytes",
-            flow.src_addr.unwrap(), flow.dst_addr.unwrap(), flow.bytes);
-    }
-
-    Ok(())
+let reader = Reader::bind("0.0.0.0:9995", Family::Netflow)?;
+for record in reader.flows() {
+    println!("{:?}", record?);
 }
 ```
 
-`NetflowReader` handles NetFlow v5, NetFlow v9, and IPFIX on the same socket; the version
-is detected per packet. `SflowReader` handles sFlow v5:
+`flows()` yields flow records only. `read()` gives every outcome, options records, timeouts and malformed datagrams among them. A capture file is read the same way through `PcapReader`, and with the `tokio` feature `AsyncReader` has the same shape, awaited.
+
+## Common flows
+
+`CommonFlow` is the fixed schema the collector writes out, made from any record:
 
 ```rust
-use rustflow_lib::SflowReader;
+use rustflow_core_new::convert::CommonFlow;
 
-fn main() -> std::io::Result<()> {
-    let reader = SflowReader::bind("0.0.0.0:6343")?;
-
-    for flow in reader {
-        println!("{:?}", flow?);
-    }
-
-    Ok(())
+for record in reader.flows() {
+    let flow = CommonFlow::from(&record?);
+    println!("{:?} -> {:?}: {:?} bytes", flow.src_addr, flow.dst_addr, flow.bytes);
 }
 ```
 
-One flow record is yielded at a time. A single UDP packet usually carries many records,
-which are buffered internally and returned one by one.
+## Configuring the collector
 
-> The socket iterators never finish. When no data arrives they keep waiting, so the loop
-> only ends if you `break` out of it or a socket error occurs.
-
-### Reading Without an Iterator
-
-`read` gives you control over the waiting. It returns a `ReadEvent`: `Flow` with the next
-flow, or `Timeout` when none arrived before the read timeout, which is the hook for doing
-other work in the same thread. Datagrams that carry no flows, such as template-only ones, are
-read past:
+The readers drive a `Collector`, which is where the information element registry, the template timeout, the holding of data that arrives before its template, and how exporters are told apart are set:
 
 ```rust
-use rustflow_lib::{NetflowReader, ReadEvent};
+use std::net::UdpSocket;
 use std::time::Duration;
 
-fn main() -> std::io::Result<()> {
-    let mut reader = NetflowReader::bind("0.0.0.0:9995")?
-        .with_read_timeout(Some(Duration::from_secs(1)))?;
+use rustflow_core_new::protocol::information_element::Registry;
+use rustflow_core_new::reader::{Collector, Family, Reader, SessionKey};
 
-    loop {
-        match reader.read()? {
-            ReadEvent::Flow(flow) => println!("{:?}", flow),
-            ReadEvent::Timeout => {
-                // No flow within the timeout: flush metrics, check for
-                // shutdown, then keep reading.
-            }
-            ReadEvent::End => unreachable!("a socket has no end"),
-        }
-    }
-}
+let collector = Collector::new(Family::Netflow, Registry::iana(), Duration::from_secs(1800))
+    .with_session_key(SessionKey::Transport);
+let reader = Reader::new(UdpSocket::bind("0.0.0.0:9995")?, collector);
 ```
 
-Without `with_read_timeout`, `read` blocks until a packet arrives.
+By default an exporter is one session whatever source port its datagrams come from, as some routers send templates and data from different ports.
 
-## Reading From a PCAP File
+## Custom information elements
 
-The pcap readers take the same shape, and unlike the socket readers they **do** finish, at
-the end of the file:
+Elements go into the registry before the collector is built, which is the same mechanism behind the collector's `--ie-mapping` flag:
 
 ```rust
-use rustflow_lib::pcap::NetflowPcapReader;
+use std::borrow::Cow;
 
-fn main() -> std::io::Result<()> {
-    let reader = NetflowPcapReader::open("capture.pcap")?;
+use rustflow_core_new::protocol::information_element::{
+    DataType, ElementId, InformationElement, Registry,
+};
 
-    let mut total = 0u64;
-    for flow in reader {
-        total += flow?.bytes;
-    }
-    println!("{} bytes across all flows", total);
-
-    Ok(())
-}
+let mut registry = Registry::iana();
+registry.insert(InformationElement {
+    id: ElementId::from((9, 1)),
+    name: Cow::Borrowed("ciscoExample"),
+    data_type: DataType::Unsigned32,
+    semantics: None,
+});
 ```
 
-`SflowPcapReader` is the sFlow equivalent. Both expect a pcap containing the UDP datagrams
-carrying the flow protocol. Their `read` and `read_raw` return `End` at the end of the file
-instead of `Timeout`.
+## Exporting
 
-## Async
-
-The async readers are behind the `tokio` feature:
-
-```toml
-[dependencies]
-rustflow_lib = { version = "0.19", features = ["tokio"] }
-tokio = { version = "1", features = ["full"] }
-```
-
-They live in `rustflow_lib::tokio` and mirror the sync API, except that `read` waits for a
-flow rather than returning a `ReadEvent`; wrap it in `tokio::time::timeout` to stop waiting:
+The `export` module is the reverse of reading: records go in, packets of a protocol come out, with templates and sequence numbers kept by the exporter. The `rustflow export` and `rustflow generate` commands are built on it.
 
 ```rust
-use rustflow_lib::tokio::NetflowReader;
+use std::time::{Duration, SystemTime};
 
-#[tokio::main]
-async fn main() -> std::io::Result<()> {
-    let mut reader = NetflowReader::bind("0.0.0.0:9995").await?;
+use rustflow_core_new::export::ipfix::Exporter;
+use rustflow_core_new::protocol::ipfix;
 
-    loop {
-        let flow = reader.read().await?;
-        println!("{:?}", flow);
-    }
-}
+let mut exporter = Exporter::new(1).with_template_refresh(Duration::from_secs(30));
+let packet = exporter.export(&records, SystemTime::now())?;
+let mut buf = Vec::new();
+ipfix::write(&packet, &mut buf)?;
+socket.send_to(&buf, collector)?;
 ```
 
-## Custom Information Elements
+## Packets
 
-Enterprise-specific IPFIX Information Elements are registered through an `IERegistry`,
-which is the same mechanism behind the collector's `--ie-mapping` flag:
-
-```rust
-use rustflow_lib::{IERegistry, NetflowReader};
-
-fn main() -> std::io::Result<()> {
-    let mut registry = IERegistry::new_with_iana_elements();
-    registry.load_from_csv("ie-mapping.csv").expect("failed to load IE mappings");
-
-    let reader = NetflowReader::bind("0.0.0.0:4739")?
-        .with_ie_registry(registry);
-
-    for flow in reader {
-        println!("{:?}", flow?);
-    }
-
-    Ok(())
-}
-```
-
-`IERegistry::new_with_iana_elements` starts from the IANA registry;
-`IERegistry::new` starts empty.
-
-## Template Cache
-
-NetFlow v9 and IPFIX send templates separately from data, and data records cannot be
-decoded until their template arrives. Cached templates expire after 10 minutes by default:
-
-```rust
-use rustflow_lib::NetflowReader;
-use std::time::Duration;
-
-fn main() -> std::io::Result<()> {
-    let reader = NetflowReader::bind("0.0.0.0:9995")?
-        .with_template_timeout(Duration::from_secs(1800));
-
-    for flow in reader {
-        println!("{:?}", flow?);
-    }
-
-    Ok(())
-}
-```
-
-Raise this if your exporters re-send templates infrequently.
-
-## Raw Protocol Access
-
-`read` normalizes into the common schema. To work with the protocol structures themselves —
-template definitions, per-field values, options records — use `read_raw`:
-
-```rust
-use rustflow_lib::{NetflowPacket, NetflowReadResult, NetflowReader};
-
-fn main() -> std::io::Result<()> {
-    let mut reader = NetflowReader::bind("0.0.0.0:9995")?;
-
-    loop {
-        match reader.read_raw()? {
-            NetflowReadResult::Packet { src, len, packet } => match packet {
-                NetflowPacket::V5(p) => println!("v5 from {} ({} bytes): {} records",
-                    src, len, p.flow_records.len()),
-                NetflowPacket::V9(p) => println!("v9 from {}: {} flow sets",
-                    src, p.flow_sets.len()),
-                NetflowPacket::Ipfix(p) => println!("ipfix from {}: {} sets",
-                    src, p.sets.len()),
-            },
-            NetflowReadResult::ParseError { src, version: Some(version), .. } => {
-                eprintln!("undecodable {} packet from {}", version.name(), src);
-            }
-            NetflowReadResult::ParseError { src, version: None, .. } => {
-                eprintln!("packet of unknown version from {}", src);
-            }
-            NetflowReadResult::Timeout | NetflowReadResult::End => {}
-        }
-    }
-}
-```
-
-`SflowReadResult` is the sFlow counterpart, carrying `SflowPacket::V5`. `version` is the
-version in the packet header, such as `FlowType::NetflowV9`, when it is a known one;
-`FlowType::name` gives its lowercase name, `netflow_v9`.
-
-The protocol types are re-exported per protocol: `rustflow_lib::ipfix`,
-`rustflow_lib::netflow_v5`, `rustflow_lib::netflow_v9`, and `rustflow_lib::sflow`.
-
-## Bringing Your Own Transport
-
-If the packets reach you some other way — a message queue, a capture library, a test
-fixture — use a processor directly. This is what the readers are built on:
-
-```rust
-use rustflow_lib::NetflowProcessor;
-use std::net::{IpAddr, Ipv4Addr};
-use std::time::{SystemTime, UNIX_EPOCH};
-
-fn decode(exporter: IpAddr, payload: &[u8], processor: &mut NetflowProcessor) {
-    // `time_received_ns` is what lands in the flow's `time_received_ns`
-    // field; pass `None` to leave it unset.
-    let received = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .and_then(|d| i64::try_from(d.as_nanos()).ok());
-
-    for flow in processor.process(exporter, payload, received) {
-        println!("{:?}", flow);
-    }
-}
-
-fn main() {
-    let mut processor = NetflowProcessor::new();
-    let exporter = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1));
-
-    decode(exporter, &[/* a UDP payload */], &mut processor);
-}
-```
-
-The processor is stateful: it holds the template cache and the sampling-rate cache, so keep
-one per collector rather than creating one per packet. Key it by exporter address, which is
-what `process` uses to scope templates.
-
-`process` returns a new `Vec` for every packet. To add the flows to a collection you keep
-instead, such as a queue, use `process_into`; `convert_into` does the same for a packet
-already parsed with `parse`.
-
-`SflowProcessor` is the sFlow equivalent.
-
-## Flow Fields
-
-`CommonFlow` is re-exported as `rustflow_lib::CommonFlow`. Every field and its type is
-listed in [Output](output.md#common-flow). Optional fields are `Option<T>` and are `None`
-when the exporter did not supply them, so prefer matching over unwrapping:
-
-```rust
-use rustflow_lib::CommonFlow;
-
-fn describe(flow: &CommonFlow) -> String {
-    match (flow.src_addr, flow.dst_addr) {
-        (Some(src), Some(dst)) => format!("{} -> {}", src, dst),
-        _ => "no addresses in this record".to_string(),
-    }
-}
-```
+The protocol types are under `rustflow_core_new::protocol`: `ipfix`, `netflow_v5`, `netflow_v9` and `sflow_v5`, each with its packet structs, a parser and a `write`. With the `serde` feature a packet serializes as it is, or as text with its records named through `Packet::text(&registry)`, which is what the collector's raw output is.

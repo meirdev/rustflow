@@ -1,33 +1,32 @@
 use std::net::{SocketAddr, UdpSocket};
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Result;
-use chrono::Utc;
 use log::{debug, info};
-use rustflow_core::common::encoder::Encode;
-use rustflow_core::ipfix::parser::{
-    DataRecord, Header, IPFIX_HEADER_SIZE, IPFIX_OPTIONS_TEMPLATE_SET_ID, IPFIX_TEMPLATE_SET_ID,
-    IPFIX_VERSION, IpfixPacket, Record, SET_HEADER_SIZE, Set,
-};
+use rustflow_core_new::convert::Record;
+use rustflow_core_new::export;
+use rustflow_core_new::protocol::ipfix;
 
 use crate::ExportArgs;
 use crate::flow::Flow;
-use crate::ipfix::data::{OptionsData, PacketData};
-use crate::ipfix::template::{OPTIONS_TEMPLATE_ID, create_options_template, create_templates};
-use crate::meter::Records;
+use crate::meter::{Mode, Records};
+use crate::records::{PacketData, Shapes, wire_size};
 
-/// Keeps a message within one Ethernet MTU, with
-/// room for IPv6 and UDP headers.
+/// Keeps a message within one Ethernet MTU, with room for IPv6 and UDP
+/// headers.
 const MAX_MESSAGE_SIZE: usize = 1400;
-const MAX_SET_BODY: usize = MAX_MESSAGE_SIZE - IPFIX_HEADER_SIZE - SET_HEADER_SIZE;
+/// Message header and set header.
+const HEADERS: usize = 16 + 4;
+const MAX_SET_BODY: usize = MAX_MESSAGE_SIZE - HEADERS;
 
 pub struct Exporter {
     socket: UdpSocket,
     /// Resolved once at startup.
     collector_addr: SocketAddr,
     args: ExportArgs,
-    sequence_number: AtomicU32,
+    ipfix: export::ipfix::Exporter,
+    shapes: Shapes,
+    buf: Vec<u8>,
     last_template_send: Instant,
 }
 
@@ -47,11 +46,29 @@ impl Exporter {
             "0.0.0.0:0"
         })?;
 
+        // Every template is made now, so that they all go out together
+        // ahead of the records rather than each with its first record.
+        let shapes = Shapes::default();
+        let mut ipfix = export::ipfix::Exporter::new(args.observation_domain_id);
+        let [ipv4, ipv6, frame, ip] = shapes.samples();
+        let samples = match args.mode {
+            Mode::Flow => [ipv4, ipv6],
+            Mode::Packet => [frame, ip],
+        };
+        for sample in samples
+            .iter()
+            .chain(&[shapes.options(args.observation_domain_id, args.sampling())])
+        {
+            ipfix.declare(sample)?;
+        }
+
         Ok(Self {
             socket,
             collector_addr,
             args,
-            sequence_number: AtomicU32::new(0),
+            ipfix,
+            shapes,
+            buf: Vec::new(),
             last_template_send: Instant::now(),
         })
     }
@@ -69,80 +86,30 @@ impl Exporter {
         elapsed >= Duration::from_secs(self.args.template_refresh_rate)
     }
 
-    /// Sends one message with `sets`; returns its size.
-    fn send_sets(&mut self, sets: Vec<Set>) -> Result<usize> {
-        let packet = IpfixPacket {
-            header: Header {
-                version: IPFIX_VERSION,
-                length: 0, // Will be calculated during encoding
-                export_time: Utc::now(),
-                sequence_number: self.sequence_number.load(Ordering::SeqCst),
-                observation_domain_id: self.args.observation_domain_id,
-            },
-            sets,
-        };
-
-        let mut encoded = Vec::new();
-        packet.encode(&mut encoded);
-        self.socket.send_to(&encoded, self.collector_addr)?;
-
-        Ok(encoded.len())
+    /// Sends one message of `records`, with the templates if they are due;
+    /// returns its size.
+    fn send_message(&mut self, records: &[Record]) -> Result<usize> {
+        let packet = self.ipfix.export(records, SystemTime::now())?;
+        self.buf.clear();
+        ipfix::write(&packet, &mut self.buf)?;
+        self.socket.send_to(&self.buf, self.collector_addr)?;
+        Ok(self.buf.len())
     }
 
-    /// Sends one message with one set of data records of `template_id`.
-    fn send_data(&mut self, template_id: u16, records: Vec<Record>) -> Result<()> {
-        let count = records.len() as u32;
-        let size = self.send_sets(vec![Set {
-            id: template_id,
-            length: 0,
-            records,
-        }])?;
-        self.sequence_number.fetch_add(count, Ordering::SeqCst);
-
-        debug!("Sent packet with {} records ({} bytes)", count, size);
-
-        Ok(())
-    }
-
+    /// Sends every template with the options data record that says how the
+    /// observation domain samples. Options data records count toward the
+    /// sequence number (RFC 7011 section 3.1), like any other data record.
     pub fn send_templates(&mut self) -> Result<()> {
         info!("Sending templates to collector");
 
-        self.send_sets(vec![
-            Set {
-                id: IPFIX_TEMPLATE_SET_ID,
-                length: 0,
-                records: create_templates(self.args.mode)
-                    .into_iter()
-                    .map(Record::Template)
-                    .collect(),
-            },
-            Set {
-                id: IPFIX_OPTIONS_TEMPLATE_SET_ID,
-                length: 0,
-                records: vec![Record::OptionsTemplate(create_options_template(
-                    self.args.sampling(),
-                ))],
-            },
-        ])?;
+        self.ipfix.resend_templates();
+        let options = self
+            .shapes
+            .options(self.args.observation_domain_id, self.args.sampling());
+        self.send_message(&[options])?;
 
         self.last_template_send = Instant::now();
         debug!("Templates sent successfully");
-
-        Ok(())
-    }
-
-    pub fn send_options_data(&mut self) -> Result<()> {
-        debug!("Sending options data");
-
-        // Options Data Records count toward the sequence number (RFC 7011
-        // section 3.1), like any other Data Record.
-        let options_data = OptionsData::new(self.args.observation_domain_id, self.args.sampling());
-        self.send_data(
-            OPTIONS_TEMPLATE_ID,
-            vec![Record::OptionsData(options_data.to_data_record())],
-        )?;
-
-        debug!("Options data sent successfully");
 
         Ok(())
     }
@@ -163,55 +130,59 @@ impl Exporter {
 
         // A set holds records of one template, so IPv4 and IPv6 flows are
         // sent apart rather than interleaved.
-        let (ipv4, ipv6): (Vec<_>, Vec<_>) = flows
+        let (ipv4, ipv6): (Vec<_>, Vec<_>) =
+            flows.iter().partition(|flow| flow.key.source_ip.is_ipv4());
+        let records: Vec<_> = ipv4
             .iter()
-            .map(Flow::to_flow_data)
-            .partition(|data| data.source_ip.is_ipv4());
-
-        self.send_records(
-            ipv4.iter()
-                .chain(&ipv6)
-                .map(|data| (data.template_id(), data.to_data_record())),
-        )
+            .chain(&ipv6)
+            .map(|flow| self.shapes.flow(flow))
+            .collect();
+        self.send_records(records)
     }
 
     fn send_packets(&mut self, packets: Vec<PacketData>) -> Result<()> {
-        self.send_records(
-            packets
-                .iter()
-                .map(|packet| (packet.template_id(), packet.to_data_record())),
-        )
+        let records: Vec<_> = packets
+            .iter()
+            .map(|packet| self.shapes.packet(packet))
+            .collect();
+        self.send_records(records)
     }
 
-    /// Sends each record with its template ID, filling every message by
-    /// bytes up to [`MAX_MESSAGE_SIZE`]; a new template starts a new message.
+    /// Sends the records, filling every message by bytes up to
+    /// [`MAX_MESSAGE_SIZE`]; a new shape starts a new message.
     ///
     /// Every message is tried, so a failed send costs only its own records;
     /// the first error is returned.
-    fn send_records(&mut self, records: impl IntoIterator<Item = (u16, DataRecord)>) -> Result<()> {
+    fn send_records(&mut self, records: Vec<Record>) -> Result<()> {
         let mut result = Ok(());
-        let mut pending = Vec::new();
-        let mut template_id = 0;
+        let mut pending: Vec<Record> = Vec::new();
         let mut size = 0;
-        let mut scratch = Vec::new();
 
-        for (id, record) in records {
-            scratch.clear();
-            record.encode(&mut scratch);
-            let len = scratch.len();
-            if !pending.is_empty() && (size + len > MAX_SET_BODY || id != template_id) {
-                result = result.and(self.send_data(template_id, std::mem::take(&mut pending)));
+        for record in records {
+            let len = wire_size(&record);
+            let new_shape = pending
+                .last()
+                .is_some_and(|last| !std::sync::Arc::ptr_eq(&last.elements, &record.elements));
+            if !pending.is_empty() && (size + len > MAX_SET_BODY || new_shape) {
+                result = result.and(self.send_pending(&mut pending));
                 size = 0;
             }
-            template_id = id;
             size += len;
-            pending.push(Record::Data(record));
+            pending.push(record);
         }
         if !pending.is_empty() {
-            result = result.and(self.send_data(template_id, pending));
+            result = result.and(self.send_pending(&mut pending));
         }
 
         result
+    }
+
+    fn send_pending(&mut self, pending: &mut Vec<Record>) -> Result<()> {
+        let count = pending.len();
+        let size = self.send_message(pending)?;
+        pending.clear();
+        debug!("Sent packet with {} records ({} bytes)", count, size);
+        Ok(())
     }
 }
 
@@ -221,7 +192,8 @@ mod tests {
     use std::time::Duration;
 
     use clap::Parser;
-    use rustflow_core::ipfix::parser::{IpfixParser, Record as Parsed};
+    use rustflow_core_new::protocol::information_element::Registry;
+    use rustflow_core_new::protocol::ipfix::{Packet, Parser as IpfixParser, Set};
 
     use super::*;
     use crate::capture::Link;
@@ -256,6 +228,22 @@ mod tests {
             received.push(buf[..len].to_vec());
         }
         received
+    }
+
+    fn parser() -> IpfixParser {
+        IpfixParser::new(Registry::iana(), Duration::from_secs(600))
+    }
+
+    /// The data records of a message, options records left out.
+    fn data_records(message: &Packet) -> usize {
+        message
+            .sets
+            .iter()
+            .map(|set| match set {
+                Set::Data(data) => data.records.len(),
+                _ => 0,
+            })
+            .sum()
     }
 
     fn packet(section_len: usize) -> PacketData {
@@ -295,34 +283,42 @@ mod tests {
 
         for _ in 0..3 {
             exporter.send_templates().unwrap();
-            exporter.send_options_data().unwrap();
             exporter.send(Records::Flows(vec![flow()])).unwrap();
             std::thread::sleep(Duration::from_millis(20));
         }
     }
 
     #[test]
-    fn options_and_data_records_advance_the_sequence_number() {
+    fn templates_go_first_and_records_advance_the_sequence_number() {
         let receiver = receiver();
         let mut exporter = exporter(&receiver, &["--mode", "packet"]);
 
         exporter.send_templates().unwrap();
-        exporter.send_options_data().unwrap();
         exporter
             .send(Records::Packets(vec![packet(16); 3]))
             .unwrap();
-        exporter.send_options_data().unwrap();
+        exporter.send_templates().unwrap();
         exporter.send(Records::Flows(vec![flow()])).unwrap();
 
-        let mut parser = IpfixParser::default();
-        let sequence: Vec<u32> = datagrams(&receiver)
+        let mut parser = parser();
+        let messages: Vec<_> = datagrams(&receiver)
             .iter()
-            .map(|message| parser.parse(message).unwrap().1.header.sequence_number)
+            .map(|message| parser.parse(message).unwrap())
             .collect();
         // Templates do not count; one options record, three packets, one
         // options record, one flow.
-        assert_eq!(sequence, [0, 0, 1, 4, 5]);
-        assert_eq!(exporter.sequence_number.load(Ordering::SeqCst), 6);
+        let sequence: Vec<u32> = messages
+            .iter()
+            .map(|message| message.header.sequence_number)
+            .collect();
+        assert_eq!(sequence, [0, 1, 4, 5]);
+        assert!(messages[0].has_templates(), "templates with the options");
+        assert!(!messages[1].has_templates());
+        assert!(messages[2].has_templates(), "sent again on request");
+        // In packet mode no flow template was declared, so the flow's own
+        // message brings its template, ahead of the record.
+        assert!(messages[3].has_templates() && !messages[3].has_undecoded());
+        assert_eq!(data_records(&messages[3]), 1);
     }
 
     #[test]
@@ -349,16 +345,10 @@ mod tests {
         exporter.send(Records::Flows(flows)).unwrap();
 
         let messages = datagrams(&receiver);
-        let mut parser = IpfixParser::default();
+        let mut parser = parser();
         let mut records = 0;
         for message in &messages {
-            let (_, parsed) = parser.parse(message).unwrap();
-            records += parsed
-                .sets
-                .iter()
-                .flat_map(|set| &set.records)
-                .filter(|record| matches!(record, Parsed::Data(_)))
-                .count();
+            records += data_records(&parser.parse(message).unwrap());
             assert!(message.len() <= MAX_MESSAGE_SIZE, "{}", message.len());
         }
         assert_eq!(records, 150);
@@ -380,16 +370,10 @@ mod tests {
             .unwrap();
 
         let messages = datagrams(&receiver);
-        let mut parser = IpfixParser::default();
+        let mut parser = parser();
         let mut records = 0;
         for message in &messages {
-            let (_, parsed) = parser.parse(message).unwrap();
-            records += parsed
-                .sets
-                .iter()
-                .flat_map(|set| &set.records)
-                .filter(|record| matches!(record, Parsed::Data(_)))
-                .count();
+            records += data_records(&parser.parse(message).unwrap());
             assert!(message.len() <= MAX_MESSAGE_SIZE);
         }
         assert_eq!(records, 25);

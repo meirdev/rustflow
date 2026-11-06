@@ -24,12 +24,6 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-      # collector library
-      - name: Publish rustflow_lib
-        run: cargo publish -p rustflow_lib
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
       # `rustflow collect`
       - name: Publish rustflow_collect
         run: cargo publish -p rustflow_collect

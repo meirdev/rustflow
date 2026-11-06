@@ -5,7 +5,7 @@ use crate::ExportArgs;
 use crate::capture::{Frame, Link};
 use crate::flow::parse::{PacketInfo, parse};
 use crate::flow::{Flow, FlowCache, Seen};
-use crate::ipfix::data::PacketData;
+use crate::records::PacketData;
 use crate::sampler::Sampler;
 
 /// Packets pending before they are exported without waiting for the timer.

@@ -3,8 +3,8 @@ mod args;
 mod capture;
 mod exporter;
 mod flow;
-mod ipfix;
 mod meter;
+mod records;
 mod sampler;
 
 use std::sync::Arc;
@@ -53,7 +53,6 @@ pub fn run(args: ExportArgs) -> Result<()> {
     );
 
     exporter.send_templates()?;
-    exporter.send_options_data()?;
 
     info!("Starting packet capture and export");
 
@@ -84,12 +83,10 @@ pub fn run(args: ExportArgs) -> Result<()> {
         }
 
         if tick {
-            if exporter.should_send_template() {
-                if let Err(e) = exporter.send_templates() {
-                    error!("Failed to send templates: {}", e);
-                } else if let Err(e) = exporter.send_options_data() {
-                    error!("Failed to send options data: {}", e);
-                }
+            if exporter.should_send_template()
+                && let Err(e) = exporter.send_templates()
+            {
+                error!("Failed to send templates: {}", e);
             }
 
             if meter.active_flows() > 0 {

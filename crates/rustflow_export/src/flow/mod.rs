@@ -6,8 +6,6 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 
-use crate::ipfix::data::FlowData;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum FlowEndReason {
@@ -86,22 +84,6 @@ impl Flow {
         self.tcp_flags |= tcp_flags;
         self.flow_end = seen.time;
         self.last_seen = seen.instant;
-    }
-
-    pub fn to_flow_data(&self) -> FlowData {
-        FlowData {
-            source_ip: self.key.source_ip,
-            destination_ip: self.key.destination_ip,
-            protocol: self.key.protocol,
-            source_port: self.key.source_port,
-            destination_port: self.key.destination_port,
-            octet_count: self.octet_count,
-            packet_count: self.packet_count,
-            tcp_flags: self.tcp_flags,
-            flow_start: self.flow_start,
-            flow_end: self.flow_end,
-            flow_end_reason: self.flow_end_reason.map_or(0, |reason| reason as u8),
-        }
     }
 }
 

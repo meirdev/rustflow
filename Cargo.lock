@@ -1679,21 +1679,7 @@ dependencies = [
  "libc",
  "log",
  "pcap",
- "rustflow_core",
-]
-
-[[package]]
-name = "rustflow_lib"
-version = "0.19.0"
-dependencies = [
- "chrono",
- "log",
- "pcap-file",
- "rustc-hash",
- "rustflow_core",
- "serde",
- "socket2",
- "tokio",
+ "rustflow_core_new",
 ]
 
 [[package]]

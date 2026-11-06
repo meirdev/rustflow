@@ -52,6 +52,15 @@ impl Exporter {
         self.templates.resend();
     }
 
+    /// Makes the template for records of `record`'s shape ahead of any such
+    /// record, so that it goes out with the next templates rather than with
+    /// the first record.
+    pub fn declare(&mut self, record: &Record) -> Result<(), ExportError> {
+        self.templates
+            .template_of(record, |template_id| make_template(record, template_id))
+            .map(|_| ())
+    }
+
     pub fn observation_domain_id(&self) -> u32 {
         self.observation_domain_id
     }
