@@ -1,6 +1,6 @@
 # Generator
 
-RustFlow can generate synthetic IPFIX traffic and send it to a collector.
+RustFlow can generate synthetic NetFlow v5, NetFlow v9, IPFIX or sFlow traffic and send it to a collector.
 
 ## Basic Usage
 
@@ -18,9 +18,31 @@ rustflow generate \
   -p 4739
 ```
 
+## Protocol
+
+Use `--protocol` (`-P`) to choose what the flows are sent as: `netflow-v5`, `netflow-v9`, `ipfix` (the default) or `sflow`.
+
+```bash
+rustflow generate \
+  --protocol netflow-v9
+```
+
+NetFlow v9 and IPFIX send templates and a sampling options record first, and again every template interval. NetFlow v5 carries IPv4 flows only. sFlow sends each flow as a sampled packet whose headers are built from the flow's addresses, ports and protocol, as long as the flow's octets per packet.
+
+## Writing a Capture
+
+Use `--output` (`-o`) to write the packets to a pcap file instead of sending them, for example to make a fixture for tests. The file holds the datagrams as a capture of the generator's traffic to the collector would:
+
+```bash
+rustflow generate \
+  --count 100 \
+  --rate 0 \
+  --output flows.pcap
+```
+
 ## Rate
 
-Use `--rate` (`-r`) to control the number of IPFIX packets sent per second:
+Use `--rate` (`-r`) to control the number of packets sent per second:
 
 ```bash
 rustflow generate \
@@ -31,7 +53,7 @@ A value of `0` disables rate limiting.
 
 ## Flows per Packet
 
-Use `--flows-per-packet` (`-f`) to control how many flow records are included in each IPFIX packet:
+Use `--flows-per-packet` (`-f`) to control how many flow records are included in each packet:
 
 ```bash
 rustflow generate \
@@ -53,7 +75,7 @@ The default is `0`, which sends packets continuously.
 
 ## Observation Domain
 
-The IPFIX observation domain ID can be configured using `--observation-domain-id`:
+The observation domain ID, which is the NetFlow v9 source ID and the sFlow sub-agent ID, can be configured using `--observation-domain-id`:
 
 ```bash
 rustflow generate \
@@ -64,7 +86,7 @@ The default is `1`.
 
 ## Template Refresh
 
-Templates are periodically re-sent according to `--template-interval`.
+NetFlow v9 and IPFIX templates are periodically re-sent according to `--template-interval`.
 
 The default interval is `30` seconds.
 

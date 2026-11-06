@@ -8,10 +8,13 @@
 //!   elements, whatever protocol they arrived in (RFC 6183 section 5.3.2.1).
 //! - [`reader`] receives datagrams on a socket and gives back those records
 //!   (RFC 6183 section 5.1).
+//! - [`export`] writes records out again as the packets of a protocol, for a
+//!   collector to read (RFC 7011 section 2).
 
 mod bytes;
 pub mod convert;
 pub mod dissect;
+pub mod export;
 #[cfg(test)]
 mod fixtures;
 pub mod protocol;

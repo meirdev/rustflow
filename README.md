@@ -22,7 +22,7 @@ It can collect flows from the network or PCAP files, normalize them into a commo
 - File rotation, time-based partitioning, and expiry of old files
 - Flow enrichment using CSV files, MaxMind databases, or the output of a command
 - Prometheus metrics
-- IPFIX traffic generator
+- NetFlow, IPFIX and sFlow traffic generator
 - IPFIX exporter, native on Linux and via libpcap elsewhere
 
 ## Installation
@@ -81,7 +81,7 @@ rustflow collect --input netflow+pcap://capture.pcap
 | ------------------- | ---------------------------------------------- |
 | `rustflow collect`  | Collect NetFlow, IPFIX, or sFlow traffic       |
 | `rustflow export`   | Capture network traffic and export it as IPFIX |
-| `rustflow generate` | Generate synthetic IPFIX traffic               |
+| `rustflow generate` | Generate synthetic NetFlow, IPFIX or sFlow traffic |
 
 Run:
 
@@ -97,7 +97,7 @@ for the complete CLI options.
 - [Output formats and rotation](./docs/output.md)
 - [Flow enrichment](./docs/enrichment.md)
 - [IPFIX exporter](./docs/exporter.md)
-- [IPFIX traffic generator](./docs/generator.md)
+- [Traffic generator](./docs/generator.md)
 - [Library usage](./docs/library.md)
 - [Production deployment](./docs/deployment.md)
 - [Vector integration](./docs/vector.md)

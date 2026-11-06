@@ -18,7 +18,11 @@ pcap = ["rustflow_export/pcap"]
 [dependencies]
 rustflow_export.workspace = true
 rustflow_collect.workspace = true
-rustflow_generate.workspace = true
+rustflow_core_new = { path = "../rustflow_core_new" }
 anyhow.workspace = true
 clap.workspace = true
 env_logger.workspace = true
+etherparse.workspace = true
+ipnet.workspace = true
+pcap-file.workspace = true
+rand = "0.9"

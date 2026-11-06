@@ -1581,9 +1581,13 @@ dependencies = [
  "anyhow",
  "clap",
  "env_logger",
+ "etherparse",
+ "ipnet",
+ "pcap-file",
+ "rand 0.9.2",
  "rustflow_collect",
+ "rustflow_core_new",
  "rustflow_export",
- "rustflow_generate",
 ]
 
 [[package]]
@@ -1676,18 +1680,6 @@ dependencies = [
  "libc",
  "log",
  "pcap",
- "rustflow_core",
-]
-
-[[package]]
-name = "rustflow_generate"
-version = "0.19.0"
-dependencies = [
- "anyhow",
- "chrono",
- "clap",
- "ipnet",
- "rand 0.9.2",
  "rustflow_core",
 ]
 

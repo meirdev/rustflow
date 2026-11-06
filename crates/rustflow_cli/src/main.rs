@@ -3,7 +3,10 @@ use std::io::Write;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use rustflow_collect::CollectArgs;
-use rustflow_generate::GenerateArgs;
+
+use crate::generate::GenerateArgs;
+
+mod generate;
 
 #[derive(Parser)]
 #[command(name = "rustflow", version)]
@@ -41,7 +44,7 @@ fn main() -> Result<()> {
 
     match Cli::parse().command {
         Command::Collect(args) => rustflow_collect::run(*args),
-        Command::Generate(args) => rustflow_generate::run(*args),
+        Command::Generate(args) => generate::run(*args),
         Command::Export(args) => rustflow_export::run(*args),
     }
 }

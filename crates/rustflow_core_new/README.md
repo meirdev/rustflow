@@ -24,6 +24,7 @@ src/
 ├── dissect/     captured packets read through link layers and tunnels
 ├── convert/     parsed packets to records of information elements
 ├── reader/      datagrams from a socket or a capture to records
+├── export/      records to packets of a protocol, templates and sequence numbers kept
 └── bytes/       big-endian reading and writing (private)
 ```
 
@@ -45,6 +46,10 @@ src/
   socket, `AsyncReader` with tokio, `PcapReader` from a capture. All three
   drive a `Collector`, which keeps a session per exporter transport address
   with the templates and options of each protocol it speaks.
+- `export` is the reverse of `convert`: an exporter for each protocol
+  turns records into its packets, making templates from the records'
+  elements and keeping the sequence numbers, so that a collector reads back
+  what went in. For a traffic generator, or a mediator's exporting side.
 
 ## Specifications implemented
 
@@ -302,6 +307,37 @@ let mut converter = ipfix::Converter::default();
 let mut records: Vec<Record> = Vec::new();
 converter.convert(packet, &Received { exporter, time: None }, &mut records);
 ```
+
+## Exporting records
+
+An `Exporter` is the reverse of a reader: records go in, packets of one
+protocol come out. Records of one shape, the same scope and elements, share
+a template made from the first of them, with each field as wide as its
+value's type and strings variable-length. A message carries the templates
+before the first data of a new shape, and again after the refresh interval.
+
+```rust
+use std::time::{Duration, SystemTime};
+
+use rustflow_core_new::export::ipfix::Exporter;
+use rustflow_core_new::protocol::ipfix;
+
+let mut exporter = Exporter::new(1).with_template_refresh(Duration::from_secs(30));
+let packet = exporter.export(&records, SystemTime::now())?;
+let mut buf = Vec::new();
+ipfix::write(&packet, &mut buf)?;
+socket.send_to(&buf, collector)?;
+```
+
+A record with a scope goes out as an options record. The caller chooses how
+many records go in a message.
+
+Each protocol has one: `netflow_v9::Exporter` works as the IPFIX one with
+flow times sent as uptimes, `netflow_v5::Exporter` fills the fixed format
+from the elements it has fields for, and `sflow_v5::Agent` sends each record
+as a flow sample of one packet, its header built from the record's
+addresses, ports and protocol. Those that count from boot take when the
+exporter booted.
 
 ## Features
 
