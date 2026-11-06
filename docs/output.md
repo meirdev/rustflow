@@ -2,7 +2,7 @@
 
 RustFlow supports two flow representations:
 
-- **Raw** - preserves the original protocol-specific flow structure.
+- **Raw** - preserves the original protocol-specific packet structure, one packet per line, with NetFlow v9 and IPFIX records as maps from element names to values.
 - **Common** - normalizes NetFlow, IPFIX, and sFlow into a common schema.
 
 The common format can be serialized as **NDJSON, CSV, Protobuf, Parquet, or Arrow IPC**, or discarded entirely for load testing.
@@ -14,14 +14,14 @@ The common flow format provides a consistent schema across the supported flow pr
 | Field                   | Type      | Optional | Description                                                                                                                                            |
 | ----------------------- | --------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `flow_type`             | string    | No       | Source flow protocol/type                                                                                                                              |
-| `time_received_ns`      | timestamp | Yes      | Time the flow was received                                                                                                                             |
+| `time_received_ns`      | timestamp | No       | Time the flow was received                                                                                                                             |
 | `sequence_num`          | uint32    | No       | Export packet sequence number                                                                                                                          |
 | `sampling_rate`         | uint32    | Yes      | Sampling rate reported by the exporter                                                                                                                 |
 | `sampler_address`       | string    | Yes      | Address of the flow exporter/sampler                                                                                                                   |
 | `time_flow_start_ns`    | timestamp | Yes      | Flow start time                                                                                                                                        |
 | `time_flow_end_ns`      | timestamp | Yes      | Flow end time                                                                                                                                          |
-| `bytes`                 | uint64    | No       | Number of bytes in the flow                                                                                                                            |
-| `packets`               | uint64    | No       | Number of packets in the flow                                                                                                                          |
+| `bytes`                 | uint64    | Yes      | Number of bytes in the flow                                                                                                                            |
+| `packets`               | uint64    | Yes      | Number of packets in the flow                                                                                                                          |
 | `src_addr`              | string    | Yes      | Source IPv4 or IPv6 address                                                                                                                            |
 | `dst_addr`              | string    | Yes      | Destination IPv4 or IPv6 address                                                                                                                       |
 | `src_mac`               | string    | Yes      | Source MAC address                                                                                                                                     |
@@ -48,8 +48,7 @@ The common flow format provides a consistent schema across the supported flow pr
 | `bgp_next_hop`          | string    | Yes      | BGP next-hop address                                                                                                                                   |
 | `src_vlan`              | uint16    | Yes      | Source VLAN ID                                                                                                                                         |
 | `dst_vlan`              | uint16    | Yes      | Destination VLAN ID                                                                                                                                    |
-| `observation_domain_id` | uint32    | Yes      | IPFIX observation domain ID                                                                                                                            |
-| `template_id`           | uint16    | Yes      | NetFlow v9 / IPFIX template ID                                                                                                                         |
+| `observation_domain_id` | uint32    | Yes      | IPFIX observation domain ID, NetFlow v9 source ID or sFlow sub-agent ID                                                                                |
 | `forwarding_status`     | uint32    | Yes      | NetFlow v9 / IPFIX forwarding status. In its low byte, the top two bits are forwarded (1), dropped (2) or consumed (3) and the low six bits the reason |
 
 Fields that are unavailable in the original flow record are left unset.

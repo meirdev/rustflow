@@ -12,7 +12,7 @@
 pub use common_flow::{CommonFlow, FlowType};
 pub use record::{Elements, Received, Record, Scope};
 #[cfg(feature = "serde")]
-pub use text::TextRecord;
+pub use text::{TextPacket, TextRecord};
 
 pub use crate::protocol::{Family, Protocol};
 

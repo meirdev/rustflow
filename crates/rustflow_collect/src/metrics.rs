@@ -148,9 +148,8 @@ impl ExporterMetrics {
         }
     }
 
-    /// Any datagram counts, whether it parses or not. `time_received_ns`
-    /// falls back to the current time.
-    pub fn heard_from(&mut self, src: IpAddr, time_received_ns: Option<i64>) {
+    /// Any datagram counts, whether it parses or not.
+    pub fn heard_from(&mut self, src: IpAddr, time: SystemTime) {
         let (input, family) = (&self.metrics.input, self.family);
         let gauge = self.last_seen.entry(src).or_insert_with(|| {
             input
@@ -160,12 +159,9 @@ impl ExporterMetrics {
                     source_ip: src.to_string(),
                 })
         });
-        let secs = match time_received_ns {
-            Some(ns) => ns.div_euclid(1_000_000_000),
-            None => SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs() as i64),
-        };
+        let secs = time.duration_since(UNIX_EPOCH).map_or(0, |since| {
+            i64::try_from(since.as_secs()).unwrap_or(i64::MAX)
+        });
         gauge.set(secs);
     }
 

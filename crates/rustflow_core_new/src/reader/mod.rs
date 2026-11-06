@@ -58,7 +58,7 @@
 
 #[cfg(feature = "tokio")]
 pub use async_socket::AsyncReader;
-pub use collector::Collector;
+pub use collector::{Collector, SessionKey};
 pub use options::OptionsTable;
 #[cfg(feature = "pcap")]
 pub use pcap::PcapReader;

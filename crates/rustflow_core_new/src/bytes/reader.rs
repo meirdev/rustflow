@@ -141,8 +141,17 @@ impl<'a> Reader<'a> {
     /// item that did not parse, such as the padding at the end of a set. An
     /// attempt that reads nothing also stops the loop, since it would
     /// repeat forever.
-    pub fn many<T, E>(&mut self, mut parse: impl FnMut(&mut Self) -> Result<T, E>) -> Vec<T> {
-        let mut items = Vec::new();
+    pub fn many<T, E>(&mut self, parse: impl FnMut(&mut Self) -> Result<T, E>) -> Vec<T> {
+        self.many_sized(0, parse)
+    }
+
+    /// [`many`](Self::many), with room for `capacity` items from the start.
+    pub fn many_sized<T, E>(
+        &mut self,
+        capacity: usize,
+        mut parse: impl FnMut(&mut Self) -> Result<T, E>,
+    ) -> Vec<T> {
+        let mut items = Vec::with_capacity(capacity);
         while !self.is_empty() {
             let mut attempt = *self;
             match parse(&mut attempt) {
@@ -164,9 +173,10 @@ impl<'a> Reader<'a> {
         mut parse: impl FnMut(&mut Self) -> Result<T, E>,
     ) -> Result<Vec<T>, E> {
         let mut reader = *self;
-        let items = (0..n)
-            .map(|_| parse(&mut reader))
-            .collect::<Result<_, _>>()?;
+        let mut items = Vec::with_capacity(n.min(reader.len()));
+        for _ in 0..n {
+            items.push(parse(&mut reader)?);
+        }
         *self = reader;
         Ok(items)
     }

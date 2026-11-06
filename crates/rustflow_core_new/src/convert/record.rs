@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::net::{IpAddr, SocketAddr};
 use std::ops::Deref;
 use std::sync::Arc;
@@ -165,9 +166,47 @@ pub struct Received {
 pub(crate) struct Fields {
     pub(crate) elements: Vec<ElementId>,
     pub(crate) values: Vec<Value>,
+    /// Which of the low IANA elements there is a field of, so that
+    /// [`has`](Self::has) needs no scan for them.
+    seen: Seen,
+}
+
+/// A bit per IANA element ID below [`SEEN_IDS`].
+#[derive(Debug, Clone, Copy, Default)]
+struct Seen([u64; SEEN_IDS / 64]);
+
+const SEEN_IDS: usize = 512;
+
+impl Seen {
+    fn slot(element: ElementId) -> Option<(usize, u64)> {
+        if element.enterprise_number.is_some() || usize::from(element.id) >= SEEN_IDS {
+            return None;
+        }
+        Some((usize::from(element.id) / 64, 1 << (element.id % 64)))
+    }
+
+    fn insert(&mut self, element: ElementId) {
+        if let Some((word, bit)) = Self::slot(element) {
+            self.0[word] |= bit;
+        }
+    }
+
+    /// Whether `element` was inserted; `None` for an element not tracked.
+    fn contains(&self, element: ElementId) -> Option<bool> {
+        Self::slot(element).map(|(word, bit)| self.0[word] & bit != 0)
+    }
 }
 
 impl Fields {
+    /// Every element [`additions`](Self::additions) may add.
+    pub(crate) const ADDED: [ElementId; 5] = [
+        iana::ORIGINAL_EXPORTER_IPV4_ADDRESS,
+        iana::ORIGINAL_EXPORTER_IPV6_ADDRESS,
+        iana::EXPORTER_TRANSPORT_PORT,
+        iana::ORIGINAL_OBSERVATION_DOMAIN_ID,
+        iana::COLLECTION_TIME_MILLISECONDS,
+    ];
+
     /// The fields conversion adds to every record of a packet: the
     /// exporter and its port, its observation domain if the protocol has
     /// one, and when the packet was received (RFC 6183 section 7). The
@@ -212,27 +251,45 @@ impl Fields {
     /// upstream Mediator names its Original Exporter, observation domain and
     /// collection time already; those are kept, not joined by what this
     /// collector saw of the Mediator (RFC 7119 sections 5 and 6).
-    pub(crate) fn lacking(self, elements: &[ElementId]) -> Self {
+    pub(crate) fn lacking(&self, elements: &[ElementId]) -> Cow<'_, Self> {
         let has = |element| elements.contains(&element);
         let names_exporter =
             has(iana::ORIGINAL_EXPORTER_IPV4_ADDRESS) || has(iana::ORIGINAL_EXPORTER_IPV6_ADDRESS);
+        let lacks = |element| match element {
+            iana::ORIGINAL_EXPORTER_IPV4_ADDRESS
+            | iana::ORIGINAL_EXPORTER_IPV6_ADDRESS
+            | iana::EXPORTER_TRANSPORT_PORT => !names_exporter && !has(element),
+            element => !has(element),
+        };
+        if self.elements.iter().all(|&element| lacks(element)) {
+            return Cow::Borrowed(self);
+        }
         let (elements, values) = self
             .elements
-            .into_iter()
-            .zip(self.values)
-            .filter(|&(element, _)| match element {
-                iana::ORIGINAL_EXPORTER_IPV4_ADDRESS
-                | iana::ORIGINAL_EXPORTER_IPV6_ADDRESS
-                | iana::EXPORTER_TRANSPORT_PORT => !names_exporter && !has(element),
-                element => !has(element),
-            })
+            .iter()
+            .zip(&self.values)
+            .filter(|&(&element, _)| lacks(element))
+            .map(|(&element, value)| (element, value.clone()))
             .unzip();
-        Self { elements, values }
+        Cow::Owned(Self::new(elements, values))
+    }
+
+    pub(crate) fn new(elements: Vec<ElementId>, values: Vec<Value>) -> Self {
+        let mut seen = Seen::default();
+        for &element in &elements {
+            seen.insert(element);
+        }
+        Self {
+            elements,
+            values,
+            seen,
+        }
     }
 
     pub(crate) fn push(&mut self, element: ElementId, value: Value) {
         self.elements.push(element);
         self.values.push(value);
+        self.seen.insert(element);
     }
 
     /// Adds a field unless there is one of that element already: of two
@@ -244,7 +301,9 @@ impl Fields {
     }
 
     pub(crate) fn has(&self, element: ElementId) -> bool {
-        self.elements.contains(&element)
+        self.seen
+            .contains(element)
+            .unwrap_or_else(|| self.elements.contains(&element))
     }
 
     pub(crate) fn iter(&self) -> impl Iterator<Item = (ElementId, &Value)> {
@@ -252,30 +311,55 @@ impl Fields {
     }
 
     pub(crate) fn append(&mut self, mut other: Self) {
+        for (word, bits) in self.seen.0.iter_mut().zip(other.seen.0) {
+            *word |= bits;
+        }
         self.elements.append(&mut other.elements);
         self.values.append(&mut other.values);
     }
 
-    /// The record of these fields. Its elements are the last record's when
-    /// they are the same, so that records of one shape, such as those of
-    /// one packet, share them.
+    /// The record of these fields, its elements shared with the records of
+    /// `shapes` that have the same.
     pub(crate) fn into_record(
         self,
         protocol: Protocol,
         sequence_number: u32,
-        last_elements: &mut Option<Arc<Elements>>,
+        shapes: &mut Shapes,
     ) -> Record {
-        let elements = match last_elements {
-            Some(last) if last[..] == self.elements[..] => Arc::clone(last),
-            _ => Arc::clone(last_elements.insert(Arc::new(self.elements.into()))),
-        };
         Record {
             protocol,
             sequence_number,
             scope: Vec::new(),
-            elements,
+            elements: shapes.get(self.elements),
             values: self.values,
         }
+    }
+
+    pub(crate) fn with_capacity(capacity: usize) -> Self {
+        Self::new(Vec::with_capacity(capacity), Vec::with_capacity(capacity))
+    }
+}
+
+/// The element lists of the records converted lately, so that records of
+/// one shape share theirs, even when shapes alternate as sFlow samples'
+/// do.
+#[derive(Debug, Default)]
+pub(crate) struct Shapes(Vec<Arc<Elements>>);
+
+/// Shapes kept; the oldest goes when another comes.
+const SHAPES_KEPT: usize = 32;
+
+impl Shapes {
+    pub(crate) fn get(&mut self, elements: Vec<ElementId>) -> Arc<Elements> {
+        if let Some(known) = self.0.iter().find(|known| known[..] == elements[..]) {
+            return Arc::clone(known);
+        }
+        if self.0.len() >= SHAPES_KEPT {
+            self.0.remove(0);
+        }
+        let shape = Arc::new(Elements::from(elements));
+        self.0.push(Arc::clone(&shape));
+        shape
     }
 }
 

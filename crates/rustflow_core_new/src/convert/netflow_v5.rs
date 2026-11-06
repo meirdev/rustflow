@@ -3,10 +3,10 @@
 
 use std::sync::Arc;
 
-use crate::convert::record::Fields;
+use crate::convert::record::{Fields, Shapes};
 use crate::convert::sampling::Sampling;
 use crate::convert::time::uptime_to_unix_millis;
-use crate::convert::{Elements, Protocol, Received, Record};
+use crate::convert::{Protocol, Received, Record};
 use crate::protocol::information_element::{ElementId, iana};
 use crate::protocol::netflow_v5::{FlowRecord, Packet};
 use crate::protocol::value::Value;
@@ -39,38 +39,59 @@ const ELEMENTS: [ElementId; 18] = [
 /// a method it does not say: its sampling mode bits are not interpreted. An
 /// interval of 0, which unsampled exporters send, is one in one.
 pub fn convert(packet: Packet, received: &Received, records: &mut impl Extend<Record>) {
-    let header = &packet.header;
-    let export_time_ms =
-        u64::from(header.unix_secs) * 1_000 + u64::from(header.unix_nsecs / 1_000_000);
-    let millis = |uptime_ms| {
-        uptime_to_unix_millis(export_time_ms, header.sys_uptime, uptime_ms)
-            .map_or(Value::Null, Value::DateTimeMilliseconds)
-    };
+    Converter::default().convert(packet, received, records);
+}
 
-    let mut additions = Fields::additions(received, None);
-    additions.push(iana::ENGINE_TYPE, Value::Unsigned8(header.engine_type));
-    additions.push(iana::ENGINE_ID, Value::Unsigned8(header.engine_id));
-    Sampling {
-        rate: u32::from(header.sampling_interval.interval).max(1),
-        method: None,
-    }
-    .add_to(&mut additions);
-    let elements = Arc::new(Elements::from_iter(
-        ELEMENTS.iter().copied().chain(additions.elements),
-    ));
+/// Converts NetFlow v5 packets, keeping the element lists of the records
+/// converted so that the records of successive packets share them. Use one
+/// converter per exporter, or one for all.
+#[derive(Debug, Default)]
+pub struct Converter {
+    shapes: Shapes,
+}
 
-    records.extend(packet.flow_records.iter().map(|record| {
-        Record {
-            protocol: Protocol::NetflowV5,
-            sequence_number: header.flow_sequence,
-            scope: Vec::new(),
-            elements: Arc::clone(&elements),
-            values: record_values(record, millis)
-                .into_iter()
-                .chain(additions.values.iter().cloned())
-                .collect(),
+impl Converter {
+    /// Converts a packet's flow records, adding them to `records`; see
+    /// [`convert`].
+    pub fn convert(
+        &mut self,
+        packet: Packet,
+        received: &Received,
+        records: &mut impl Extend<Record>,
+    ) {
+        let header = &packet.header;
+        let export_time_ms =
+            u64::from(header.unix_secs) * 1_000 + u64::from(header.unix_nsecs / 1_000_000);
+        let millis = |uptime_ms| {
+            uptime_to_unix_millis(export_time_ms, header.sys_uptime, uptime_ms)
+                .map_or(Value::Null, Value::DateTimeMilliseconds)
+        };
+
+        let mut additions = Fields::additions(received, None);
+        additions.push(iana::ENGINE_TYPE, Value::Unsigned8(header.engine_type));
+        additions.push(iana::ENGINE_ID, Value::Unsigned8(header.engine_id));
+        Sampling {
+            rate: u32::from(header.sampling_interval.interval).max(1),
+            method: None,
         }
-    }));
+        .add_to(&mut additions);
+        let elements = self
+            .shapes
+            .get(ELEMENTS.iter().copied().chain(additions.elements).collect());
+
+        records.extend(packet.flow_records.iter().map(|record| {
+            Record {
+                protocol: Protocol::NetflowV5,
+                sequence_number: header.flow_sequence,
+                scope: Vec::new(),
+                elements: Arc::clone(&elements),
+                values: record_values(record, millis)
+                    .into_iter()
+                    .chain(additions.values.iter().cloned())
+                    .collect(),
+            }
+        }));
+    }
 }
 
 fn record_values(record: &FlowRecord, millis: impl Fn(u32) -> Value) -> [Value; 18] {

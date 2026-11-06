@@ -1,9 +1,11 @@
 //! Templates of one transport session, shared by NetFlow v9 and IPFIX.
 
-use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use rustc_hash::FxHashMap;
+
 use crate::protocol::information_element::DataType;
+use crate::protocol::ipfix::VARIABLE_LENGTH;
 
 /// A template as a parser keeps it: with the length and data type of each
 /// of its fields, for decoding its records.
@@ -23,12 +25,29 @@ pub(crate) struct Slot {
 /// large they are, so this bounds the memory one exporter can take.
 pub(crate) const MAX_FIELDS: usize = 65_536;
 
+/// Room a record's values are allocated with beyond its fields, for what
+/// conversion appends: it saves a reallocation per record.
+pub(crate) const SPARE_FIELDS: usize = 8;
+
+/// How many records of `layout` can be in `bytes` at most, a variable-length
+/// field taking a byte at least: what to size a set's records for.
+pub(crate) fn records_in(bytes: usize, layout: &[Slot]) -> usize {
+    let shortest: usize = layout
+        .iter()
+        .map(|slot| match slot.field_length {
+            VARIABLE_LENGTH => 1,
+            length => usize::from(length),
+        })
+        .sum();
+    bytes / shortest.max(1)
+}
+
 /// What a parser keeps of each template, by observation domain (the source
 /// ID in NetFlow v9) and template ID. A template expires `timeout` after it
 /// was last received, and is dropped at most one more timeout later.
 pub(crate) struct TemplateCache<T> {
     timeout: Duration,
-    templates: HashMap<(u32, u16), Received<T>>,
+    templates: FxHashMap<(u32, u16), Received<T>>,
     /// Fields of every template held, expired ones included.
     fields: usize,
     next_sweep: Option<Instant>,
@@ -62,7 +81,7 @@ impl<T> TemplateCache<T> {
     pub(crate) fn new(timeout: Duration) -> Self {
         Self {
             timeout,
-            templates: HashMap::new(),
+            templates: FxHashMap::default(),
             fields: 0,
             next_sweep: Instant::now().checked_add(timeout),
             next_expiry: None,
@@ -103,10 +122,12 @@ impl<T> TemplateCache<T> {
         }
     }
 
-    pub(crate) fn get(&self, domain: u32, template_id: u16) -> Option<&T> {
+    /// The template of `domain` and `template_id`, unless it has expired
+    /// by `now`.
+    pub(crate) fn get(&self, domain: u32, template_id: u16, now: Instant) -> Option<&T> {
         self.templates
             .get(&(domain, template_id))
-            .filter(|received| received.at.elapsed() < self.timeout)
+            .filter(|received| now.saturating_duration_since(received.at) < self.timeout)
             .map(|received| &received.template)
     }
 
@@ -158,10 +179,10 @@ mod tests {
         cache.insert(7, 256, "a", 1);
         cache.insert(7, 257, "b", 1);
         cache.insert(8, 256, "c", 1);
-        assert_eq!(cache.get(7, 256), Some(&"a"));
-        assert_eq!(cache.get(7, 257), Some(&"b"));
-        assert_eq!(cache.get(8, 256), Some(&"c"));
-        assert_eq!(cache.get(8, 257), None);
+        assert_eq!(cache.get(7, 256, Instant::now()), Some(&"a"));
+        assert_eq!(cache.get(7, 257, Instant::now()), Some(&"b"));
+        assert_eq!(cache.get(8, 256, Instant::now()), Some(&"c"));
+        assert_eq!(cache.get(8, 257, Instant::now()), None);
     }
 
     #[test]
@@ -169,14 +190,14 @@ mod tests {
         let mut cache = cache();
         cache.insert(7, 256, "old", 1);
         cache.insert(7, 256, "new", 1);
-        assert_eq!(cache.get(7, 256), Some(&"new"));
+        assert_eq!(cache.get(7, 256, Instant::now()), Some(&"new"));
     }
 
     #[test]
     fn expired_templates_are_not_returned() {
         let mut cache = TemplateCache::new(Duration::ZERO);
         cache.insert(7, 256, "a", 1);
-        assert_eq!(cache.get(7, 256), None);
+        assert_eq!(cache.get(7, 256, Instant::now()), None);
     }
 
     #[test]
@@ -184,11 +205,11 @@ mod tests {
         let mut cache = cache();
         cache.insert(7, 256, "full", MAX_FIELDS);
         cache.insert(7, 257, "over", 1);
-        assert_eq!(cache.get(7, 256), Some(&"full"));
-        assert_eq!(cache.get(7, 257), None);
+        assert_eq!(cache.get(7, 256, Instant::now()), Some(&"full"));
+        assert_eq!(cache.get(7, 257, Instant::now()), None);
 
         cache.insert(7, 256, "replaced", MAX_FIELDS);
-        assert_eq!(cache.get(7, 256), Some(&"replaced"));
+        assert_eq!(cache.get(7, 256, Instant::now()), Some(&"replaced"));
     }
 
     #[test]
@@ -197,7 +218,7 @@ mod tests {
         cache.insert(7, 256, "old", 1);
         cache.insert(7, 257, "rest", MAX_FIELDS - 1);
         cache.insert(7, 256, "new", 2);
-        assert_eq!(cache.get(7, 256), None);
+        assert_eq!(cache.get(7, 256, Instant::now()), None);
         assert_eq!(cache.fields, MAX_FIELDS - 1);
     }
 
@@ -208,8 +229,8 @@ mod tests {
             cache.insert(7, template_id, "empty", 0);
         }
         cache.insert(8, 256, "over", 0);
-        assert_eq!(cache.get(7, u16::MAX), Some(&"empty"));
-        assert_eq!(cache.get(8, 256), None);
+        assert_eq!(cache.get(7, u16::MAX, Instant::now()), Some(&"empty"));
+        assert_eq!(cache.get(8, 256, Instant::now()), None);
     }
 
     #[test]
@@ -230,8 +251,8 @@ mod tests {
         for template in cache.domain_mut(7) {
             *template = "changed";
         }
-        assert_eq!(cache.get(7, 256), Some(&"changed"));
-        assert_eq!(cache.get(7, 257), Some(&"changed"));
-        assert_eq!(cache.get(8, 256), Some(&"c"));
+        assert_eq!(cache.get(7, 256, Instant::now()), Some(&"changed"));
+        assert_eq!(cache.get(7, 257, Instant::now()), Some(&"changed"));
+        assert_eq!(cache.get(8, 256, Instant::now()), Some(&"c"));
     }
 }

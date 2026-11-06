@@ -305,9 +305,11 @@ impl From<&Record> for CommonFlow {
             in_if: unsigned(record, &[iana::INGRESS_INTERFACE]),
             out_if: unsigned(record, &[iana::EGRESS_INTERFACE]),
             ip_tos: unsigned(record, &[iana::IP_CLASS_OF_SERVICE]),
+            // Of a flow's range of TTLs, the maximum: the one its packets
+            // left with before any was dropped.
             ip_ttl: unsigned(
                 record,
-                &[iana::IP_TTL, iana::MINIMUM_TTL, iana::MAXIMUM_TTL],
+                &[iana::IP_TTL, iana::MAXIMUM_TTL, iana::MINIMUM_TTL],
             ),
             tcp_flags: unsigned(record, &[iana::TCP_CONTROL_BITS]),
             icmp_type: unsigned(record, &[iana::ICMP_TYPE_IPV4, iana::ICMP_TYPE_IPV6])
@@ -366,10 +368,14 @@ fn unix_nanos(time: SystemTime) -> i64 {
     }
 }
 
+/// The rate the record's sampling elements give, each read where the
+/// record has it rather than by a scan of every field.
 fn sampling_rate(record: &Record) -> Option<u32> {
     let mut options = SamplingOptions::default();
-    for (element, value) in record.iter() {
-        options.observe(element, value);
+    for element in SamplingOptions::ELEMENTS {
+        if let Some(value) = record.first(element) {
+            options.observe(element, value);
+        }
     }
     options.sampling().map(|sampling| sampling.rate)
 }

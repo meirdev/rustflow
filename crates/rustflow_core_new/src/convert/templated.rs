@@ -2,11 +2,13 @@
 //! already: copied, with relative times made absolute and what conversion
 //! adds appended.
 
-use std::marker::PhantomData;
+use std::borrow::Cow;
 use std::sync::Arc;
 
+use rustc_hash::FxHashMap;
+
 use crate::convert::domains::{Domain, Domains, SAMPLING_KEYS, sampling_key};
-use crate::convert::record::{Elements, Fields, Scope};
+use crate::convert::record::{Elements, Fields, Scope, Shapes};
 use crate::convert::sampling::{Method, Sampling};
 use crate::convert::time::{TimeBase, Uptime};
 use crate::convert::{Protocol, Received, Record, packet_fields};
@@ -47,17 +49,50 @@ pub struct PacketHeader {
 /// Converts one exporter's packets of `P`, keeping what its options records
 /// said of each observation domain, as a parser keeps its templates. Use
 /// one converter per exporter address.
-pub struct Converter<P> {
+pub struct Converter<P: Templated> {
     domains: Domains,
-    packets: PhantomData<P>,
+    layouts: Layouts<P::Data>,
 }
 
-impl<P> Default for Converter<P> {
+impl<P: Templated> Default for Converter<P> {
     fn default() -> Self {
         Self {
             domains: Domains::default(),
-            packets: PhantomData,
+            layouts: Layouts::default(),
         }
+    }
+}
+
+/// The layouts of the templates converted so far, by template and by
+/// whether uptimes convert, which the layout depends on. A template is
+/// known by its address, which the layout keeps alive so that no other
+/// template takes it.
+struct Layouts<T>(FxHashMap<(usize, bool), (Arc<T>, Layout)>);
+
+/// Layouts kept before they are all forgotten: templates expire in the
+/// parser without word, so the cache is bounded rather than swept.
+const MAX_LAYOUTS: usize = 4096;
+
+impl<T> Default for Layouts<T> {
+    fn default() -> Self {
+        Self(FxHashMap::default())
+    }
+}
+
+impl<T: DataTemplate> Layouts<T> {
+    fn of(&mut self, context: &Context, template: &Arc<T>) -> &mut Layout {
+        let key = (
+            Arc::as_ptr(template) as usize,
+            context.time.uptimes_convert(),
+        );
+        if self.0.len() >= MAX_LAYOUTS && !self.0.contains_key(&key) {
+            self.0.clear();
+        }
+        &mut self
+            .0
+            .entry(key)
+            .or_insert_with(|| (Arc::clone(template), Layout::of(context, &**template)))
+            .1
     }
 }
 
@@ -80,15 +115,15 @@ impl<P: Templated> Converter<P> {
         let mut context = Context {
             protocol: P::PROTOCOL,
             sequence_number,
-            domain_id,
-            received,
             time,
         };
+        let additions = Fields::additions(received, Some(domain_id));
         let Sets { options, data } = packet.into_sets();
         for set in options {
             let domains = &mut self.domains;
             records.extend(
-                convert_options(&context, set).inspect(|record| domains.learn(domain_id, record)),
+                convert_options(&context, &additions, set)
+                    .inspect(|record| domains.learn(domain_id, record)),
             );
         }
 
@@ -97,7 +132,8 @@ impl<P: Templated> Converter<P> {
             *boot_ms = domain.and_then(|domain| domain.system_init_time_ms);
         }
         for set in data {
-            convert_data(&context, domain, set, records);
+            let layout = self.layouts.of(&context, &set.template);
+            convert_data(&context, domain, &additions, set, layout, records);
         }
     }
 
@@ -109,11 +145,9 @@ impl<P: Templated> Converter<P> {
 }
 
 /// What the records of one packet share.
-pub(crate) struct Context<'a> {
+pub(crate) struct Context {
     pub(crate) protocol: Protocol,
     pub(crate) sequence_number: u32,
-    pub(crate) domain_id: u32,
-    pub(crate) received: &'a Received,
     pub(crate) time: TimeBase,
 }
 
@@ -174,7 +208,7 @@ impl OptionsTemplate for netflow_v9::OptionsTemplate {
 /// interface an Interface scope gives is taken as the one packets come in
 /// on, the System as the Exporting Process, and the Cache as the Metering
 /// Process filling it. An unassigned type has none.
-fn scope_element(scope: ScopeType) -> Scope {
+pub(crate) fn scope_element(scope: ScopeType) -> Scope {
     let element = match scope {
         ScopeType::System => iana::EXPORTING_PROCESS_ID,
         ScopeType::Interface => iana::INGRESS_INTERFACE,
@@ -190,6 +224,7 @@ fn scope_element(scope: ScopeType) -> Scope {
 /// are few, so each is converted on its own.
 fn convert_options<'a, T: OptionsTemplate + 'a>(
     context: &'a Context,
+    additions: &'a Fields,
     data: DataSet<T>,
 ) -> impl Iterator<Item = Record> + 'a {
     let template = data.template;
@@ -201,8 +236,8 @@ fn convert_options<'a, T: OptionsTemplate + 'a>(
         })
         .chain(template.option_element_ids())
         .collect();
-    let base = Fields::additions(context.received, Some(context.domain_id)).lacking(&named);
-    let mut last_elements = None;
+    let base = additions.lacking(&named);
+    let mut shapes = Shapes::default();
     let scope_len = template.scope().count();
     data.records.into_iter().map(move |mut values| {
         let mut option_values = values.split_off(scope_len.min(values.len()));
@@ -211,16 +246,9 @@ fn convert_options<'a, T: OptionsTemplate + 'a>(
         for (element, value) in template.option_element_ids().zip(&mut option_values) {
             elements.push(context.time.make_absolute(element, value));
         }
-        let mut fields = Fields {
-            elements,
-            values: option_values,
-        };
-        fields.append(base.clone());
-        let mut record = fields.into_record(
-            context.protocol,
-            context.sequence_number,
-            &mut last_elements,
-        );
+        let mut fields = Fields::new(elements, option_values);
+        fields.append(base.clone().into_owned());
+        let mut record = fields.into_record(context.protocol, context.sequence_number, &mut shapes);
         record.scope = scope;
         record
     })
@@ -239,6 +267,9 @@ struct Layout {
     /// Whether a record may carry a packet section, whose fields vary with
     /// its bytes.
     section: bool,
+    /// Whether the template lacks every element conversion adds, as most
+    /// do, so that the additions go in whole.
+    lacks_additions: bool,
     /// The elements of a whole record, additions included, by sampling
     /// shape, built as records of that shape come.
     shapes: [Option<Arc<Elements>>; SHAPES],
@@ -298,6 +329,9 @@ impl Layout {
                     iana::DATA_LINK_FRAME_SECTION | iana::IP_HEADER_PACKET_SECTION
                 )
             }),
+            lacks_additions: !elements
+                .iter()
+                .any(|element| Fields::ADDED.contains(element)),
             shapes: Default::default(),
         }
     }
@@ -322,12 +356,17 @@ impl Layout {
 fn convert_data<T: DataTemplate>(
     context: &Context,
     domain: Option<&Domain>,
+    additions: &Fields,
     data: DataSet<T>,
+    layout: &mut Layout,
     records: &mut impl Extend<Record>,
 ) {
-    let mut layout = Layout::of(context, &*data.template);
-    let base = Fields::additions(context.received, Some(context.domain_id)).lacking(&layout.own);
-    let mut last_elements = None;
+    let base = if layout.lacks_additions {
+        Cow::Borrowed(additions)
+    } else {
+        additions.lacking(&layout.own)
+    };
+    let mut shapes = Shapes::default();
     records.extend(data.records.into_iter().map(|mut values| {
         let keys = layout
             .sampling_keys
@@ -371,7 +410,7 @@ fn convert_data<T: DataTemplate>(
                 elements[time.index] = time.relative;
             }
         }
-        let mut fields = Fields { elements, values };
+        let mut fields = Fields::new(elements, values);
         let headers = packet_fields::find(fields.iter()).and_then(|(index, layer)| {
             let Value::OctetArray(bytes) = &fields.values[index] else {
                 return None;
@@ -381,14 +420,10 @@ fn convert_data<T: DataTemplate>(
         if let Some(headers) = headers {
             packet_fields::add(headers, &mut |element, value| fields.add(element, value));
         }
-        fields.append(base.clone());
+        fields.append(base.clone().into_owned());
         if let Some(sampling) = sampling {
             sampling.add_to(&mut fields);
         }
-        fields.into_record(
-            context.protocol,
-            context.sequence_number,
-            &mut last_elements,
-        )
+        fields.into_record(context.protocol, context.sequence_number, &mut shapes)
     }));
 }

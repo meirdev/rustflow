@@ -1,5 +1,6 @@
 mod args;
 mod enrich;
+mod ie_mapping;
 mod metrics;
 mod sink;
 mod source;
@@ -7,14 +8,17 @@ mod source;
 use std::path::Path;
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 pub use args::CollectArgs;
 use args::{FlowType, Input};
 use enrich::{EnrichmentConfig, EnrichmentEngine};
 use log::{error, info, warn};
-use rustflow::{IERegistry, NetflowProcessor, Packet, Processor, SflowProcessor};
+use rustflow_core_new::convert::CommonFlow;
+use rustflow_core_new::protocol::information_element::Registry;
+use rustflow_core_new::protocol::{Family, ParseError, Protocol};
+use rustflow_core_new::reader::{Collector, Received, Record};
 use sink::OutputFormat;
 use sink::pipeline::{CHUNK_FLUSH_TIMEOUT, EncoderGone, Pipeline, Producer};
 use source::{Datagram, Shutdown, Source};
@@ -23,7 +27,7 @@ use source::{Datagram, Shutdown, Source};
 #[derive(Clone)]
 struct Decoding {
     format: OutputFormat,
-    ie_registry: IERegistry,
+    registry: Registry,
     template_timeout: Duration,
 }
 
@@ -35,18 +39,19 @@ fn ingest(
     output: Producer,
     shutdown: &Shutdown,
 ) {
-    let result = match flow_type {
-        FlowType::Netflow => {
-            let mut processor = NetflowProcessor::new()
-                .with_ie_registry(decoding.ie_registry.clone())
-                .with_template_timeout(decoding.template_timeout);
-            collect(source, &mut processor, decoding.format, metrics, output)
-        }
-        FlowType::Sflow => {
-            let mut processor = SflowProcessor::new();
-            collect(source, &mut processor, decoding.format, metrics, output)
-        }
+    let family = match flow_type {
+        FlowType::Netflow => Family::Netflow,
+        FlowType::Sflow => Family::Sflow,
     };
+    let collector = Collector::new(family, decoding.registry.clone(), decoding.template_timeout);
+    let result = collect(
+        source,
+        collector,
+        &decoding.registry,
+        decoding.format,
+        metrics,
+        output,
+    );
     // Without an encoder nothing more can be written; stop the other
     // sources too.
     if let Err(EncoderGone) = result {
@@ -54,50 +59,117 @@ fn ingest(
     }
 }
 
-fn collect<P: Processor>(
+/// The lowercase protocol name metric labels use, such as `netflow_v9`.
+fn protocol_name(protocol: Protocol) -> &'static str {
+    rustflow_core_new::convert::FlowType::from(protocol).name()
+}
+
+fn collect(
     source: &mut dyn Source,
-    processor: &mut P,
+    mut collector: Collector,
+    registry: &Registry,
     format: OutputFormat,
     metrics: Arc<metrics::Metrics>,
     mut output: Producer,
 ) -> Result<(), EncoderGone> {
-    let mut exporters = metrics::ExporterMetrics::new(metrics, P::NAME);
+    let family = match collector.family() {
+        Family::Netflow => "netflow",
+        Family::Sflow => "sflow",
+    };
+    let mut exporters = metrics::ExporterMetrics::new(metrics, family);
+    let mut records: Vec<Record> = Vec::new();
 
     loop {
-        let (src, payload, time_received_ns) = match source.next() {
-            Datagram::Packet {
-                src,
-                payload,
-                time_received_ns,
-            } => (src, payload, time_received_ns),
+        let (src, payload, time) = match source.next() {
+            Datagram::Packet { src, payload, time } => (src, payload, time),
             Datagram::Idle => {
                 output.flush()?;
                 continue;
             }
             Datagram::End => return Ok(()),
         };
-        exporters.heard_from(src, time_received_ns);
-
-        let Some(packet) = processor.parse(src, payload) else {
-            match P::version_of(payload) {
-                Some(version) => exporters.record_parse_error(src, version.name(), payload.len()),
-                None => exporters.record_unknown_version(src, payload.len()),
-            }
-            continue;
+        exporters.heard_from(src.ip(), time);
+        let received = Received {
+            exporter: src,
+            time: Some(time),
         };
 
-        exporters.record_packet(
-            src,
-            packet.version().name(),
-            payload.len(),
-            packet.flow_count(),
-        );
-
-        match format {
-            OutputFormat::Raw => output.push_raw(&packet, packet.flow_count())?,
-            OutputFormat::Common => output
-                .push(|flows| processor.convert_into(src, &packet, time_received_ns, flows))?,
+        let mut datagram = || -> Result<(), Failure> {
+            match format {
+                OutputFormat::Raw => {
+                    let packet = collector.parse(received, payload)?;
+                    exporters.record_packet(
+                        src.ip(),
+                        protocol_name(packet.protocol()),
+                        payload.len(),
+                        packet.record_count(),
+                    );
+                    output.push_raw(&packet.text(registry), packet.record_count())?;
+                }
+                OutputFormat::Common => {
+                    records.clear();
+                    collector.collect(received, payload, &mut records)?;
+                    let protocol = Protocol::of(collector.family(), payload)?;
+                    exporters.record_packet(
+                        src.ip(),
+                        protocol_name(protocol),
+                        payload.len(),
+                        records.len(),
+                    );
+                    // The record's collection time is in milliseconds; the
+                    // flow keeps the receive time whole.
+                    let time_received_ns = unix_nanos(time);
+                    output.push(|flows| {
+                        flows.extend(records.iter().filter(|record| !record.is_options()).map(
+                            |record| CommonFlow {
+                                time_received_ns,
+                                ..CommonFlow::from(record)
+                            },
+                        ));
+                    })?;
+                }
+            }
+            Ok(())
+        };
+        match datagram() {
+            Ok(()) => {}
+            Err(Failure::Parse(ParseError::Version(_))) => {
+                exporters.record_unknown_version(src.ip(), payload.len());
+            }
+            Err(Failure::Parse(_)) => match Protocol::of(collector.family(), payload) {
+                Ok(protocol) => {
+                    exporters.record_parse_error(src.ip(), protocol_name(protocol), payload.len());
+                }
+                Err(_) => exporters.record_unknown_version(src.ip(), payload.len()),
+            },
+            Err(Failure::Output(gone)) => return Err(gone),
         }
+    }
+}
+
+/// Nanoseconds since 1970, as flows carry times; the limit of `i64` for a
+/// time past it.
+fn unix_nanos(time: SystemTime) -> i64 {
+    time.duration_since(UNIX_EPOCH).map_or(0, |since| {
+        i64::try_from(since.as_nanos()).unwrap_or(i64::MAX)
+    })
+}
+
+/// Why a datagram went no further: it did not parse, or the output is gone.
+enum Failure {
+    Parse(ParseError),
+    Output(EncoderGone),
+}
+
+impl From<ParseError> for Failure {
+    fn from(e: ParseError) -> Self {
+        Self::Parse(e)
+    }
+}
+
+impl From<EncoderGone> for Failure {
+    fn from(e: EncoderGone) -> Self {
+        Self::Output(e)
     }
 }
 
@@ -129,11 +201,10 @@ fn open(input: &Input, recv_buffer: usize, shutdown: &Shutdown) -> Result<Box<dy
     }
 }
 
-fn load_ie_registry(path: Option<&Path>) -> Result<IERegistry> {
-    let mut registry = IERegistry::new_with_iana_elements();
+fn load_ie_registry(path: Option<&Path>) -> Result<Registry> {
+    let mut registry = Registry::iana();
     if let Some(path) = path {
-        let count = registry
-            .load_from_csv(path)
+        let count = ie_mapping::load(&mut registry, path)
             .with_context(|| format!("Failed to load IE mappings from {}", path.display()))?;
         info!(
             "Loaded {} custom IE definitions from {}",
@@ -178,7 +249,7 @@ pub fn run(cli: CollectArgs) -> Result<()> {
     let metrics = Arc::new(metrics::Metrics::new());
     let shutdown = Shutdown::default();
 
-    let ie_registry = load_ie_registry(cli.ie_mapping.as_deref())?;
+    let registry = load_ie_registry(cli.ie_mapping.as_deref())?;
     let enrichment = load_enrichment(&cli.enrich, &metrics)?;
 
     // Everything that can fail opens before the sink, which creates its
@@ -206,7 +277,7 @@ pub fn run(cli: CollectArgs) -> Result<()> {
     let output = Pipeline::spawn(sink, enrichment, metrics.output.clone());
     let decoding = Decoding {
         format: cli.format,
-        ie_registry,
+        registry,
         template_timeout: cli.template_timeout,
     };
 

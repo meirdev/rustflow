@@ -1,6 +1,6 @@
 //! What an exporter's options records said, per observation domain.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use crate::convert::Record;
 use crate::convert::sampling::{Sampling, SamplingOptions};
@@ -40,7 +40,7 @@ pub(crate) fn sampling_key(element: ElementId) -> Option<ElementId> {
 }
 
 #[derive(Default)]
-pub(crate) struct Domains(HashMap<u32, Domain>);
+pub(crate) struct Domains(FxHashMap<u32, Domain>);
 
 impl Domains {
     pub(crate) fn get(&self, domain: u32) -> Option<&Domain> {
@@ -75,7 +75,7 @@ pub(crate) struct Domain {
     sampling: Option<Sampling>,
     /// From options records scoped to a sampler, an interface or a line
     /// card, for the data records naming the same one.
-    scoped_sampling: HashMap<SamplingKey, Sampling>,
+    scoped_sampling: FxHashMap<SamplingKey, Sampling>,
     /// The sampling all of `scoped_sampling` share, if they agree.
     shared_scoped_sampling: Option<Sampling>,
     pub(crate) system_init_time_ms: Option<u64>,

@@ -1,7 +1,7 @@
 use std::io;
 
 use arrow_ipc::writer::StreamWriter;
-use rustflow_core::common::common_flow::CommonFlow;
+use rustflow_core_new::convert::CommonFlow;
 
 use super::columns::{BATCH_ROWS, Columns};
 use super::{Encoder, Writer};

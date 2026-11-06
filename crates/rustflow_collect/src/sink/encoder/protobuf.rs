@@ -3,7 +3,7 @@ use std::io::{self, BufWriter, Write};
 use std::net::IpAddr;
 
 use prost::Message;
-use rustflow_core::common::common_flow::CommonFlow;
+use rustflow_core_new::convert::CommonFlow;
 
 use super::{Encoder, WRITE_BUFFER_BYTES, Writer};
 use crate::enrich::Enriched;
@@ -26,10 +26,10 @@ pub struct FlowMessage {
     pub time_flow_start_ns: Option<i64>,
     #[prost(int64, optional, tag = "7")]
     pub time_flow_end_ns: Option<i64>,
-    #[prost(uint64, tag = "8")]
-    pub bytes: u64,
-    #[prost(uint64, tag = "9")]
-    pub packets: u64,
+    #[prost(uint64, optional, tag = "8")]
+    pub bytes: Option<u64>,
+    #[prost(uint64, optional, tag = "9")]
+    pub packets: Option<u64>,
     #[prost(bytes = "vec", optional, tag = "10")]
     pub src_addr: Option<Vec<u8>>,
     #[prost(bytes = "vec", optional, tag = "11")]
@@ -84,8 +84,6 @@ pub struct FlowMessage {
     pub dst_vlan: Option<u32>,
     #[prost(uint32, optional, tag = "36")]
     pub observation_domain_id: Option<u32>,
-    #[prost(uint32, optional, tag = "37")]
-    pub template_id: Option<u32>,
     #[prost(uint32, optional, tag = "38")]
     pub forwarding_status: Option<u32>,
     #[prost(btree_map = "string, string", tag = "39")]
@@ -141,12 +139,11 @@ impl FlowMessage {
             src_vlan,
             dst_vlan,
             observation_domain_id,
-            template_id,
             forwarding_status,
         } = flow;
         Self {
             flow_type: flow_type.to_string(),
-            time_received_ns: *time_received_ns,
+            time_received_ns: Some(*time_received_ns),
             sequence_num: *sequence_num,
             sampling_rate: *sampling_rate,
             sampler_address: sampler_address.map(ip_bytes),
@@ -181,7 +178,6 @@ impl FlowMessage {
             src_vlan: src_vlan.map(u32::from),
             dst_vlan: dst_vlan.map(u32::from),
             observation_domain_id: *observation_domain_id,
-            template_id: template_id.map(u32::from),
             forwarding_status: *forwarding_status,
             enriched: names
                 .iter()

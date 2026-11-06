@@ -69,17 +69,21 @@ fn ntp_timestamp(bytes: &[u8]) -> Option<NtpTimestamp> {
 }
 
 fn unsigned(bytes: &[u8]) -> Option<Value> {
-    let value = match bytes.len() {
-        1 => Value::Unsigned8(u8::try_from(uint(bytes)).ok()?),
-        2 => Value::Unsigned16(u16::try_from(uint(bytes)).ok()?),
-        3 | 4 => Value::Unsigned32(u32::try_from(uint(bytes)).ok()?),
-        5..=8 => Value::Unsigned64(uint(bytes)),
-        9..=32 => {
-            let mut value = [0; 32];
-            value[32 - bytes.len()..].copy_from_slice(bytes);
-            Value::Unsigned256(Box::new(value))
-        }
-        _ => return None,
+    let value = match *bytes {
+        [a] => Value::Unsigned8(a),
+        [a, b] => Value::Unsigned16(u16::from_be_bytes([a, b])),
+        [a, b, c] => Value::Unsigned32(u32::from_be_bytes([0, a, b, c])),
+        [a, b, c, d] => Value::Unsigned32(u32::from_be_bytes([a, b, c, d])),
+        [a, b, c, d, e, f, g, h] => Value::Unsigned64(u64::from_be_bytes([a, b, c, d, e, f, g, h])),
+        _ => match bytes.len() {
+            5..=7 => Value::Unsigned64(uint(bytes)),
+            9..=32 => {
+                let mut value = [0; 32];
+                value[32 - bytes.len()..].copy_from_slice(bytes);
+                Value::Unsigned256(Box::new(value))
+            }
+            _ => return None,
+        },
     };
     Some(value)
 }

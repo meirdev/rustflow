@@ -1,6 +1,6 @@
 use std::io;
 
-use rustflow_core::common::common_flow::CommonFlow;
+use rustflow_core_new::convert::CommonFlow;
 
 use super::{Encoder, Writer};
 use crate::enrich::Enriched;

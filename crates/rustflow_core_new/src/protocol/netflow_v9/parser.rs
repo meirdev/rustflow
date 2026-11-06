@@ -1,10 +1,10 @@
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::*;
 use crate::bytes::{Reader, Truncated};
 use crate::protocol::information_element::{DataType, ElementId, Registry};
-use crate::protocol::template_cache::{Entry, Slot, TemplateCache};
+use crate::protocol::template_cache::{Entry, SPARE_FIELDS, Slot, TemplateCache, records_in};
 use crate::protocol::value::{Value, decode};
 use crate::protocol::{DataSet, ParseError};
 
@@ -17,6 +17,9 @@ use crate::protocol::{DataSet, ParseError};
 pub struct Parser {
     registry: Registry,
     templates: TemplateCache<Entry<CachedTemplate>>,
+    /// When the packet being parsed arrived, which decides which templates
+    /// have expired.
+    now: Instant,
 }
 
 enum CachedTemplate {
@@ -32,12 +35,20 @@ impl Parser {
         Self {
             registry,
             templates: TemplateCache::new(timeout),
+            now: Instant::now(),
         }
     }
 
     /// Parses a NetFlow v9 datagram. Parsing stops at the first FlowSet
     /// that is malformed or truncated; the FlowSets before it are kept.
     pub fn parse(&mut self, datagram: &[u8]) -> Result<Packet, ParseError> {
+        self.parse_at(datagram, Instant::now())
+    }
+
+    /// [`parse`](Self::parse) as of `now`, which decides which templates
+    /// have expired: for a caller that has the time already.
+    pub fn parse_at(&mut self, datagram: &[u8], now: Instant) -> Result<Packet, ParseError> {
+        self.now = now;
         let mut r = Reader::new(datagram);
         let header = parse_header(&mut r)?;
         let flow_sets = r.many(|r| self.parse_flow_set(r, header.source_id));
@@ -106,7 +117,8 @@ impl Parser {
 
     /// Retries only missing templates, without replaying template records
     /// or changing the interpretation of data that was already decoded.
-    pub(crate) fn resolve(&self, packet: &mut Packet) {
+    pub(crate) fn resolve(&mut self, packet: &mut Packet) {
+        self.now = Instant::now();
         for set in &mut packet.flow_sets {
             if let FlowSet::Undecoded { flow_set_id, body } = set
                 && let Some(decoded) = self.decode_data(
@@ -121,8 +133,10 @@ impl Parser {
     }
 
     fn decode_data(&self, source_id: u32, id: u16, body: &mut Reader) -> Option<FlowSet> {
-        let entry = self.templates.get(source_id, id)?;
-        let records = body.many(|r| parse_record(r, &entry.layout));
+        let entry = self.templates.get(source_id, id, self.now)?;
+        let records = body.many_sized(records_in(body.len(), &entry.layout), |r| {
+            parse_record(r, &entry.layout)
+        });
         Some(match &entry.template {
             CachedTemplate::Data(template) => FlowSet::Data(DataSet {
                 template: Arc::clone(template),
@@ -216,11 +230,10 @@ fn parse_field(r: &mut Reader) -> Result<Field, Truncated> {
 }
 
 fn parse_record(r: &mut Reader, layout: &[Slot]) -> Result<Vec<Value>, Truncated> {
-    layout
-        .iter()
-        .map(|slot| {
-            let bytes = r.bytes(usize::from(slot.field_length))?;
-            Ok(decode(slot.data_type, bytes))
-        })
-        .collect()
+    let mut values = Vec::with_capacity(layout.len() + SPARE_FIELDS);
+    for slot in layout {
+        let bytes = r.bytes(usize::from(slot.field_length))?;
+        values.push(decode(slot.data_type, bytes));
+    }
+    Ok(values)
 }

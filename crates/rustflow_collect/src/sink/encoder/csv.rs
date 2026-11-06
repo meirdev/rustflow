@@ -2,8 +2,8 @@ use std::cell::RefCell;
 use std::fmt::Write as _;
 use std::io::{self, BufWriter, Write};
 
-use rustflow_core::common::common_flow::CommonFlow;
-use rustflow_core::for_each_flow_field;
+use rustflow_core_new::convert::CommonFlow;
+use rustflow_core_new::for_each_flow_field;
 
 use super::{Encoder, WRITE_BUFFER_BYTES, Writer};
 use crate::enrich::Enriched;
@@ -116,7 +116,7 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
 
-    use rustflow_core::common::common_flow::FlowType;
+    use rustflow_core_new::convert::FlowType;
 
     use super::*;
 
@@ -145,7 +145,10 @@ mod tests {
     fn a_failed_write_loses_whole_records_only() {
         let disk = Disk::default();
         let mut csv = Csv::open(Box::new(disk.clone()), &["site".to_string()]).unwrap();
-        let flow = CommonFlow::new(FlowType::Ipfix);
+        let flow = CommonFlow {
+            flow_type: FlowType::Ipfix,
+            ..Default::default()
+        };
         // A value that needs quoting.
         let enriched = vec![Some(Arc::from("a,b"))];
 

@@ -8,7 +8,7 @@
 use std::net::IpAddr;
 
 use crate::convert::packet_fields::{self, IPV4_ETHERNET_TYPE, IPV6_ETHERNET_TYPE, Layer};
-use crate::convert::record::Fields;
+use crate::convert::record::{Fields, Shapes};
 use crate::convert::sampling::{Method, Sampling};
 use crate::convert::{Protocol, Received, Record};
 use crate::protocol::information_element::iana;
@@ -31,43 +31,64 @@ const INTERNAL_INTERFACE: u32 = 0x3fff_ffff;
 /// datagrams' sequence numbers. The sampling rate is one packet in that
 /// many, chosen at random as sFlow samples.
 pub fn convert(packet: Packet, received: &Received, records: &mut impl Extend<Record>) {
-    let header = &packet.header;
-    let mut base = Fields::additions(received, Some(header.sub_agent_id));
-    match header.agent_address {
-        Some(IpAddr::V4(address)) => {
-            base.push(iana::EXPORTER_IPV4_ADDRESS, Value::Ipv4Address(address));
-        }
-        Some(IpAddr::V6(address)) => {
-            base.push(iana::EXPORTER_IPV6_ADDRESS, Value::Ipv6Address(address));
-        }
-        None => {}
-    }
-
-    let mut last_elements = None;
-    records.extend(packet.samples.into_iter().filter_map(|sample| {
-        let (sample, compact) = match &sample {
-            Sample::Flow(sample) => (sample, true),
-            Sample::ExpandedFlow(sample) => (sample, false),
-            _ => return None,
-        };
-        let mut fields = flow_fields(sample, compact);
-        let mut additions = base.clone();
-        Sampling {
-            rate: sample.sampling_rate.max(1),
-            method: Some(Method::Random),
-        }
-        .add_to(&mut additions);
-        fields.append(additions);
-        Some(fields.into_record(
-            Protocol::SflowV5,
-            header.sequence_number,
-            &mut last_elements,
-        ))
-    }));
+    Converter::default().convert(packet, received, records);
 }
 
+/// Converts sFlow datagrams, keeping the element lists of the records
+/// converted so that samples of one shape share them across datagrams. Use
+/// one converter per agent, or one for all.
+#[derive(Debug, Default)]
+pub struct Converter {
+    shapes: Shapes,
+}
+
+impl Converter {
+    /// Converts a datagram's flow samples, adding them to `records`; see
+    /// [`convert`].
+    pub fn convert(
+        &mut self,
+        packet: Packet,
+        received: &Received,
+        records: &mut impl Extend<Record>,
+    ) {
+        let header = &packet.header;
+        let mut base = Fields::additions(received, Some(header.sub_agent_id));
+        match header.agent_address {
+            Some(IpAddr::V4(address)) => {
+                base.push(iana::EXPORTER_IPV4_ADDRESS, Value::Ipv4Address(address));
+            }
+            Some(IpAddr::V6(address)) => {
+                base.push(iana::EXPORTER_IPV6_ADDRESS, Value::Ipv6Address(address));
+            }
+            None => {}
+        }
+
+        let shapes = &mut self.shapes;
+        records.extend(packet.samples.into_iter().filter_map(|sample| {
+            let (sample, compact) = match &sample {
+                Sample::Flow(sample) => (sample, true),
+                Sample::ExpandedFlow(sample) => (sample, false),
+                _ => return None,
+            };
+            let mut fields = flow_fields(sample, compact);
+            fields.elements.extend_from_slice(&base.elements);
+            fields.values.extend(base.values.iter().cloned());
+            Sampling {
+                rate: sample.sampling_rate.max(1),
+                method: Some(Method::Random),
+            }
+            .add_to(&mut fields);
+            Some(fields.into_record(Protocol::SflowV5, header.sequence_number, shapes))
+        }));
+    }
+}
+
+/// Room for a sample's fields and what is added to them, so that a record
+/// is built without growing.
+const FIELDS: usize = 48;
+
 fn flow_fields(sample: &FlowSample, compact: bool) -> Fields {
-    let mut fields = Fields::default();
+    let mut fields = Fields::with_capacity(FIELDS);
     if let Some(index) = if_index(sample.input, compact) {
         fields.add(iana::INGRESS_INTERFACE, Value::Unsigned32(index));
     }

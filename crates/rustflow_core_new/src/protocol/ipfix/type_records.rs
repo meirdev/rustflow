@@ -2,7 +2,8 @@
 //! options records called type records.
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+
+use rustc_hash::FxHashMap;
 
 use super::OptionsTemplate;
 use crate::protocol::information_element::{
@@ -23,7 +24,7 @@ const MAX_NAME_LENGTH: usize = 256;
 pub(super) struct ElementTypes {
     // One bounded map also prevents rejected records from allocating an
     // unbounded number of empty observation-domain maps.
-    elements: HashMap<(u32, ElementId), Learned>,
+    elements: FxHashMap<(u32, ElementId), Learned>,
 }
 
 #[derive(Clone)]

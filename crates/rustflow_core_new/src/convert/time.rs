@@ -74,7 +74,7 @@ impl TimeBase {
         }
     }
 
-    fn uptimes_convert(&self) -> bool {
+    pub(crate) fn uptimes_convert(&self) -> bool {
         match self.uptime {
             Uptime::AtExport(_) => true,
             Uptime::BootedAt(boot_ms) => boot_ms.is_some(),

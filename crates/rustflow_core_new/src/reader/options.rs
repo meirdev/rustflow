@@ -17,13 +17,15 @@ pub struct OptionsTable<'a>(pub(crate) &'a Collector);
 
 impl<'a> OptionsTable<'a> {
     /// The options records of `exporter`'s `domain` whose scope is
-    /// `scope`.
+    /// `scope`. The exporter is matched as the collector's session key
+    /// tells exporters apart: by address alone, unless keyed by port too.
     pub fn get<'s>(
         self,
         exporter: SocketAddr,
         domain: u32,
         scope: &'s [(Scope, Value)],
     ) -> impl Iterator<Item = &'a Record> + use<'a, 's> {
+        let exporter = self.0.session_key().of(exporter);
         self.iter()
             .filter(move |&(from, of, record)| {
                 from == exporter && of == domain && record.scope == scope

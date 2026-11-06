@@ -9,6 +9,7 @@
 pub use data_set::DataSet;
 pub use error::{ParseError, WriteError};
 pub use family::{Family, Protocol};
+pub use packet::Packet;
 
 pub use crate::bytes::Truncated;
 
@@ -19,6 +20,7 @@ pub mod information_element;
 pub mod ipfix;
 pub mod netflow_v5;
 pub mod netflow_v9;
+mod packet;
 pub mod sflow_v5;
 mod template_cache;
 pub mod value;

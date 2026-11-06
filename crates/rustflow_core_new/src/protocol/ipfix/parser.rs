@@ -1,11 +1,11 @@
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::type_records::ElementTypes;
 use super::*;
 use crate::bytes::{Reader, Truncated};
 use crate::protocol::information_element::{DataType, InformationElement, Registry};
-use crate::protocol::template_cache::{Entry, Slot, TemplateCache};
+use crate::protocol::template_cache::{Entry, SPARE_FIELDS, Slot, TemplateCache, records_in};
 use crate::protocol::value::{Value, decode};
 use crate::protocol::{DataSet, ParseError};
 
@@ -27,6 +27,9 @@ pub struct Parser {
     registry: Registry,
     element_types: ElementTypes,
     templates: TemplateCache<Entry<TemplateRef>>,
+    /// When the packet being parsed arrived, which decides which templates
+    /// have expired.
+    now: Instant,
 }
 
 impl Parser {
@@ -38,6 +41,7 @@ impl Parser {
             registry,
             element_types: ElementTypes::default(),
             templates: TemplateCache::new(timeout),
+            now: Instant::now(),
         }
     }
 
@@ -45,6 +49,13 @@ impl Parser {
     /// malformed or truncated; the sets before it are kept. Bytes after the
     /// message's length are ignored.
     pub fn parse(&mut self, datagram: &[u8]) -> Result<Packet, ParseError> {
+        self.parse_at(datagram, Instant::now())
+    }
+
+    /// [`parse`](Self::parse) as of `now`, which decides which templates
+    /// have expired: for a caller that has the time already.
+    pub fn parse_at(&mut self, datagram: &[u8], now: Instant) -> Result<Packet, ParseError> {
+        self.now = now;
         let mut r = Reader::new(datagram);
         let header = parse_header(&mut r)?;
         let body_length = usize::from(header.length)
@@ -105,6 +116,7 @@ impl Parser {
     /// Retries only sets that lacked a template. Known sets retain the
     /// template used on arrival, even if that ID has since been redefined.
     pub(crate) fn resolve(&mut self, packet: &mut Packet) {
+        self.now = Instant::now();
         let domain = packet.header.observation_domain_id;
         for set in &mut packet.sets {
             if let Set::Undecoded { set_id, body } = set
@@ -117,8 +129,10 @@ impl Parser {
     }
 
     fn decode_data(&self, domain: u32, id: u16, body: &mut Reader) -> Option<Set> {
-        let entry = self.templates.get(domain, id)?;
-        let records = body.many(|r| self.parse_record(r, domain, &entry.layout, 0));
+        let entry = self.templates.get(domain, id, self.now)?;
+        let records = body.many_sized(records_in(body.len(), &entry.layout), |r| {
+            self.parse_record(r, domain, &entry.layout, 0)
+        });
         Some(match &entry.template {
             TemplateRef::Data(template) => Set::Data(DataSet {
                 template: Arc::clone(template),
@@ -178,21 +192,37 @@ impl Parser {
         layout: &[Slot],
         depth: usize,
     ) -> Result<Vec<Value>, Truncated> {
-        layout
-            .iter()
-            .map(|slot| {
-                let length = parse_field_length(r, slot.field_length)?;
-                Ok(self.decode_field(domain, slot.data_type, r.bytes(length)?, depth))
-            })
-            .collect()
+        let mut values = Vec::with_capacity(layout.len() + SPARE_FIELDS);
+        for slot in layout {
+            let length = parse_field_length(r, slot.field_length)?;
+            values.push(self.decode_field(domain, slot.data_type, r.bytes(length)?, depth));
+        }
+        Ok(values)
     }
 
     /// Decodes a field, lists included; a list whose content does not
     /// decode to its end keeps its bytes (RFC 6313 section 4.5).
     fn decode_field(&self, domain: u32, data_type: DataType, bytes: &[u8], depth: usize) -> Value {
-        let mut r = Reader::new(bytes);
         let list = match data_type {
-            _ if depth >= MAX_LIST_DEPTH => None,
+            DataType::BasicList | DataType::SubTemplateList | DataType::SubTemplateMultiList
+                if depth < MAX_LIST_DEPTH =>
+            {
+                self.decode_list(domain, data_type, bytes, depth)
+            }
+            _ => None,
+        };
+        list.unwrap_or_else(|| decode(data_type, bytes))
+    }
+
+    fn decode_list(
+        &self,
+        domain: u32,
+        data_type: DataType,
+        bytes: &[u8],
+        depth: usize,
+    ) -> Option<Value> {
+        let mut r = Reader::new(bytes);
+        match data_type {
             DataType::BasicList => self
                 .parse_basic_list(&mut r, domain, depth)
                 .map(|list| Value::BasicList(Box::new(list))),
@@ -203,8 +233,7 @@ impl Parser {
                 .parse_sub_template_multi_list(&mut r, domain, depth)
                 .map(|list| Value::SubTemplateMultiList(Box::new(list))),
             _ => None,
-        };
-        list.unwrap_or_else(|| decode(data_type, bytes))
+        }
     }
 
     fn parse_basic_list(&self, r: &mut Reader, domain: u32, depth: usize) -> Option<BasicList> {
@@ -265,7 +294,7 @@ impl Parser {
         template_id: u16,
         depth: usize,
     ) -> Option<ListRecords> {
-        Some(match self.templates.get(domain, template_id) {
+        Some(match self.templates.get(domain, template_id, self.now) {
             Some(entry) => ListRecords::Decoded {
                 template: entry.template.clone(),
                 records: whole(r, |r| {

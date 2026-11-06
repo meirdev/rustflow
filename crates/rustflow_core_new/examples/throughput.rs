@@ -18,7 +18,7 @@ use std::fs::File;
 use std::hint::black_box;
 use std::io;
 use std::net::SocketAddr;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use pcap_file::pcap::PcapReader;
 use rustflow_core_new::convert::CommonFlow;
@@ -31,6 +31,7 @@ use rustflow_core_new::reader::{Collector, Received, Record};
 
 struct Datagram {
     exporter: SocketAddr,
+    time: SystemTime,
     payload: Vec<u8>,
 }
 
@@ -113,7 +114,7 @@ fn collect(datagrams: &[Datagram], collector: &mut Collector) -> (Counts, Durati
     timed(datagrams, |datagram| {
         let received = Received {
             exporter: datagram.exporter,
-            time: None,
+            time: Some(datagram.time),
         };
         records.clear();
         collector.collect(received, &datagram.payload, &mut records)?;
@@ -128,7 +129,7 @@ fn flows(datagrams: &[Datagram], collector: &mut Collector) -> (Counts, Duration
     timed(datagrams, |datagram| {
         let received = Received {
             exporter: datagram.exporter,
-            time: None,
+            time: Some(datagram.time),
         };
         records.clear();
         collector.collect(received, &datagram.payload, &mut records)?;
@@ -192,6 +193,7 @@ fn read_datagrams(path: &str, budget: u64) -> io::Result<Vec<Datagram>> {
             bytes += payload.len() as u64;
             datagrams.push(Datagram {
                 exporter,
+                time: UNIX_EPOCH + packet.timestamp,
                 payload: payload.to_vec(),
             });
         }

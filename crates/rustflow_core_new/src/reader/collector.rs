@@ -1,14 +1,15 @@
 //! Datagrams to records, with the state each exporter's protocols need
 //! between datagrams.
 
-use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
+
+use rustc_hash::FxHashMap;
 
 use crate::convert::templated::{self, Templated};
 use crate::convert::{Received, Record, netflow_v5, sflow_v5};
 use crate::protocol::information_element::Registry;
-use crate::protocol::{Family, ParseError, Protocol, ipfix, netflow_v9};
+use crate::protocol::{Family, Packet, ParseError, Protocol, ipfix, netflow_v9};
 use crate::reader::pending::{Held, PendingLimits, PendingStats};
 
 /// Sessions one collector may keep state for; the network decides how many
@@ -16,19 +17,45 @@ use crate::reader::pending::{Held, PendingLimits, PendingStats};
 const MAX_SESSIONS: usize = 65_536;
 
 /// Turns datagrams of one family into records. A session, one per exporter
-/// transport address, keeps the templates and options its protocols need
-/// between datagrams, scoped by transport session as RFC 7011 requires. A
-/// session not heard from for the template timeout is forgotten, its
-/// templates having expired by then; datagrams of a new session past
-/// [`MAX_SESSIONS`] are dropped.
+/// as its [`SessionKey`] tells exporters apart, keeps the templates and
+/// options its protocols need between datagrams. A session not heard from
+/// for the template timeout is forgotten, its templates having expired by
+/// then; datagrams of a new session past [`MAX_SESSIONS`] are dropped.
 pub struct Collector {
     family: Family,
     registry: Registry,
     timeout: Duration,
-    sessions: HashMap<SocketAddr, Session>,
+    session_key: SessionKey,
+    sessions: FxHashMap<SocketAddr, Session>,
+    netflow_v5: netflow_v5::Converter,
+    sflow_v5: sflow_v5::Converter,
     next_sweep: Instant,
     pending: Option<PendingLimits>,
     dropped: u64,
+}
+
+/// What tells one exporter's session from another's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SessionKey {
+    /// The exporter's IP address: datagrams from every source port of a
+    /// host share templates. Exporters are known to send templates and
+    /// data from different ports, so this is the default.
+    #[default]
+    Address,
+    /// The exporter's IP address and source port, the transport session
+    /// RFC 7011 section 3.1 scopes templates by.
+    Transport,
+}
+
+impl SessionKey {
+    /// The address sessions are kept under: the exporter's, with the port
+    /// zeroed when it does not count.
+    pub fn of(self, exporter: SocketAddr) -> SocketAddr {
+        match self {
+            Self::Address => SocketAddr::new(exporter.ip(), 0),
+            Self::Transport => exporter,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -53,7 +80,7 @@ trait TemplatedParser {
 
     fn new(registry: Registry, timeout: Duration) -> Self;
 
-    fn parse(&mut self, datagram: &[u8]) -> Result<Self::Packet, ParseError>;
+    fn parse(&mut self, datagram: &[u8], now: Instant) -> Result<Self::Packet, ParseError>;
 
     /// Decodes the sets that lacked a template with the templates known
     /// now; sets decoded already keep the template they were decoded with.
@@ -75,8 +102,8 @@ impl TemplatedParser for netflow_v9::Parser {
         Self::new(registry, timeout)
     }
 
-    fn parse(&mut self, datagram: &[u8]) -> Result<Self::Packet, ParseError> {
-        Self::parse(self, datagram)
+    fn parse(&mut self, datagram: &[u8], now: Instant) -> Result<Self::Packet, ParseError> {
+        self.parse_at(datagram, now)
     }
 
     fn resolve(&mut self, packet: &mut Self::Packet) {
@@ -111,8 +138,8 @@ impl TemplatedParser for ipfix::Parser {
         Self::new(registry, timeout)
     }
 
-    fn parse(&mut self, datagram: &[u8]) -> Result<Self::Packet, ParseError> {
-        Self::parse(self, datagram)
+    fn parse(&mut self, datagram: &[u8], now: Instant) -> Result<Self::Packet, ParseError> {
+        self.parse_at(datagram, now)
     }
 
     fn resolve(&mut self, packet: &mut Self::Packet) {
@@ -170,11 +197,28 @@ impl Collector {
             family,
             registry,
             timeout,
-            sessions: HashMap::new(),
+            session_key: SessionKey::default(),
+            sessions: FxHashMap::default(),
+            netflow_v5: netflow_v5::Converter::default(),
+            sflow_v5: sflow_v5::Converter::default(),
             next_sweep: Instant::now() + timeout,
             pending: None,
             dropped: 0,
         }
+    }
+
+    /// Tells exporters apart by `key` rather than by IP address alone.
+    pub fn with_session_key(mut self, key: SessionKey) -> Self {
+        self.session_key = key;
+        self
+    }
+
+    pub fn family(&self) -> Family {
+        self.family
+    }
+
+    pub fn session_key(&self) -> SessionKey {
+        self.session_key
     }
 
     /// Holds the NetFlow v9 and IPFIX data sets whose template has not
@@ -208,6 +252,57 @@ impl Collector {
         Self::new(family, Registry::iana(), Duration::from_mins(10))
     }
 
+    /// Parses a datagram by the version at its start, learning the
+    /// templates it brings for the datagrams of its session to come, and
+    /// decoding its data by them. For a caller that wants packets rather
+    /// than records: nothing is converted, and sets held for templates by
+    /// [`Collector::with_pending`] stay held.
+    pub fn parse(&mut self, received: Received, datagram: &[u8]) -> Result<Packet, ParseError> {
+        Ok(match Protocol::of(self.family, datagram)? {
+            Protocol::NetflowV5 => Packet::NetflowV5(crate::protocol::netflow_v5::parse(datagram)?),
+            Protocol::NetflowV9 => {
+                Packet::NetflowV9(
+                    self.parse_templated(received, datagram, |session| &mut session.netflow_v9)?,
+                )
+            }
+            Protocol::Ipfix => {
+                Packet::Ipfix(
+                    self.parse_templated(received, datagram, |session| &mut session.ipfix)?,
+                )
+            }
+            Protocol::SflowV5 => Packet::SflowV5(crate::protocol::sflow_v5::parse(datagram)?),
+        })
+    }
+
+    /// Parses a datagram of a templated protocol through its session's
+    /// state, or through a parser of its own when no session can be kept.
+    fn parse_templated<P: TemplatedParser>(
+        &mut self,
+        received: Received,
+        datagram: &[u8],
+        state_of: impl Fn(&mut Session) -> &mut Option<State<P>>,
+    ) -> Result<P::Packet, ParseError> {
+        let (registry, timeout) = (self.registry.clone(), self.timeout);
+        let now = Instant::now();
+        let mut unkept;
+        let parser = match self.session(self.session_key.of(received.exporter), now) {
+            Some(session) => {
+                &mut state_of(session)
+                    .get_or_insert_with(|| State::new(registry, timeout))
+                    .parser
+            }
+            None => {
+                unkept = P::new(registry, timeout);
+                &mut unkept
+            }
+        };
+        let mut packet = parser.parse(datagram, now)?;
+        if P::has_templates(&packet) && P::has_undecoded(&packet) {
+            parser.resolve(&mut packet);
+        }
+        Ok(packet)
+    }
+
     /// Converts a datagram's records, adding them to `records`, by the
     /// version at its start.
     pub fn collect(
@@ -217,7 +312,7 @@ impl Collector {
         records: &mut impl Extend<Record>,
     ) -> Result<(), ParseError> {
         match Protocol::of(self.family, datagram)? {
-            Protocol::NetflowV5 => netflow_v5::convert(
+            Protocol::NetflowV5 => self.netflow_v5.convert(
                 crate::protocol::netflow_v5::parse(datagram)?,
                 &received,
                 records,
@@ -230,7 +325,7 @@ impl Collector {
             Protocol::Ipfix => {
                 self.collect_templated(received, datagram, records, |session| &mut session.ipfix)?;
             }
-            Protocol::SflowV5 => sflow_v5::convert(
+            Protocol::SflowV5 => self.sflow_v5.convert(
                 crate::protocol::sflow_v5::parse(datagram)?,
                 &received,
                 records,
@@ -250,12 +345,13 @@ impl Collector {
         state_of: impl Fn(&mut Session) -> &mut Option<State<P>>,
     ) -> Result<(), ParseError> {
         let (registry, timeout, limits) = (self.registry.clone(), self.timeout, self.pending);
-        let Some(session) = self.session(received.exporter) else {
+        let now = Instant::now();
+        let Some(session) = self.session(self.session_key.of(received.exporter), now) else {
             return Ok(());
         };
         let state = state_of(session).get_or_insert_with(|| State::new(registry, timeout));
         let mut dropped = 0;
-        let mut packet = state.parser.parse(datagram)?;
+        let mut packet = state.parser.parse(datagram, now)?;
         if P::has_templates(&packet) {
             if let Some(limits) = limits {
                 let (taken, aged) = state.held.take(limits);
@@ -285,7 +381,8 @@ impl Collector {
     }
 
     /// The latest options record of each kind every session sent, with
-    /// the exporter and observation domain it describes.
+    /// the exporter, its port zero unless sessions are keyed by it, and the
+    /// observation domain it describes.
     pub fn options(&self) -> impl Iterator<Item = (SocketAddr, u32, &Record)> {
         self.sessions.iter().flat_map(|(&exporter, session)| {
             let netflow_v9 = session
@@ -304,8 +401,7 @@ impl Collector {
 
     /// The session of `exporter`, marked as heard from now; `None` for a
     /// new one past [`MAX_SESSIONS`].
-    fn session(&mut self, exporter: SocketAddr) -> Option<&mut Session> {
-        let now = Instant::now();
+    fn session(&mut self, exporter: SocketAddr, now: Instant) -> Option<&mut Session> {
         let new = !self.sessions.contains_key(&exporter);
         if now >= self.next_sweep || (new && self.sessions.len() >= MAX_SESSIONS) {
             let timeout = self.timeout;
@@ -620,8 +716,73 @@ mod tests {
     }
 
     #[test]
+    fn parsing_alone_learns_templates_and_decodes_by_them() {
+        let mut collector = Collector::of(Family::Netflow);
+        let packet = collector
+            .parse(received(100), &ipfix(1, &[octet_count_template(2)]))
+            .unwrap();
+        assert_eq!(packet.protocol(), Protocol::Ipfix);
+        assert_eq!(packet.record_count(), 0);
+        let Packet::Ipfix(message) = &packet else {
+            unreachable!()
+        };
+        assert!(message.has_templates());
+
+        let packet = collector
+            .parse(received(101), &ipfix(2, &[octet_count_data(5)]))
+            .unwrap();
+        assert_eq!(packet.record_count(), 1, "decoded by the template learnt");
+        let Packet::Ipfix(message) = &packet else {
+            unreachable!()
+        };
+        assert!(!message.has_undecoded());
+
+        let v5 = collector.parse(
+            received(102),
+            &[
+                0, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            ],
+        );
+        assert_eq!(v5.map(|packet| packet.protocol()), Ok(Protocol::NetflowV5));
+        assert_eq!(
+            collector.parse(received(103), &[0, 7, 0, 0]),
+            Err(ParseError::Version(7))
+        );
+    }
+
+    #[test]
+    fn exporters_are_told_apart_by_address_unless_asked_by_port() {
+        let mut other_port = received(100);
+        other_port.exporter.set_port(2056);
+
+        let mut shared = Collector::of(Family::Netflow);
+        collect(&mut shared, 100, &ipfix(1, &[octet_count_template(2)]));
+        let mut records = Vec::new();
+        shared
+            .collect(other_port, &ipfix(2, &[octet_count_data(5)]), &mut records)
+            .unwrap();
+        assert_eq!(octets(&records), [5], "the template from the other port");
+        assert_eq!(
+            shared
+                .options()
+                .next()
+                .map(|(exporter, _, _)| exporter.port()),
+            None,
+            "no options records"
+        );
+
+        let mut by_port = Collector::of(Family::Netflow).with_session_key(SessionKey::Transport);
+        collect(&mut by_port, 100, &ipfix(1, &[octet_count_template(2)]));
+        let mut records = Vec::new();
+        by_port
+            .collect(other_port, &ipfix(2, &[octet_count_data(5)]), &mut records)
+            .unwrap();
+        assert!(records.is_empty(), "the other port has no templates");
+    }
+
+    #[test]
     fn pending_templates_are_scoped_by_exporter_port_and_domain() {
-        let mut collector = holding();
+        let mut collector = holding().with_session_key(SessionKey::Transport);
         let mut other_port = received(100);
         other_port.exporter.set_port(2056);
         let mut other_domain = ipfix(2, &[octet_count_data(6)]);

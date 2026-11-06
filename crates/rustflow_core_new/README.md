@@ -151,6 +151,12 @@ their template, within the limits given per protocol of a session, and
 converts them when the template comes. Without it, such data is read past.
 `with_recv_buffer_size` needs the `socket2` feature.
 
+Sessions are told apart by the exporter's IP address, so an exporter that
+sends templates and data from different source ports is one session.
+`with_session_key(SessionKey::Transport)` keys them by address and port,
+the transport session of RFC 7011, for collectors behind which two
+exporting processes share a host.
+
 Custom elements go into the registry before the collector is built:
 
 ```rust

@@ -1,15 +1,14 @@
 use std::fs::File;
 use std::io;
-use std::net::{IpAddr, SocketAddr, UdpSocket};
+use std::net::{SocketAddr, UdpSocket};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use chrono::Utc;
 use log::error;
 use pcap_file::pcap::PcapReader;
-use rustflow_core::common::packet::parse_udp_packet;
+use rustflow_core_new::dissect::udp_payload;
 use socket2::SockRef;
 
 /// Ends every source on its next read, so the pipeline can drain:
@@ -30,10 +29,10 @@ impl Shutdown {
 
 pub enum Datagram<'a> {
     Packet {
-        src: IpAddr,
+        src: SocketAddr,
         payload: &'a [u8],
-        /// Unix time in nanoseconds: socket receipt time or pcap capture time.
-        time_received_ns: Option<i64>,
+        /// Socket receipt time or pcap capture time.
+        time: SystemTime,
     },
     /// No packet this time; let the collector flush before trying again.
     Idle,
@@ -95,10 +94,10 @@ impl Source for Socket {
             return Datagram::End;
         }
         match self.socket.recv_from(&mut self.buf) {
-            Ok((len, addr)) => Datagram::Packet {
-                src: addr.ip(),
+            Ok((len, src)) => Datagram::Packet {
+                src,
                 payload: &self.buf[..len],
-                time_received_ns: Utc::now().timestamp_nanos_opt(),
+                time: SystemTime::now(),
             },
             Err(e) if is_retryable(&e) => Datagram::Idle,
             Err(e) => {
@@ -137,10 +136,10 @@ impl Source for Pcap {
             let link_type = self.reader.header().datalink.into();
             match self.reader.next_packet() {
                 Some(Ok(packet)) => {
-                    let Some((src, payload)) = parse_udp_packet(link_type, &packet.data) else {
+                    let Some((src, payload)) = udp_payload(link_type, &packet.data) else {
                         continue;
                     };
-                    let time_received_ns = i64::try_from(packet.timestamp.as_nanos()).ok();
+                    let time = UNIX_EPOCH + packet.timestamp;
 
                     // Copied out, as the borrow of the frame cannot leave the
                     // loop.
@@ -150,7 +149,7 @@ impl Source for Pcap {
                     return Datagram::Packet {
                         src,
                         payload: &self.payload,
-                        time_received_ns,
+                        time,
                     };
                 }
                 Some(Err(e)) => {

@@ -73,6 +73,19 @@ pub(crate) struct SamplingOptions {
 }
 
 impl SamplingOptions {
+    /// The elements [`observe`](Self::observe) reads.
+    pub(crate) const ELEMENTS: [ElementId; 9] = [
+        iana::SAMPLING_INTERVAL,
+        iana::SAMPLER_RANDOM_INTERVAL,
+        iana::SAMPLING_PACKET_INTERVAL,
+        iana::SAMPLING_PACKET_SPACE,
+        iana::SAMPLING_SIZE,
+        iana::SAMPLING_POPULATION,
+        iana::SAMPLING_ALGORITHM,
+        iana::SAMPLER_MODE,
+        iana::SELECTOR_ALGORITHM,
+    ];
+
     pub(crate) fn observe(&mut self, element: ElementId, value: &Value) {
         let number = || value.as_u64().and_then(|v| u32::try_from(v).ok());
         match element {

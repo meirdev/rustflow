@@ -1,7 +1,7 @@
 use std::io;
 
 use chrono::{DateTime, Utc};
-use rustflow_core::common::common_flow::CommonFlow;
+use rustflow_core_new::convert::CommonFlow;
 
 use super::Serialization;
 use super::destination::{Destination, Opened, PendingRename};
