@@ -2,7 +2,7 @@
 //! into records, and come out as common flows:
 //!
 //! ```text
-//! cargo run --release -p rustflow_core_new --example throughput -- capture.pcap [payload MB]
+//! cargo run --release -p rustflow_core --example throughput -- capture.pcap [payload MB]
 //! ```
 //!
 //! The capture's UDP payloads are read into memory first, up to the byte
@@ -21,13 +21,13 @@ use std::net::SocketAddr;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use pcap_file::pcap::PcapReader;
-use rustflow_core_new::convert::CommonFlow;
-use rustflow_core_new::dissect::udp_payload;
-use rustflow_core_new::protocol::information_element::Registry;
-use rustflow_core_new::protocol::{
+use rustflow_core::convert::CommonFlow;
+use rustflow_core::dissect::udp_payload;
+use rustflow_core::protocol::information_element::Registry;
+use rustflow_core::protocol::{
     Family, ParseError, Protocol, ipfix, netflow_v5, netflow_v9, sflow_v5,
 };
-use rustflow_core_new::reader::{Collector, Received, Record};
+use rustflow_core::reader::{Collector, Received, Record};
 
 struct Datagram {
     exporter: SocketAddr,

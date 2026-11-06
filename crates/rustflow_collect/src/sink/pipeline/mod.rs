@@ -10,7 +10,7 @@ use std::{io, thread};
 
 use chrono::Utc;
 pub use errors::SinkErrors;
-use rustflow_core_new::convert::CommonFlow;
+use rustflow_core::convert::CommonFlow;
 use serde::Serialize;
 pub use timer::FlushTimer;
 

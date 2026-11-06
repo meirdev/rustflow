@@ -425,8 +425,8 @@ mod tests {
                 "tag",
                 ["netflow", "sflow"],
                 Box::new(Tag(
-                    rustflow_core_new::protocol::information_element::iana::INGRESS_INTERFACE,
-                    rustflow_core_new::protocol::value::Value::Unsigned32(1),
+                    rustflow_core::protocol::information_element::iana::INGRESS_INTERFACE,
+                    rustflow_core::protocol::value::Value::Unsigned32(1),
                 )),
             )
             .exporter("files", ["tag"], Box::new(Collect(Arc::clone(&out))))

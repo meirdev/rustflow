@@ -388,9 +388,9 @@ pub(crate) mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
-    use rustflow_core_new::convert::{Elements, Protocol, Record};
-    use rustflow_core_new::protocol::information_element::{ElementId, iana};
-    use rustflow_core_new::protocol::value::Value;
+    use rustflow_core::convert::{Elements, Protocol, Record};
+    use rustflow_core::protocol::information_element::{ElementId, iana};
+    use rustflow_core::protocol::value::Value;
 
     use super::*;
     use crate::Control;

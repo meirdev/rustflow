@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use log::error;
 use pcap_file::pcap::PcapReader;
-use rustflow_core_new::dissect::udp_payload;
+use rustflow_core::dissect::udp_payload;
 use socket2::SockRef;
 
 /// Ends every source on its next read, so the pipeline can drain:

@@ -1,15 +1,15 @@
 # Library
 
-The collector is built on `rustflow_core_new`, which parses NetFlow v5, NetFlow v9, IPFIX and sFlow v5, converts what they carry into records of IPFIX information elements, reads datagrams from sockets and captures, and writes records out again as packets. The crate is in the repository under `crates/rustflow_core_new` and is not published yet; it replaces the earlier `rustflow_lib` and `rustflow_core` crates, which are no longer maintained.
+The collector is built on `rustflow_core`, which parses NetFlow v5, NetFlow v9, IPFIX and sFlow v5, converts what they carry into records of IPFIX information elements, reads datagrams from sockets and captures, and writes records out again as packets. It lives under `crates/rustflow_core`. It is a rewrite: its API has nothing in common with `rustflow_core` releases before 0.21, and it also replaces `rustflow_lib`, which is no longer published.
 
-The crate's own [README](../crates/rustflow_core_new/README.md) describes its structure, the specifications it implements and every API in detail. What follows is the short version.
+The crate's own [README](../crates/rustflow_core/README.md) describes its structure, the specifications it implements and every API in detail. What follows is the short version.
 
 ## Reading flows
 
 A `Reader` is bound to a socket for one family: `Family::Netflow` reads NetFlow v5, NetFlow v9 and IPFIX, told apart by the version at the start of each datagram; `Family::Sflow` reads sFlow v5.
 
 ```rust
-use rustflow_core_new::reader::{Family, Reader};
+use rustflow_core::reader::{Family, Reader};
 
 let reader = Reader::bind("0.0.0.0:9995", Family::Netflow)?;
 for record in reader.flows() {
@@ -24,7 +24,7 @@ for record in reader.flows() {
 `CommonFlow` is the fixed schema the collector writes out, made from any record:
 
 ```rust
-use rustflow_core_new::convert::CommonFlow;
+use rustflow_core::convert::CommonFlow;
 
 for record in reader.flows() {
     let flow = CommonFlow::from(&record?);
@@ -40,8 +40,8 @@ The readers drive a `Collector`, which is where the information element registry
 use std::net::UdpSocket;
 use std::time::Duration;
 
-use rustflow_core_new::protocol::information_element::Registry;
-use rustflow_core_new::reader::{Collector, Family, Reader, SessionKey};
+use rustflow_core::protocol::information_element::Registry;
+use rustflow_core::reader::{Collector, Family, Reader, SessionKey};
 
 let collector = Collector::new(Family::Netflow, Registry::iana(), Duration::from_secs(1800))
     .with_session_key(SessionKey::Transport);
@@ -57,7 +57,7 @@ Elements go into the registry before the collector is built, which is the same m
 ```rust
 use std::borrow::Cow;
 
-use rustflow_core_new::protocol::information_element::{
+use rustflow_core::protocol::information_element::{
     DataType, ElementId, InformationElement, Registry,
 };
 
@@ -77,8 +77,8 @@ The `export` module is the reverse of reading: records go in, packets of a proto
 ```rust
 use std::time::{Duration, SystemTime};
 
-use rustflow_core_new::export::ipfix::Exporter;
-use rustflow_core_new::protocol::ipfix;
+use rustflow_core::export::ipfix::Exporter;
+use rustflow_core::protocol::ipfix;
 
 let mut exporter = Exporter::new(1).with_template_refresh(Duration::from_secs(30));
 let packet = exporter.export(&records, SystemTime::now())?;
@@ -89,4 +89,4 @@ socket.send_to(&buf, collector)?;
 
 ## Packets
 
-The protocol types are under `rustflow_core_new::protocol`: `ipfix`, `netflow_v5`, `netflow_v9` and `sflow_v5`, each with its packet structs, a parser and a `write`. With the `serde` feature a packet serializes as it is, or as text with its records named through `Packet::text(&registry)`, which is what the collector's raw output is.
+The protocol types are under `rustflow_core::protocol`: `ipfix`, `netflow_v5`, `netflow_v9` and `sflow_v5`, each with its packet structs, a parser and a `write`. With the `serde` feature a packet serializes as it is, or as text with its records named through `Packet::text(&registry)`, which is what the collector's raw output is.

@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
 
-use rustflow_core_new::convert::CommonFlow;
-use rustflow_core_new::for_each_flow_field;
+use rustflow_core::convert::CommonFlow;
+use rustflow_core::for_each_flow_field;
 
 use crate::enrich::{Error, Key, KeyType, ReloadPolicy, Result};
 

@@ -9,9 +9,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use std::{io, thread};
 
-use rustflow_core_new::convert::Elements;
-use rustflow_core_new::protocol::information_element::iana;
-use rustflow_core_new::protocol::value::Value;
+use rustflow_core::convert::Elements;
+use rustflow_core::protocol::information_element::iana;
+use rustflow_core::protocol::value::Value;
 use rustflow_mediator::{Exporter, Item, Output, Pipeline, Process, Record, Runner, Schedule};
 
 const CHUNK: usize = 256;
@@ -43,7 +43,7 @@ fn record(i: u32) -> Record {
         iana::COLLECTION_TIME_MILLISECONDS,
     ]));
     Record {
-        protocol: rustflow_core_new::convert::Protocol::NetflowV5,
+        protocol: rustflow_core::convert::Protocol::NetflowV5,
         sequence_number: i,
         scope: Vec::new(),
         elements,

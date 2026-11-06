@@ -3,7 +3,7 @@ use std::io::{self, BufWriter, Write};
 use std::net::IpAddr;
 
 use prost::Message;
-use rustflow_core_new::convert::CommonFlow;
+use rustflow_core::convert::CommonFlow;
 
 use super::{Encoder, WRITE_BUFFER_BYTES, Writer};
 use crate::enrich::Enriched;

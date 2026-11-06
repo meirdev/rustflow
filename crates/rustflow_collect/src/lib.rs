@@ -15,10 +15,10 @@ pub use args::CollectArgs;
 use args::{FlowType, Input};
 use enrich::{EnrichmentConfig, EnrichmentEngine};
 use log::{error, info, warn};
-use rustflow_core_new::convert::CommonFlow;
-use rustflow_core_new::protocol::information_element::Registry;
-use rustflow_core_new::protocol::{Family, ParseError, Protocol};
-use rustflow_core_new::reader::{Collector, Received, Record};
+use rustflow_core::convert::CommonFlow;
+use rustflow_core::protocol::information_element::Registry;
+use rustflow_core::protocol::{Family, ParseError, Protocol};
+use rustflow_core::reader::{Collector, Received, Record};
 use sink::OutputFormat;
 use sink::pipeline::{CHUNK_FLUSH_TIMEOUT, EncoderGone, Pipeline, Producer};
 use source::{Datagram, Shutdown, Source};
@@ -61,7 +61,7 @@ fn ingest(
 
 /// The lowercase protocol name metric labels use, such as `netflow_v9`.
 fn protocol_name(protocol: Protocol) -> &'static str {
-    rustflow_core_new::convert::FlowType::from(protocol).name()
+    rustflow_core::convert::FlowType::from(protocol).name()
 }
 
 fn collect(

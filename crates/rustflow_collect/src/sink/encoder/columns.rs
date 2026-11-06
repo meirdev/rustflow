@@ -6,8 +6,8 @@ use arrow_array::builder::{PrimitiveBuilder, StringBuilder, TimestampNanosecondB
 use arrow_array::types::{UInt8Type, UInt16Type, UInt32Type, UInt64Type};
 use arrow_array::{ArrayRef, RecordBatch};
 use arrow_schema::{DataType, Field, Schema, TimeUnit};
-use rustflow_core_new::convert::CommonFlow;
-use rustflow_core_new::for_each_flow_field;
+use rustflow_core::convert::CommonFlow;
+use rustflow_core::for_each_flow_field;
 
 use crate::enrich::Enriched;
 

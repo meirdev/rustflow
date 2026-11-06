@@ -1,4 +1,4 @@
-# rustflow_core_new
+# rustflow_core
 
 NetFlow v5, NetFlow v9, IPFIX and sFlow v5, from datagrams to records of
 IPFIX information elements. The crate parses and writes the packets of each
@@ -79,7 +79,7 @@ of each datagram; `Family::Sflow` reads sFlow v5. A reader is an iterator
 of records.
 
 ```rust
-use rustflow_core_new::reader::{Family, Reader};
+use rustflow_core::reader::{Family, Reader};
 
 let reader = Reader::bind("0.0.0.0:9995", Family::Netflow)?;
 for record in reader.flows() {
@@ -93,7 +93,7 @@ outcome, options records among them:
 ```rust
 use std::time::Duration;
 
-use rustflow_core_new::reader::{Family, Read, Reader};
+use rustflow_core::reader::{Family, Read, Reader};
 
 let mut reader = Reader::bind("0.0.0.0:9995", Family::Netflow)?
     .with_read_timeout(Some(Duration::from_secs(5)))?;
@@ -116,7 +116,7 @@ particular, to the flows that follow. The latest ones are also there to
 look up:
 
 ```rust
-use rustflow_core_new::protocol::information_element::iana;
+use rustflow_core::protocol::information_element::iana;
 
 for (exporter, record) in reader.options().by_element(iana::INTERFACE_NAME) {
     println!("{exporter}: {:?}", record.first(iana::INTERFACE_NAME));
@@ -133,8 +133,8 @@ socket's own settings stay on the reader.
 use std::net::UdpSocket;
 use std::time::Duration;
 
-use rustflow_core_new::protocol::information_element::Registry;
-use rustflow_core_new::reader::{Collector, Family, PendingLimits, Reader};
+use rustflow_core::protocol::information_element::Registry;
+use rustflow_core::reader::{Collector, Family, PendingLimits, Reader};
 
 let registry = Registry::iana();
 let collector = Collector::new(Family::Netflow, registry, Duration::from_secs(1800))
@@ -162,7 +162,7 @@ Custom elements go into the registry before the collector is built:
 ```rust
 use std::borrow::Cow;
 
-use rustflow_core_new::protocol::information_element::{
+use rustflow_core::protocol::information_element::{
     DataType, ElementId, InformationElement, Registry,
 };
 
@@ -181,7 +181,7 @@ With the `tokio` feature, `AsyncReader` has the same shape, awaited, and
 is a `Stream` of records:
 
 ```rust
-use rustflow_core_new::reader::{AsyncReader, Family};
+use rustflow_core::reader::{AsyncReader, Family};
 
 let mut reader = AsyncReader::bind("0.0.0.0:9995", Family::Netflow).await?;
 loop {
@@ -195,7 +195,7 @@ capture, whatever link layer it was taken on, as a socket reader would
 have received them. Each record's receive time is the capture time.
 
 ```rust
-use rustflow_core_new::reader::{Family, PcapReader};
+use rustflow_core::reader::{Family, PcapReader};
 
 let reader = PcapReader::open("exporters.pcap", Family::Netflow)?;
 for record in reader.flows() {
@@ -210,8 +210,8 @@ Records of one shape, such as those of one template, share their element
 list, and a value is found by element without a scan.
 
 ```rust
-use rustflow_core_new::protocol::information_element::iana;
-use rustflow_core_new::protocol::value::Value;
+use rustflow_core::protocol::information_element::iana;
+use rustflow_core::protocol::value::Value;
 
 if let Some(Value::Unsigned64(octets)) = record.first(iana::OCTET_DELTA_COUNT) {
     println!("{octets} octets");
@@ -243,7 +243,7 @@ numbers, VLANs, MAC addresses and the sampling rate. It is a view of a
 record, one mapping whatever protocol the record arrived in.
 
 ```rust
-use rustflow_core_new::convert::CommonFlow;
+use rustflow_core::convert::CommonFlow;
 
 for record in reader.flows() {
     let flow = CommonFlow::from(&record?);
@@ -263,7 +263,7 @@ to values in their RFC 7373 textual representation, which is what an IPFIX
 record looks like in JSON. The registry gives the names.
 
 ```rust
-use rustflow_core_new::protocol::information_element::Registry;
+use rustflow_core::protocol::information_element::Registry;
 
 let registry = Registry::iana();
 for record in reader.flows() {
@@ -283,8 +283,8 @@ NetFlow v9 and IPFIX parsers keep templates between calls:
 ```rust
 use std::time::Duration;
 
-use rustflow_core_new::protocol::information_element::Registry;
-use rustflow_core_new::protocol::ipfix::{self, Set};
+use rustflow_core::protocol::information_element::Registry;
+use rustflow_core::protocol::ipfix::{self, Set};
 
 let mut parser = ipfix::Parser::new(Registry::iana(), Duration::from_secs(600));
 let packet = parser.parse(&datagram)?;
@@ -306,8 +306,8 @@ A packet of any protocol can be converted without a reader, by giving the
 converter where it came from:
 
 ```rust
-use rustflow_core_new::convert::{Received, ipfix};
-use rustflow_core_new::reader::Record;
+use rustflow_core::convert::{Received, ipfix};
+use rustflow_core::reader::Record;
 
 let mut converter = ipfix::Converter::default();
 let mut records: Vec<Record> = Vec::new();
@@ -325,8 +325,8 @@ before the first data of a new shape, and again after the refresh interval.
 ```rust
 use std::time::{Duration, SystemTime};
 
-use rustflow_core_new::export::ipfix::Exporter;
-use rustflow_core_new::protocol::ipfix;
+use rustflow_core::export::ipfix::Exporter;
+use rustflow_core::protocol::ipfix;
 
 let mut exporter = Exporter::new(1).with_template_refresh(Duration::from_secs(30));
 let packet = exporter.export(&records, SystemTime::now())?;

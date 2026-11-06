@@ -2,7 +2,7 @@
 //! datagrams:
 //!
 //! ```text
-//! cargo run --release -p rustflow_core_new --example export_throughput -- [records] [per packet]
+//! cargo run --release -p rustflow_core --example export_throughput -- [records] [per packet]
 //! ```
 //!
 //! The records, a million by default, are made first: NetFlow v5-shaped
@@ -16,11 +16,11 @@ use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-use rustflow_core_new::convert::{Elements, Protocol, Record};
-use rustflow_core_new::export::{ipfix, netflow_v5, netflow_v9, sflow_v5};
-use rustflow_core_new::protocol;
-use rustflow_core_new::protocol::information_element::iana;
-use rustflow_core_new::protocol::value::Value;
+use rustflow_core::convert::{Elements, Protocol, Record};
+use rustflow_core::export::{ipfix, netflow_v5, netflow_v9, sflow_v5};
+use rustflow_core::protocol;
+use rustflow_core::protocol::information_element::iana;
+use rustflow_core::protocol::value::Value;
 
 type Error = Box<dyn std::error::Error>;
 

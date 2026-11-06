@@ -6,7 +6,7 @@ use parquet::arrow::ArrowWriter;
 use parquet::basic::{Compression, Encoding};
 use parquet::file::properties::{EnabledStatistics, WriterProperties, WriterVersion};
 use parquet::schema::types::ColumnPath;
-use rustflow_core_new::convert::CommonFlow;
+use rustflow_core::convert::CommonFlow;
 
 use super::columns::{BATCH_ROWS, Columns};
 use super::{Encoder, Writer};

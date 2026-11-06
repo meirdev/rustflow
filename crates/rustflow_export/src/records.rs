@@ -5,9 +5,9 @@ use std::net::IpAddr;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use rustflow_core_new::convert::{Elements, Protocol, Record, Scope};
-use rustflow_core_new::protocol::information_element::iana;
-use rustflow_core_new::protocol::value::{Value, natural_length};
+use rustflow_core::convert::{Elements, Protocol, Record, Scope};
+use rustflow_core::protocol::information_element::iana;
+use rustflow_core::protocol::value::{Value, natural_length};
 
 use crate::capture::Link;
 use crate::flow::Flow;

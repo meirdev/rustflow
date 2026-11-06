@@ -3,9 +3,9 @@ use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Result;
 use log::{debug, info};
-use rustflow_core_new::convert::Record;
-use rustflow_core_new::export;
-use rustflow_core_new::protocol::ipfix;
+use rustflow_core::convert::Record;
+use rustflow_core::export;
+use rustflow_core::protocol::ipfix;
 
 use crate::ExportArgs;
 use crate::flow::Flow;
@@ -192,8 +192,8 @@ mod tests {
     use std::time::Duration;
 
     use clap::Parser;
-    use rustflow_core_new::protocol::information_element::Registry;
-    use rustflow_core_new::protocol::ipfix::{Packet, Parser as IpfixParser, Set};
+    use rustflow_core::protocol::information_element::Registry;
+    use rustflow_core::protocol::ipfix::{Packet, Parser as IpfixParser, Set};
 
     use super::*;
     use crate::capture::Link;

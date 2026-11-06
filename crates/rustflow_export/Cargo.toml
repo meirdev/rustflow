@@ -10,7 +10,7 @@ description = "IPFIX exporter for captured network traffic; the `rustflow export
 pcap = ["dep:pcap"]
 
 [dependencies]
-rustflow_core_new = { path = "../rustflow_core_new" }
+rustflow_core.workspace = true
 etherparse.workspace = true
 pcap = { version = "2.3", optional = true }
 anyhow.workspace = true

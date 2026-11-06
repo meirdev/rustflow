@@ -17,11 +17,11 @@ use pcap_file::pcap::{PcapPacket, PcapWriter};
 use rand::Rng;
 use rand::distr::uniform::SampleUniform;
 use rand::seq::IndexedRandom;
-use rustflow_core_new::convert::{Elements, Protocol, Record, Scope};
-use rustflow_core_new::export;
-use rustflow_core_new::protocol::information_element::iana;
-use rustflow_core_new::protocol::value::Value;
-use rustflow_core_new::protocol::{ipfix, netflow_v5, netflow_v9, sflow_v5};
+use rustflow_core::convert::{Elements, Protocol, Record, Scope};
+use rustflow_core::export;
+use rustflow_core::protocol::information_element::iana;
+use rustflow_core::protocol::value::Value;
+use rustflow_core::protocol::{ipfix, netflow_v5, netflow_v9, sflow_v5};
 
 const IPPROTO_TCP: u8 = 6;
 

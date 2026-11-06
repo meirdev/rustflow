@@ -2,8 +2,8 @@ use std::cell::RefCell;
 use std::fmt::Write as _;
 use std::io::{self, BufWriter, Write};
 
-use rustflow_core_new::convert::CommonFlow;
-use rustflow_core_new::for_each_flow_field;
+use rustflow_core::convert::CommonFlow;
+use rustflow_core::for_each_flow_field;
 
 use super::{Encoder, WRITE_BUFFER_BYTES, Writer};
 use crate::enrich::Enriched;
@@ -116,7 +116,7 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
 
-    use rustflow_core_new::convert::FlowType;
+    use rustflow_core::convert::FlowType;
 
     use super::*;
 

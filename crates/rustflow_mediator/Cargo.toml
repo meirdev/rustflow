@@ -7,7 +7,7 @@ repository.workspace = true
 description = "An IPFIX Mediator framework: a pipeline of intermediate processes between collecting and exporting"
 
 [dependencies]
-rustflow_core_new = { path = "../rustflow_core_new" }
+rustflow_core.workspace = true
 serde.workspace = true
 toml.workspace = true
 

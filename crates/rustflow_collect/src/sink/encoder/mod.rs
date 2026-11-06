@@ -12,7 +12,7 @@ pub use arrow::ArrowIpc;
 pub use discard::Discard;
 pub use ndjson::Ndjson;
 pub use protobuf::Protobuf;
-use rustflow_core_new::convert::CommonFlow;
+use rustflow_core::convert::CommonFlow;
 
 pub use self::csv::Csv;
 pub use self::parquet::Parquet;

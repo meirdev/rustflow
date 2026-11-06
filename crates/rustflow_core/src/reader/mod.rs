@@ -9,7 +9,7 @@
 //! nothing an exporter says is lost. Flows alone are one adapter away:
 //!
 //! ```no_run
-//! use rustflow_core_new::reader::{Family, Reader};
+//! use rustflow_core::reader::{Family, Reader};
 //!
 //! let reader = Reader::bind("0.0.0.0:9995", Family::Netflow).unwrap();
 //! for flow in reader.flows() {
@@ -20,8 +20,8 @@
 //! With options records, and the latest of each kept for looking up:
 //!
 //! ```no_run
-//! use rustflow_core_new::protocol::information_element::iana;
-//! use rustflow_core_new::reader::{Family, Read, Reader};
+//! use rustflow_core::protocol::information_element::iana;
+//! use rustflow_core::reader::{Family, Read, Reader};
 //!
 //! let mut reader = Reader::bind("0.0.0.0:9995", Family::Netflow).unwrap();
 //! loop {
@@ -48,8 +48,8 @@
 //! use std::net::UdpSocket;
 //! use std::time::Duration;
 //!
-//! use rustflow_core_new::protocol::information_element::Registry;
-//! use rustflow_core_new::reader::{Collector, Family, Reader};
+//! use rustflow_core::protocol::information_element::Registry;
+//! use rustflow_core::reader::{Collector, Family, Reader};
 //!
 //! let registry = Registry::iana();
 //! let collector = Collector::new(Family::Netflow, registry, Duration::from_secs(1800));

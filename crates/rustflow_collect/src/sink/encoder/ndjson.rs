@@ -1,6 +1,6 @@
 use std::io::{self, BufWriter, Write};
 
-use rustflow_core_new::convert::CommonFlow;
+use rustflow_core::convert::CommonFlow;
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
 

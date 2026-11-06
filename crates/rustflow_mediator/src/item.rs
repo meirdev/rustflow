@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use rustflow_core_new::convert::Record;
+use rustflow_core::convert::Record;
 
 /// What flows through a pipeline.
 #[derive(Debug, Clone, PartialEq)]

@@ -8,7 +8,7 @@ description = "Flow collector for NetFlow, IPFIX and sFlow; the `rustflow collec
 
 [dependencies]
 anyhow.workspace = true
-rustflow_core_new = { path = "../rustflow_core_new", features = ["serde"] }
+rustflow_core = { workspace = true, features = ["serde"] }
 clap.workspace = true
 prometheus-client = "0.25.1"
 pcap-file.workspace = true

@@ -7,7 +7,7 @@ use std::borrow::Cow;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use rustflow_core_new::protocol::information_element::{
+use rustflow_core::protocol::information_element::{
     DataType, ElementId, InformationElement, Registry,
 };
 use serde::Deserialize;
