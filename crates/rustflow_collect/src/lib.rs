@@ -59,11 +59,6 @@ fn ingest(
     }
 }
 
-/// The lowercase protocol name metric labels use, such as `netflow_v9`.
-fn protocol_name(protocol: Protocol) -> &'static str {
-    rustflow_core::convert::FlowType::from(protocol).name()
-}
-
 fn collect(
     source: &mut dyn Source,
     mut collector: Collector,
@@ -72,11 +67,7 @@ fn collect(
     metrics: Arc<metrics::Metrics>,
     mut output: Producer,
 ) -> Result<(), EncoderGone> {
-    let family = match collector.family() {
-        Family::Netflow => "netflow",
-        Family::Sflow => "sflow",
-    };
-    let mut exporters = metrics::ExporterMetrics::new(metrics, family);
+    let mut exporters = metrics::ExporterMetrics::new(metrics, collector.family().name());
     let mut records: Vec<Record> = Vec::new();
 
     loop {
@@ -100,7 +91,7 @@ fn collect(
                     let packet = collector.parse(received, payload)?;
                     exporters.record_packet(
                         src.ip(),
-                        protocol_name(packet.protocol()),
+                        packet.protocol().name(),
                         payload.len(),
                         packet.record_count(),
                     );
@@ -112,7 +103,7 @@ fn collect(
                     let protocol = Protocol::of(collector.family(), payload)?;
                     exporters.record_packet(
                         src.ip(),
-                        protocol_name(protocol),
+                        protocol.name(),
                         payload.len(),
                         records.len(),
                     );
@@ -138,7 +129,7 @@ fn collect(
             }
             Err(Failure::Parse(_)) => match Protocol::of(collector.family(), payload) {
                 Ok(protocol) => {
-                    exporters.record_parse_error(src.ip(), protocol_name(protocol), payload.len());
+                    exporters.record_parse_error(src.ip(), protocol.name(), payload.len());
                 }
                 Err(_) => exporters.record_unknown_version(src.ip(), payload.len()),
             },
