@@ -25,6 +25,7 @@ src/
 ├── convert/     parsed packets to records of information elements
 ├── reader/      datagrams from a socket or a capture to records
 ├── export/      records to packets of a protocol, templates and sequence numbers kept
+├── text/        records and packets as RFC 7373 text, for JSON (feature `serde`)
 └── bytes/       big-endian reading and writing (private)
 ```
 

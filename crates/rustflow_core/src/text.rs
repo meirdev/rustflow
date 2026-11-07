@@ -1,4 +1,4 @@
-//! A record as a JSON object, or a map of any format serde writes: its
+//! Records and packets as JSON objects, or maps of any format serde writes:
 //! Information Elements identified by name (RFC 7373 section 3), each value
 //! in its textual representation (section 4), as Appendix A of RFC 7373
 //! illustrates.

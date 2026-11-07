@@ -8,9 +8,8 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
-use crate::convert::domains::{Domain, Domains, SAMPLING_KEYS, sampling_key};
 use crate::convert::record::{Elements, Fields, Scope, Shapes};
-use crate::convert::sampling::{Method, Sampling};
+use crate::convert::sampling::{Domain, Domains, Method, SAMPLING_KEYS, Sampling, sampling_key};
 use crate::convert::time::{TimeBase, Uptime};
 use crate::convert::{Protocol, Received, Record, packet_fields};
 use crate::protocol::information_element::{ElementId, iana};

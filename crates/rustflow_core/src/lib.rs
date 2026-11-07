@@ -10,6 +10,8 @@
 //!   (RFC 6183 section 5.1).
 //! - [`export`] writes records out again as the packets of a protocol, for a
 //!   collector to read (RFC 7011 section 2).
+//! - [`text`] serializes records and packets with their elements named and
+//!   their values in textual form (RFC 7373), with the `serde` feature.
 
 mod bytes;
 pub mod convert;
@@ -19,3 +21,5 @@ pub mod export;
 mod fixtures;
 pub mod protocol;
 pub mod reader;
+#[cfg(feature = "serde")]
+pub mod text;

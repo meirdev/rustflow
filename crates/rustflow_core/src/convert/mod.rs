@@ -11,13 +11,10 @@
 
 pub use common_flow::CommonFlow;
 pub use record::{Elements, Received, Record, Scope};
-#[cfg(feature = "serde")]
-pub use text::{TextPacket, TextRecord};
 
 pub use crate::protocol::{Family, Protocol};
 
 mod common_flow;
-mod domains;
 pub mod ipfix;
 pub mod netflow_v5;
 pub mod netflow_v9;
@@ -26,6 +23,4 @@ mod record;
 mod sampling;
 pub mod sflow_v5;
 pub mod templated;
-#[cfg(feature = "serde")]
-mod text;
 mod time;
