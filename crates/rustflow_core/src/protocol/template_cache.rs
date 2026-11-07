@@ -9,12 +9,13 @@ use crate::protocol::ipfix::VARIABLE_LENGTH;
 
 /// A template as a parser keeps it: with the length and data type of each
 /// of its fields, for decoding its records.
+#[derive(PartialEq)]
 pub(crate) struct Entry<T> {
     pub(crate) template: T,
     pub(crate) layout: Box<[Slot]>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub(crate) struct Slot {
     pub(crate) field_length: u16,
     pub(crate) data_type: DataType,
@@ -62,7 +63,7 @@ struct Received<T> {
     at: Instant,
 }
 
-impl<T> TemplateCache<Entry<T>> {
+impl<T: PartialEq> TemplateCache<Entry<T>> {
     /// Stores a template with the layout of its records; see
     /// [`TemplateCache::insert`].
     pub(crate) fn insert_entry(
@@ -91,14 +92,28 @@ impl<T> TemplateCache<T> {
     /// Stores a template of `fields` fields, replacing any earlier one with
     /// its ID right away. One that would take the cache past [`MAX_FIELDS`]
     /// is refused, and the one it replaces is dropped all the same: its data
-    /// would otherwise be read by the old layout.
-    pub(crate) fn insert(&mut self, domain: u32, template_id: u16, template: T, fields: usize) {
+    /// would otherwise be read by the old layout. A template sent again
+    /// unchanged only renews the one kept, so that what refers to it, such
+    /// as the records decoded by it, keeps referring to the same one.
+    pub(crate) fn insert(&mut self, domain: u32, template_id: u16, template: T, fields: usize)
+    where
+        T: PartialEq,
+    {
         let now = Instant::now();
         if self.next_sweep.is_some_and(|sweep| now >= sweep) {
             self.remove_expired(now);
         }
         let key = (domain, template_id);
         let fields = fields.max(1);
+        if let Some(kept) = self.templates.get_mut(&key)
+            && kept.template == template
+        {
+            kept.at = now;
+            if let Some(expiry) = now.checked_add(self.timeout) {
+                self.next_expiry = Some(self.next_expiry.map_or(expiry, |next| next.min(expiry)));
+            }
+            return;
+        }
         if !self.fits(key, fields) && self.next_expiry.is_some_and(|expiry| now >= expiry) {
             self.remove_expired(now);
         }

@@ -154,6 +154,39 @@ fn the_message_length_bounds_the_sets() {
 }
 
 #[test]
+fn a_template_sent_again_unchanged_stays_the_same_template() {
+    let mut parser = Parser::default();
+    let first = parser
+        .parse(&message(
+            DOMAIN,
+            &[octet_count_template(), octet_count_data(1)],
+        ))
+        .unwrap();
+    let again = parser
+        .parse(&message(
+            DOMAIN,
+            &[octet_count_template(), octet_count_data(2)],
+        ))
+        .unwrap();
+    assert!(Arc::ptr_eq(
+        &data_set(&first.sets[1]).template,
+        &data_set(&again.sets[1]).template
+    ));
+
+    let changed = set(
+        TEMPLATE_SET_ID,
+        &template(256, &[field(iana::PACKET_DELTA_COUNT, 4)]),
+    );
+    let replaced = parser
+        .parse(&message(DOMAIN, &[changed, octet_count_data(3)]))
+        .unwrap();
+    assert!(!Arc::ptr_eq(
+        &data_set(&first.sets[1]).template,
+        &data_set(&replaced.sets[1]).template
+    ));
+}
+
+#[test]
 fn data_decodes_by_the_template_sent_before_it() {
     let template = set(
         TEMPLATE_SET_ID,

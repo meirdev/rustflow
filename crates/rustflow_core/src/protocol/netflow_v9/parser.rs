@@ -22,6 +22,7 @@ pub struct Parser {
     now: Instant,
 }
 
+#[derive(PartialEq)]
 enum CachedTemplate {
     Data(Arc<Template>),
     Options(Arc<OptionsTemplate>),

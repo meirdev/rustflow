@@ -33,62 +33,72 @@ pub struct Record {
 #[derive(Debug, PartialEq, Eq)]
 pub struct Elements {
     list: Box<[ElementId]>,
-    /// The first position of each IANA element, by id, as far as the
-    /// largest id the list has; [`NONE`] for an id the list lacks.
-    iana: Box<[usize]>,
-    /// The first position of each enterprise element, sorted by element.
-    enterprise: Box<[(ElementId, usize)]>,
+    /// The first position of each IANA element with an id below
+    /// [`DENSE_IDS`], by id, as far as the largest such id the list has;
+    /// [`NONE`] for an id the list lacks.
+    dense: Box<[u16]>,
+    /// The first position of every other element, sorted by element.
+    sparse: Box<[(ElementId, usize)]>,
 }
 
-const NONE: usize = usize::MAX;
+/// IANA ids below this get a slot in the dense index, which bounds it to
+/// 2 KiB: the registry's elements are all below, and an exporter's padding
+/// elements near 32767 would otherwise cost 64 KiB each per shape.
+const DENSE_IDS: usize = 1024;
+
+const NONE: u16 = u16::MAX;
 
 impl Elements {
     /// Where `element` first is in a record of these elements.
     pub fn position(&self, element: ElementId) -> Option<usize> {
-        match element.enterprise_number {
-            None => self
-                .iana
+        if element.enterprise_number.is_none() && usize::from(element.id) < DENSE_IDS {
+            return self
+                .dense
                 .get(usize::from(element.id))
                 .copied()
-                .filter(|&position| position != NONE),
-            Some(_) => {
-                let found = self
-                    .enterprise
-                    .binary_search_by_key(&element, |&(known, _)| known)
-                    .ok()?;
-                Some(self.enterprise[found].1)
-            }
+                .filter(|&position| position != NONE)
+                .map(usize::from);
         }
+        let found = self
+            .sparse
+            .binary_search_by_key(&element, |&(known, _)| known)
+            .ok()?;
+        Some(self.sparse[found].1)
     }
 }
 
 impl From<Vec<ElementId>> for Elements {
     fn from(list: Vec<ElementId>) -> Self {
+        let is_dense = |element: &ElementId, position: usize| {
+            element.enterprise_number.is_none()
+                && usize::from(element.id) < DENSE_IDS
+                && position < usize::from(NONE)
+        };
         let ids = list
             .iter()
-            .filter(|element| element.enterprise_number.is_none())
-            .map(|element| usize::from(element.id) + 1)
+            .enumerate()
+            .filter(|&(position, element)| is_dense(element, position))
+            .map(|(_, element)| usize::from(element.id) + 1)
             .max()
             .unwrap_or(0);
-        let mut iana = vec![NONE; ids];
-        let mut enterprise = Vec::new();
+        let mut dense = vec![NONE; ids];
+        let mut sparse = Vec::new();
         for (position, &element) in list.iter().enumerate() {
-            match element.enterprise_number {
-                None => {
-                    let slot = &mut iana[usize::from(element.id)];
-                    if *slot == NONE {
-                        *slot = position;
-                    }
+            if is_dense(&element, position) {
+                let slot = &mut dense[usize::from(element.id)];
+                if *slot == NONE {
+                    *slot = position as u16;
                 }
-                Some(_) => enterprise.push((element, position)),
+            } else {
+                sparse.push((element, position));
             }
         }
-        enterprise.sort();
-        enterprise.dedup_by_key(|&mut (element, _)| element);
+        sparse.sort();
+        sparse.dedup_by_key(|&mut (element, _)| element);
         Self {
             list: list.into(),
-            iana: iana.into(),
-            enterprise: enterprise.into(),
+            dense: dense.into(),
+            sparse: sparse.into(),
         }
     }
 }
@@ -366,6 +376,19 @@ impl Shapes {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn high_and_enterprise_ids_are_found_without_a_dense_slot() {
+        let padding = ElementId::iana(32767);
+        let vendor = ElementId::from((9, 1));
+        let elements = Elements::from(vec![iana::OCTET_DELTA_COUNT, padding, vendor]);
+        assert_eq!(elements.position(iana::OCTET_DELTA_COUNT), Some(0));
+        assert_eq!(elements.position(padding), Some(1));
+        assert_eq!(elements.position(vendor), Some(2));
+        assert_eq!(elements.position(ElementId::iana(32766)), None);
+        assert!(elements.dense.len() <= DENSE_IDS);
+        assert_eq!(elements.sparse.len(), 2);
+    }
 
     #[test]
     fn an_elements_position_is_its_first() {
