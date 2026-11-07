@@ -89,15 +89,21 @@ fn unsigned(bytes: &[u8]) -> Option<Value> {
 }
 
 fn signed(bytes: &[u8]) -> Option<Value> {
-    let value = match bytes.len() {
-        1 => Value::Signed8(i8::try_from(int(bytes)).ok()?),
-        2 => Value::Signed16(i16::try_from(int(bytes)).ok()?),
-        3 | 4 => Value::Signed32(i32::try_from(int(bytes)).ok()?),
-        5..=8 => Value::Signed64(int(bytes)),
-        _ => return None,
+    let value = match *bytes {
+        [a] => Value::Signed8(i8::from_be_bytes([a])),
+        [a, b] => Value::Signed16(i16::from_be_bytes([a, b])),
+        // Three bytes in the high end, then shifted down to extend the sign.
+        [a, b, c] => Value::Signed32(i32::from_be_bytes([a, b, c, 0]) >> 8),
+        [a, b, c, d] => Value::Signed32(i32::from_be_bytes([a, b, c, d])),
+        [a, b, c, d, e, f, g, h] => Value::Signed64(i64::from_be_bytes([a, b, c, d, e, f, g, h])),
+        _ => match bytes.len() {
+            5..=7 => Value::Signed64(int(bytes)),
+            _ => return None,
+        },
     };
     Some(value)
 }
+
 /// A big-endian unsigned integer of 1 to 8 bytes.
 fn uint(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0, |acc, &b| (acc << 8) | u64::from(b))
