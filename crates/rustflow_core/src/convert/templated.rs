@@ -296,9 +296,17 @@ struct Layout {
     /// Whether the template lacks every element conversion adds, as most
     /// do, so that the additions go in whole.
     lacks_additions: bool,
-    /// The elements of a whole record, additions included, by sampling
-    /// shape, built as records of that shape come.
-    shapes: [Option<Arc<Elements>>; SHAPES],
+    /// The elements of a whole record, by sampling shape, built as records
+    /// of that shape come.
+    shapes: [Option<Shape>; SHAPES],
+}
+
+/// A record's elements, with the additions they were built with: those
+/// change when a packet comes with a receive time and the one before did
+/// not, and the list is then rebuilt.
+struct Shape {
+    additions: Box<[ElementId]>,
+    elements: Arc<Elements>,
 }
 
 /// How many element lists sampling can end a record with: none, and one
@@ -364,14 +372,23 @@ impl Layout {
 
     fn elements(&mut self, additions: &[ElementId], sampling: Option<Sampling>) -> Arc<Elements> {
         let Self { own, shapes, .. } = self;
-        Arc::clone(shapes[shape(sampling)].get_or_insert_with(|| {
-            let mut elements = own.clone();
-            elements.extend_from_slice(additions);
-            if let Some(sampling) = sampling {
-                sampling.for_each(|element, _| elements.push(element));
+        let shape = &mut shapes[shape(sampling)];
+        match shape {
+            Some(built) if built.additions[..] == *additions => Arc::clone(&built.elements),
+            _ => {
+                let mut elements = own.clone();
+                elements.extend_from_slice(additions);
+                if let Some(sampling) = sampling {
+                    sampling.for_each(|element, _| elements.push(element));
+                }
+                let elements = Arc::new(Elements::from(elements));
+                *shape = Some(Shape {
+                    additions: additions.into(),
+                    elements: Arc::clone(&elements),
+                });
+                elements
             }
-            Arc::new(elements.into())
-        }))
+        }
     }
 }
 
@@ -487,6 +504,41 @@ mod tests {
                 records: vec![vec![Value::Unsigned32(octets)]],
             })],
         }
+    }
+
+    #[test]
+    fn records_keep_their_shape_when_the_additions_change() {
+        let exporter = SocketAddr::from(([192, 0, 2, 1], 4739));
+        let timed = Received {
+            exporter,
+            time: Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000)),
+        };
+        let untimed = Received {
+            exporter,
+            time: None,
+        };
+        let template = octet_count_template();
+        let mut converter = Converter::<Packet>::default();
+        let mut records = Vec::new();
+        for (received, octets) in [(untimed, 1), (timed, 2), (timed, 3), (untimed, 4)] {
+            converter.convert(
+                packet(Arc::clone(&template), octets),
+                &received,
+                &mut records,
+            );
+        }
+        for record in &records {
+            assert_eq!(record.elements.len(), record.values.len(), "{record:?}");
+        }
+        let collected: Vec<bool> = records
+            .iter()
+            .map(|record| record.first(iana::COLLECTION_TIME_MILLISECONDS).is_some())
+            .collect();
+        assert_eq!(collected, [false, true, true, false]);
+        assert!(
+            Arc::ptr_eq(&records[1].elements, &records[2].elements),
+            "the list built for a shape is kept while the additions stay"
+        );
     }
 
     #[test]
