@@ -29,8 +29,13 @@ impl fmt::Display for Family {
     }
 }
 
-/// A flow protocol.
+/// A flow protocol. Serializes, and displays, in capitals: `NETFLOW_V9`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize),
+    serde(rename_all = "SCREAMING_SNAKE_CASE")
+)]
 pub enum Protocol {
     NetflowV5,
     NetflowV9,
@@ -69,9 +74,15 @@ impl Protocol {
     }
 }
 
+/// The name in capitals, such as `NETFLOW_V9`, as it is serialized.
 impl fmt::Display for Protocol {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.name())
+        f.write_str(match self {
+            Self::NetflowV5 => "NETFLOW_V5",
+            Self::NetflowV9 => "NETFLOW_V9",
+            Self::Ipfix => "IPFIX",
+            Self::SflowV5 => "SFLOW_V5",
+        })
     }
 }
 
@@ -81,9 +92,9 @@ mod tests {
     use crate::bytes::Truncated;
 
     #[test]
-    fn names_are_snake_case() {
+    fn names_are_snake_case_and_displays_in_capitals() {
         assert_eq!(Protocol::NetflowV9.name(), "netflow_v9");
-        assert_eq!(Protocol::SflowV5.to_string(), "sflow_v5");
+        assert_eq!(Protocol::SflowV5.to_string(), "SFLOW_V5");
         assert_eq!(Family::Netflow.name(), "netflow");
         assert_eq!(Family::Sflow.to_string(), "sflow");
     }

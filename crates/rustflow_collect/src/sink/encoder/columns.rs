@@ -15,7 +15,7 @@ use crate::enrich::Enriched;
 pub const BATCH_ROWS: usize = 32_768;
 
 macro_rules! builder {
-    (FlowType) => { StringBuilder };
+    (Protocol) => { StringBuilder };
     (Timestamp) => { TimestampNanosecondBuilder };
     (U8) => { PrimitiveBuilder<UInt8Type> };
     (U16) => { PrimitiveBuilder<UInt16Type> };
@@ -35,7 +35,7 @@ macro_rules! new_builder {
 }
 
 macro_rules! data_type {
-    (FlowType) => {
+    (Protocol) => {
         DataType::Utf8
     };
     (Timestamp) => {
@@ -71,7 +71,7 @@ macro_rules! nullable {
 }
 
 macro_rules! append {
-    ($b:expr, FlowType required, $v:expr) => {
+    ($b:expr, Protocol required, $v:expr) => {
         append_text($b, $v)
     };
     ($b:expr, Ip optional, $v:expr) => {

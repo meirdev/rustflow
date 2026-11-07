@@ -2,7 +2,6 @@
 //! than IPFIX elements: a view of a converted [`Record`], one mapping from
 //! elements whatever protocol the record arrived in.
 
-use std::fmt;
 use std::net::IpAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -14,56 +13,6 @@ use crate::protocol::Protocol;
 use crate::protocol::information_element::{ElementId, iana};
 use crate::protocol::value::Value;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize),
-    serde(rename_all = "SCREAMING_SNAKE_CASE")
-)]
-pub enum FlowType {
-    #[default]
-    NetflowV5,
-    NetflowV9,
-    Ipfix,
-    SflowV5,
-}
-
-impl FlowType {
-    /// The lowercase name, such as `netflow_v9`, that logs and metric labels
-    /// use.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::NetflowV5 => "netflow_v5",
-            Self::NetflowV9 => "netflow_v9",
-            Self::Ipfix => "ipfix",
-            Self::SflowV5 => "sflow_v5",
-        }
-    }
-}
-
-/// The name in capitals, such as `NETFLOW_V9`, as it is serialized.
-impl fmt::Display for FlowType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::NetflowV5 => "NETFLOW_V5",
-            Self::NetflowV9 => "NETFLOW_V9",
-            Self::Ipfix => "IPFIX",
-            Self::SflowV5 => "SFLOW_V5",
-        })
-    }
-}
-
-impl From<Protocol> for FlowType {
-    fn from(protocol: Protocol) -> Self {
-        match protocol {
-            Protocol::NetflowV5 => Self::NetflowV5,
-            Protocol::NetflowV9 => Self::NetflowV9,
-            Protocol::Ipfix => Self::Ipfix,
-            Protocol::SflowV5 => Self::SflowV5,
-        }
-    }
-}
-
 /// Calls `$callback!` with every field of
 /// [`CommonFlow`](crate::convert::CommonFlow): its name, its kind, and
 /// whether it is `required` or `optional`, for code written once per field.
@@ -71,7 +20,7 @@ impl From<Protocol> for FlowType {
 macro_rules! for_each_flow_field {
     ($callback:ident) => {
         $callback! {
-            flow_type: FlowType required,
+            flow_type: Protocol required,
             time_received_ns: Timestamp required,
             sequence_num: U32 required,
             sampling_rate: U32 optional,
@@ -112,10 +61,10 @@ macro_rules! for_each_flow_field {
     };
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CommonFlow {
-    pub flow_type: FlowType,
+    pub flow_type: Protocol,
     /// Nanoseconds since 1970.
     pub time_received_ns: i64,
     pub sequence_num: u32,
@@ -196,10 +145,46 @@ pub struct CommonFlow {
 }
 
 impl CommonFlow {
-    pub fn new(flow_type: FlowType) -> Self {
+    /// A flow of `flow_type` with nothing else set.
+    pub fn new(flow_type: Protocol) -> Self {
         Self {
             flow_type,
-            ..Default::default()
+            time_received_ns: 0,
+            sequence_num: 0,
+            sampling_rate: None,
+            sampler_address: None,
+            time_flow_start_ns: None,
+            time_flow_end_ns: None,
+            bytes: None,
+            packets: None,
+            src_addr: None,
+            dst_addr: None,
+            src_mac: None,
+            dst_mac: None,
+            etype: None,
+            proto: None,
+            src_port: None,
+            dst_port: None,
+            in_if: None,
+            out_if: None,
+            ip_tos: None,
+            ip_ttl: None,
+            tcp_flags: None,
+            icmp_type: None,
+            icmp_code: None,
+            ipv6_flow_label: None,
+            fragment_id: None,
+            fragment_offset: None,
+            src_as: None,
+            dst_as: None,
+            next_hop: None,
+            src_net: None,
+            dst_net: None,
+            bgp_next_hop: None,
+            src_vlan: None,
+            dst_vlan: None,
+            observation_domain_id: None,
+            forwarding_status: None,
         }
     }
 
@@ -238,7 +223,7 @@ impl From<&Record> for CommonFlow {
         .map(u16::to_be_bytes);
 
         Self {
-            flow_type: record.protocol.into(),
+            flow_type: record.protocol,
             time_received_ns,
             sequence_num: record.sequence_number,
             sampling_rate: sampling_rate(record),
@@ -441,7 +426,7 @@ mod tests {
 
     #[test]
     fn the_field_list_names_every_field_of_the_struct() {
-        let names = names(&CommonFlow::new(FlowType::Ipfix));
+        let names = names(&CommonFlow::new(Protocol::Ipfix));
         assert_eq!(names.len(), 37);
         assert_eq!(names[0], "flow_type");
         assert_eq!(names[36], "forwarding_status");
@@ -450,7 +435,7 @@ mod tests {
     #[test]
     fn a_receive_time_beyond_i64_nanoseconds_is_held_at_the_nearer_end() {
         let received = |time| {
-            CommonFlow::new(FlowType::Ipfix)
+            CommonFlow::new(Protocol::Ipfix)
                 .with_time_received(time)
                 .time_received_ns
         };
@@ -500,7 +485,7 @@ mod tests {
             ],
         ));
 
-        assert_eq!(flow.flow_type, FlowType::SflowV5);
+        assert_eq!(flow.flow_type, Protocol::SflowV5);
         assert_eq!(flow.sequence_num, 7);
         assert_eq!(flow.bytes, Some(1518));
         assert_eq!(flow.src_vlan, Some(20));
@@ -571,7 +556,7 @@ mod tests {
     fn serializes_as_before_unset_fields_left_out() {
         let flow = CommonFlow {
             src_mac: Some([2, 0, 0, 0, 1, 0xaa].into()),
-            ..CommonFlow::new(FlowType::SflowV5)
+            ..CommonFlow::new(Protocol::SflowV5)
         };
         assert_eq!(
             serde_json::to_value(&flow).unwrap(),
@@ -582,6 +567,6 @@ mod tests {
                 "src_mac": "02:00:00:00:01:AA",
             })
         );
-        assert_eq!(FlowType::SflowV5.to_string(), "SFLOW_V5");
+        assert_eq!(Protocol::SflowV5.to_string(), "SFLOW_V5");
     }
 }

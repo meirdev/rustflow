@@ -171,7 +171,7 @@ macro_rules! lookup_fields {
     ($( $name:ident : $kind:ident $presence:ident ),* $(,)?) => {
         lookup_fields!(@fields [] $( $name : $kind $presence, )*);
     };
-    (@fields [$($acc:tt)*] $name:ident : FlowType $presence:ident, $($rest:tt)*) => {
+    (@fields [$($acc:tt)*] $name:ident : Protocol $presence:ident, $($rest:tt)*) => {
         lookup_fields!(@fields [$($acc)*] $($rest)*);
     };
     (@fields [$($acc:tt)*] $name:ident : Timestamp $presence:ident, $($rest:tt)*) => {

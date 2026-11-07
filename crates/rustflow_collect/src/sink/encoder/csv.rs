@@ -116,7 +116,7 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
 
-    use rustflow_core::convert::FlowType;
+    use rustflow_core::protocol::Protocol;
 
     use super::*;
 
@@ -145,10 +145,7 @@ mod tests {
     fn a_failed_write_loses_whole_records_only() {
         let disk = Disk::default();
         let mut csv = Csv::open(Box::new(disk.clone()), &["site".to_string()]).unwrap();
-        let flow = CommonFlow {
-            flow_type: FlowType::Ipfix,
-            ..Default::default()
-        };
+        let flow = CommonFlow::new(Protocol::Ipfix);
         // A value that needs quoting.
         let enriched = vec![Some(Arc::from("a,b"))];
 
