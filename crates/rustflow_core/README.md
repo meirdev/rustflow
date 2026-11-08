@@ -254,8 +254,21 @@ for record in reader.flows() {
 
 Where a field has several elements it can come from, such as
 `octetDeltaCount` or `layer2OctetDeltaCount` for `bytes`, the first the
-record has gives it. With the `serde` feature, `CommonFlow` serializes with
-its field names, unset fields left out.
+record has gives it. A `Mapper` does the same for a stream of records,
+working out once per element list where each field comes from, which is
+how the collector converts:
+
+```rust
+use rustflow_core::convert::Mapper;
+
+let mut mapper = Mapper::default();
+for record in reader.flows() {
+    let flow = mapper.flow(&record?);
+}
+```
+
+With the `serde` feature, `CommonFlow` serializes with its field names,
+unset fields left out.
 
 ## Converting to IPFIX text
 

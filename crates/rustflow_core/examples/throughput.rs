@@ -21,7 +21,7 @@ use std::net::SocketAddr;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use pcap_file::pcap::PcapReader;
-use rustflow_core::convert::CommonFlow;
+use rustflow_core::convert::Mapper;
 use rustflow_core::dissect::udp_payload;
 use rustflow_core::protocol::information_element::Registry;
 use rustflow_core::protocol::{
@@ -126,6 +126,7 @@ fn collect(datagrams: &[Datagram], collector: &mut Collector) -> (Counts, Durati
 /// [`CommonFlow`]. Counts the flows.
 fn flows(datagrams: &[Datagram], collector: &mut Collector) -> (Counts, Duration) {
     let mut records: Vec<Record> = Vec::new();
+    let mut mapper = Mapper::default();
     timed(datagrams, |datagram| {
         let received = Received {
             exporter: datagram.exporter,
@@ -135,7 +136,7 @@ fn flows(datagrams: &[Datagram], collector: &mut Collector) -> (Counts, Duration
         collector.collect(received, &datagram.payload, &mut records)?;
         let mut flows = 0;
         for record in records.iter().filter(|record| !record.is_options()) {
-            black_box(CommonFlow::from(record));
+            black_box(mapper.flow(record));
             flows += 1;
         }
         Ok(flows)

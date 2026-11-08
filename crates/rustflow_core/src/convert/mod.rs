@@ -9,7 +9,7 @@
 //! out as records too, with the scope they describe, after what they say
 //! was applied to the flows that follow them.
 
-pub use common_flow::CommonFlow;
+pub use common_flow::{CommonFlow, Mapper, Mapping};
 pub use record::{Elements, Received, Record, Scope};
 
 pub use crate::protocol::{Family, Protocol};

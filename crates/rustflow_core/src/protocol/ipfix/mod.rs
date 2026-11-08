@@ -100,7 +100,7 @@ impl Packet {
 }
 
 /// A template, or with no fields, a template withdrawal.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Template {
     pub template_id: u16,
@@ -108,7 +108,7 @@ pub struct Template {
 }
 
 /// An options template, or with no fields, an options template withdrawal.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OptionsTemplate {
     pub template_id: u16,
@@ -118,7 +118,7 @@ pub struct OptionsTemplate {
     pub option_fields: Vec<FieldSpecifier>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct FieldSpecifier {
     /// The information element's ID, without the enterprise bit.

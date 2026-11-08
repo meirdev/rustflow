@@ -3,11 +3,12 @@
 //! elements whatever protocol the record arrived in.
 
 use std::net::IpAddr;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use macaddr::MacAddr6;
 
-use crate::convert::record::Record;
+use crate::convert::record::{Elements, Record};
 use crate::convert::sampling::SamplingOptions;
 use crate::protocol::Protocol;
 use crate::protocol::information_element::{ElementId, iana};
@@ -201,149 +202,281 @@ impl CommonFlow {
 /// gives it; a value too large for its field leaves it unset.
 impl From<&Record> for CommonFlow {
     fn from(record: &Record) -> Self {
+        Mapping::of(&record.elements).flow(record)
+    }
+}
+
+/// Where the records of one element list have each field a flow is made
+/// of: the position of the first element the list has of those a field
+/// comes from, worked out once and used for every record of the list.
+#[derive(Debug, Clone)]
+pub struct Mapping {
+    collection_time: Option<usize>,
+    /// The sampling elements the list has, with their positions.
+    sampling: Vec<(ElementId, usize)>,
+    sampler_address: Option<usize>,
+    flow_start: Option<usize>,
+    flow_end: Option<usize>,
+    bytes: Option<usize>,
+    packets: Option<usize>,
+    src_addr: Option<usize>,
+    dst_addr: Option<usize>,
+    src_mac: Option<usize>,
+    dst_mac: Option<usize>,
+    etype: Option<usize>,
+    proto: Option<usize>,
+    src_port: Option<usize>,
+    dst_port: Option<usize>,
+    in_if: Option<usize>,
+    out_if: Option<usize>,
+    ip_tos: Option<usize>,
+    ip_ttl: Option<usize>,
+    tcp_flags: Option<usize>,
+    icmp_type: Option<usize>,
+    icmp_code: Option<usize>,
+    icmp_type_code: Option<usize>,
+    ipv6_flow_label: Option<usize>,
+    fragment_id: Option<usize>,
+    fragment_offset: Option<usize>,
+    src_as: Option<usize>,
+    dst_as: Option<usize>,
+    next_hop: Option<usize>,
+    src_net: Option<usize>,
+    dst_net: Option<usize>,
+    bgp_next_hop: Option<usize>,
+    src_vlan: Option<usize>,
+    dst_vlan: Option<usize>,
+    observation_domain_id: Option<usize>,
+    forwarding_status: Option<usize>,
+}
+
+impl Mapping {
+    pub fn of(elements: &Elements) -> Self {
+        let at = |candidates: &[ElementId]| {
+            candidates
+                .iter()
+                .find_map(|&element| elements.position(element))
+        };
+        Self {
+            collection_time: at(&[iana::COLLECTION_TIME_MILLISECONDS]),
+            sampling: SamplingOptions::ELEMENTS
+                .iter()
+                .filter_map(|&element| Some((element, elements.position(element)?)))
+                .collect(),
+            sampler_address: at(&[
+                iana::EXPORTER_IPV4_ADDRESS,
+                iana::EXPORTER_IPV6_ADDRESS,
+                iana::ORIGINAL_EXPORTER_IPV4_ADDRESS,
+                iana::ORIGINAL_EXPORTER_IPV6_ADDRESS,
+            ]),
+            flow_start: at(&[
+                iana::FLOW_START_MILLISECONDS,
+                iana::FLOW_START_SECONDS,
+                iana::FLOW_START_MICROSECONDS,
+                iana::FLOW_START_NANOSECONDS,
+            ]),
+            flow_end: at(&[
+                iana::FLOW_END_MILLISECONDS,
+                iana::FLOW_END_SECONDS,
+                iana::FLOW_END_MICROSECONDS,
+                iana::FLOW_END_NANOSECONDS,
+            ]),
+            bytes: at(&[
+                iana::OCTET_DELTA_COUNT,
+                iana::LAYER2_OCTET_DELTA_COUNT,
+                iana::DATA_LINK_FRAME_SIZE,
+            ]),
+            packets: at(&[iana::PACKET_DELTA_COUNT]),
+            src_addr: at(&[iana::SOURCE_IPV4_ADDRESS, iana::SOURCE_IPV6_ADDRESS]),
+            dst_addr: at(&[
+                iana::DESTINATION_IPV4_ADDRESS,
+                iana::DESTINATION_IPV6_ADDRESS,
+            ]),
+            src_mac: at(&[iana::SOURCE_MAC_ADDRESS, iana::POST_SOURCE_MAC_ADDRESS]),
+            dst_mac: at(&[
+                iana::DESTINATION_MAC_ADDRESS,
+                iana::POST_DESTINATION_MAC_ADDRESS,
+            ]),
+            etype: at(&[iana::ETHERNET_TYPE]),
+            proto: at(&[iana::PROTOCOL_IDENTIFIER]),
+            src_port: at(&[iana::SOURCE_TRANSPORT_PORT]),
+            dst_port: at(&[iana::DESTINATION_TRANSPORT_PORT]),
+            in_if: at(&[iana::INGRESS_INTERFACE]),
+            out_if: at(&[iana::EGRESS_INTERFACE]),
+            ip_tos: at(&[iana::IP_CLASS_OF_SERVICE]),
+            // Of a flow's range of TTLs, the maximum: the one its packets
+            // left with before any was dropped.
+            ip_ttl: at(&[iana::IP_TTL, iana::MAXIMUM_TTL, iana::MINIMUM_TTL]),
+            tcp_flags: at(&[iana::TCP_CONTROL_BITS]),
+            icmp_type: at(&[iana::ICMP_TYPE_IPV4, iana::ICMP_TYPE_IPV6]),
+            icmp_code: at(&[iana::ICMP_CODE_IPV4, iana::ICMP_CODE_IPV6]),
+            icmp_type_code: at(&[iana::ICMP_TYPE_CODE_IPV4, iana::ICMP_TYPE_CODE_IPV6]),
+            ipv6_flow_label: at(&[iana::FLOW_LABEL_IPV6]),
+            fragment_id: at(&[iana::FRAGMENT_IDENTIFICATION]),
+            fragment_offset: at(&[iana::FRAGMENT_OFFSET]),
+            src_as: at(&[iana::BGP_SOURCE_AS_NUMBER]),
+            dst_as: at(&[iana::BGP_DESTINATION_AS_NUMBER]),
+            next_hop: at(&[
+                iana::IP_NEXT_HOP_IPV4_ADDRESS,
+                iana::IP_NEXT_HOP_IPV6_ADDRESS,
+            ]),
+            src_net: at(&[
+                iana::SOURCE_IPV4_PREFIX_LENGTH,
+                iana::SOURCE_IPV6_PREFIX_LENGTH,
+            ]),
+            dst_net: at(&[
+                iana::DESTINATION_IPV4_PREFIX_LENGTH,
+                iana::DESTINATION_IPV6_PREFIX_LENGTH,
+            ]),
+            bgp_next_hop: at(&[
+                iana::BGP_NEXT_HOP_IPV4_ADDRESS,
+                iana::BGP_NEXT_HOP_IPV6_ADDRESS,
+            ]),
+            // A frame's inner tag when it has two, as the customer's VLAN.
+            src_vlan: at(&[
+                iana::VLAN_ID,
+                iana::DOT1Q_CUSTOMER_VLAN_ID,
+                iana::DOT1Q_VLAN_ID,
+            ]),
+            dst_vlan: at(&[iana::POST_VLAN_ID]),
+            observation_domain_id: at(&[iana::ORIGINAL_OBSERVATION_DOMAIN_ID]),
+            forwarding_status: at(&[iana::FORWARDING_STATUS]),
+        }
+    }
+
+    /// The flow of a record of the element list this mapping is of. A value
+    /// too large for its field, or of another type, leaves it unset.
+    pub fn flow(&self, record: &Record) -> CommonFlow {
         // Readers always give a receive time; a record converted without
         // one is taken as received now.
-        let time_received_ns = record
-            .first(iana::COLLECTION_TIME_MILLISECONDS)
+        let time_received_ns = value(record, self.collection_time)
             .and_then(|time| i64::try_from(time.unix_nanos(0)?).ok())
             .unwrap_or_else(|| unix_nanos(SystemTime::now()));
         // Seconds and NTP timestamps wrap; the era nearest the receive time
         // is theirs.
         let reference = time_received_ns.div_euclid(1_000_000_000);
-        let src_addr = address(record, iana::SOURCE_IPV4_ADDRESS, iana::SOURCE_IPV6_ADDRESS);
-        let etype = unsigned(record, &[iana::ETHERNET_TYPE]).or(match src_addr {
+
+        let src_addr = address(record, self.src_addr);
+        let etype = unsigned(record, self.etype).or(match src_addr {
             Some(IpAddr::V4(_)) => Some(0x0800),
             Some(IpAddr::V6(_)) => Some(0x86dd),
             None => None,
         });
-        let icmp = unsigned::<u16>(
-            record,
-            &[iana::ICMP_TYPE_CODE_IPV4, iana::ICMP_TYPE_CODE_IPV6],
-        )
-        .map(u16::to_be_bytes);
+        let icmp = unsigned::<u16>(record, self.icmp_type_code).map(u16::to_be_bytes);
 
-        Self {
+        let mut options = SamplingOptions::default();
+        for &(element, position) in &self.sampling {
+            if let Some(value) = record.values.get(position) {
+                options.observe(element, value);
+            }
+        }
+
+        CommonFlow {
             flow_type: record.protocol,
             time_received_ns,
             sequence_num: record.sequence_number,
-            sampling_rate: sampling_rate(record),
-            sampler_address: address(
-                record,
-                iana::EXPORTER_IPV4_ADDRESS,
-                iana::EXPORTER_IPV6_ADDRESS,
-            )
-            .or(address(
-                record,
-                iana::ORIGINAL_EXPORTER_IPV4_ADDRESS,
-                iana::ORIGINAL_EXPORTER_IPV6_ADDRESS,
-            )),
-            time_flow_start_ns: time_ns(
-                record,
-                &[
-                    iana::FLOW_START_MILLISECONDS,
-                    iana::FLOW_START_SECONDS,
-                    iana::FLOW_START_MICROSECONDS,
-                    iana::FLOW_START_NANOSECONDS,
-                ],
-                reference,
-            ),
-            time_flow_end_ns: time_ns(
-                record,
-                &[
-                    iana::FLOW_END_MILLISECONDS,
-                    iana::FLOW_END_SECONDS,
-                    iana::FLOW_END_MICROSECONDS,
-                    iana::FLOW_END_NANOSECONDS,
-                ],
-                reference,
-            ),
-            bytes: unsigned(
-                record,
-                &[
-                    iana::OCTET_DELTA_COUNT,
-                    iana::LAYER2_OCTET_DELTA_COUNT,
-                    iana::DATA_LINK_FRAME_SIZE,
-                ],
-            ),
-            packets: unsigned(record, &[iana::PACKET_DELTA_COUNT]),
+            sampling_rate: options.sampling().map(|sampling| sampling.rate),
+            sampler_address: address(record, self.sampler_address),
+            time_flow_start_ns: time_ns(record, self.flow_start, reference),
+            time_flow_end_ns: time_ns(record, self.flow_end, reference),
+            bytes: unsigned(record, self.bytes),
+            packets: unsigned(record, self.packets),
             src_addr,
-            dst_addr: address(
-                record,
-                iana::DESTINATION_IPV4_ADDRESS,
-                iana::DESTINATION_IPV6_ADDRESS,
-            ),
-            src_mac: mac(
-                record,
-                &[iana::SOURCE_MAC_ADDRESS, iana::POST_SOURCE_MAC_ADDRESS],
-            ),
-            dst_mac: mac(
-                record,
-                &[
-                    iana::DESTINATION_MAC_ADDRESS,
-                    iana::POST_DESTINATION_MAC_ADDRESS,
-                ],
-            ),
+            dst_addr: address(record, self.dst_addr),
+            src_mac: mac(record, self.src_mac),
+            dst_mac: mac(record, self.dst_mac),
             etype,
-            proto: unsigned(record, &[iana::PROTOCOL_IDENTIFIER]),
-            src_port: unsigned(record, &[iana::SOURCE_TRANSPORT_PORT]),
-            dst_port: unsigned(record, &[iana::DESTINATION_TRANSPORT_PORT]),
-            in_if: unsigned(record, &[iana::INGRESS_INTERFACE]),
-            out_if: unsigned(record, &[iana::EGRESS_INTERFACE]),
-            ip_tos: unsigned(record, &[iana::IP_CLASS_OF_SERVICE]),
-            // Of a flow's range of TTLs, the maximum: the one its packets
-            // left with before any was dropped.
-            ip_ttl: unsigned(
-                record,
-                &[iana::IP_TTL, iana::MAXIMUM_TTL, iana::MINIMUM_TTL],
-            ),
-            tcp_flags: unsigned(record, &[iana::TCP_CONTROL_BITS]),
-            icmp_type: unsigned(record, &[iana::ICMP_TYPE_IPV4, iana::ICMP_TYPE_IPV6])
-                .or(icmp.map(|[icmp_type, _]| icmp_type)),
-            icmp_code: unsigned(record, &[iana::ICMP_CODE_IPV4, iana::ICMP_CODE_IPV6])
-                .or(icmp.map(|[_, icmp_code]| icmp_code)),
-            ipv6_flow_label: unsigned(record, &[iana::FLOW_LABEL_IPV6]),
-            fragment_id: unsigned(record, &[iana::FRAGMENT_IDENTIFICATION]),
-            fragment_offset: unsigned(record, &[iana::FRAGMENT_OFFSET]),
-            src_as: unsigned(record, &[iana::BGP_SOURCE_AS_NUMBER]),
-            dst_as: unsigned(record, &[iana::BGP_DESTINATION_AS_NUMBER]),
-            next_hop: address(
-                record,
-                iana::IP_NEXT_HOP_IPV4_ADDRESS,
-                iana::IP_NEXT_HOP_IPV6_ADDRESS,
-            ),
-            src_net: unsigned(
-                record,
-                &[
-                    iana::SOURCE_IPV4_PREFIX_LENGTH,
-                    iana::SOURCE_IPV6_PREFIX_LENGTH,
-                ],
-            ),
-            dst_net: unsigned(
-                record,
-                &[
-                    iana::DESTINATION_IPV4_PREFIX_LENGTH,
-                    iana::DESTINATION_IPV6_PREFIX_LENGTH,
-                ],
-            ),
-            bgp_next_hop: address(
-                record,
-                iana::BGP_NEXT_HOP_IPV4_ADDRESS,
-                iana::BGP_NEXT_HOP_IPV6_ADDRESS,
-            ),
-            // A frame's inner tag when it has two, as the customer's VLAN.
-            src_vlan: unsigned(
-                record,
-                &[
-                    iana::VLAN_ID,
-                    iana::DOT1Q_CUSTOMER_VLAN_ID,
-                    iana::DOT1Q_VLAN_ID,
-                ],
-            ),
-            dst_vlan: unsigned(record, &[iana::POST_VLAN_ID]),
-            observation_domain_id: unsigned(record, &[iana::ORIGINAL_OBSERVATION_DOMAIN_ID]),
-            forwarding_status: unsigned(record, &[iana::FORWARDING_STATUS]),
+            proto: unsigned(record, self.proto),
+            src_port: unsigned(record, self.src_port),
+            dst_port: unsigned(record, self.dst_port),
+            in_if: unsigned(record, self.in_if),
+            out_if: unsigned(record, self.out_if),
+            ip_tos: unsigned(record, self.ip_tos),
+            ip_ttl: unsigned(record, self.ip_ttl),
+            tcp_flags: unsigned(record, self.tcp_flags),
+            icmp_type: unsigned(record, self.icmp_type).or(icmp.map(|[icmp_type, _]| icmp_type)),
+            icmp_code: unsigned(record, self.icmp_code).or(icmp.map(|[_, icmp_code]| icmp_code)),
+            ipv6_flow_label: unsigned(record, self.ipv6_flow_label),
+            fragment_id: unsigned(record, self.fragment_id),
+            fragment_offset: unsigned(record, self.fragment_offset),
+            src_as: unsigned(record, self.src_as),
+            dst_as: unsigned(record, self.dst_as),
+            next_hop: address(record, self.next_hop),
+            src_net: unsigned(record, self.src_net),
+            dst_net: unsigned(record, self.dst_net),
+            bgp_next_hop: address(record, self.bgp_next_hop),
+            src_vlan: unsigned(record, self.src_vlan),
+            dst_vlan: unsigned(record, self.dst_vlan),
+            observation_domain_id: unsigned(record, self.observation_domain_id),
+            forwarding_status: unsigned(record, self.forwarding_status),
         }
     }
+}
+
+/// Makes flows of records, keeping the [`Mapping`] of each element list
+/// seen lately, so that the records of one shape, which come in runs,
+/// share the work of mapping them.
+#[derive(Debug, Default)]
+pub struct Mapper {
+    known: Vec<(Arc<Elements>, Mapping)>,
+    /// The list found last, tried first.
+    last: usize,
+}
+
+/// Element lists kept; the oldest goes when another comes.
+const MAPPINGS_KEPT: usize = 64;
+
+impl Mapper {
+    pub fn flow(&mut self, record: &Record) -> CommonFlow {
+        self.mapping(&record.elements).flow(record)
+    }
+
+    fn mapping(&mut self, elements: &Arc<Elements>) -> &Mapping {
+        let same = |(known, _): &(Arc<Elements>, Mapping)| Arc::ptr_eq(known, elements);
+        let index = match self.known.get(self.last) {
+            Some(last) if same(last) => self.last,
+            _ => match self.known.iter().position(same) {
+                Some(index) => index,
+                None => {
+                    if self.known.len() >= MAPPINGS_KEPT {
+                        self.known.remove(0);
+                    }
+                    self.known
+                        .push((Arc::clone(elements), Mapping::of(elements)));
+                    self.known.len() - 1
+                }
+            },
+        };
+        self.last = index;
+        &self.known[index].1
+    }
+}
+
+fn value(record: &Record, position: Option<usize>) -> Option<&Value> {
+    record.values.get(position?)
+}
+
+fn unsigned<T: TryFrom<u64>>(record: &Record, position: Option<usize>) -> Option<T> {
+    value(record, position)?.as_u64()?.try_into().ok()
+}
+
+fn address(record: &Record, position: Option<usize>) -> Option<IpAddr> {
+    match *value(record, position)? {
+        Value::Ipv4Address(address) => Some(IpAddr::V4(address)),
+        Value::Ipv6Address(address) => Some(IpAddr::V6(address)),
+        _ => None,
+    }
+}
+
+fn mac(record: &Record, position: Option<usize>) -> Option<MacAddr6> {
+    match *value(record, position)? {
+        Value::MacAddress(mac) => Some(MacAddr6::from(mac)),
+        _ => None,
+    }
+}
+
+fn time_ns(record: &Record, position: Option<usize>, reference: i64) -> Option<i64> {
+    i64::try_from(value(record, position)?.unix_nanos(reference)?).ok()
 }
 
 fn unix_nanos(time: SystemTime) -> i64 {
@@ -351,45 +484,6 @@ fn unix_nanos(time: SystemTime) -> i64 {
         Ok(after) => i64::try_from(after.as_nanos()).unwrap_or(i64::MAX),
         Err(before) => i64::try_from(before.duration().as_nanos()).map_or(i64::MIN, |nanos| -nanos),
     }
-}
-
-/// The rate the record's sampling elements give, each read where the
-/// record has it rather than by a scan of every field.
-fn sampling_rate(record: &Record) -> Option<u32> {
-    let mut options = SamplingOptions::default();
-    for element in SamplingOptions::ELEMENTS {
-        if let Some(value) = record.first(element) {
-            options.observe(element, value);
-        }
-    }
-    options.sampling().map(|sampling| sampling.rate)
-}
-
-fn first<'a>(record: &'a Record, elements: &[ElementId]) -> Option<&'a Value> {
-    elements.iter().find_map(|&element| record.first(element))
-}
-
-fn unsigned<T: TryFrom<u64>>(record: &Record, elements: &[ElementId]) -> Option<T> {
-    first(record, elements)?.as_u64()?.try_into().ok()
-}
-
-fn address(record: &Record, ipv4: ElementId, ipv6: ElementId) -> Option<IpAddr> {
-    match *first(record, &[ipv4, ipv6])? {
-        Value::Ipv4Address(address) => Some(address.into()),
-        Value::Ipv6Address(address) => Some(address.into()),
-        _ => None,
-    }
-}
-
-fn mac(record: &Record, elements: &[ElementId]) -> Option<MacAddr6> {
-    match *first(record, elements)? {
-        Value::MacAddress(mac) => Some(mac.into()),
-        _ => None,
-    }
-}
-
-fn time_ns(record: &Record, elements: &[ElementId], reference: i64) -> Option<i64> {
-    i64::try_from(first(record, elements)?.unix_nanos(reference)?).ok()
 }
 
 #[cfg(feature = "serde")]
@@ -423,6 +517,47 @@ mod tests {
         };
     }
     for_each_flow_field!(names);
+
+    #[test]
+    fn a_mapper_gives_the_same_flows_and_maps_each_shape_once() {
+        let elements = Arc::new(Elements::from(vec![
+            iana::SOURCE_IPV4_ADDRESS,
+            iana::OCTET_DELTA_COUNT,
+            iana::LAYER2_OCTET_DELTA_COUNT,
+            iana::ICMP_TYPE_CODE_IPV4,
+            iana::MAXIMUM_TTL,
+            iana::SAMPLING_INTERVAL,
+            iana::COLLECTION_TIME_MILLISECONDS,
+        ]));
+        let record = |octets| Record {
+            protocol: Protocol::Ipfix,
+            sequence_number: 9,
+            scope: Vec::new(),
+            elements: Arc::clone(&elements),
+            values: vec![
+                Value::Ipv4Address([192, 0, 2, 1].into()),
+                Value::Unsigned64(octets),
+                Value::Unsigned64(1),
+                Value::Unsigned16(0x0803),
+                Value::Unsigned8(60),
+                Value::Unsigned32(100),
+                Value::DateTimeMilliseconds(1_700_000_000_000),
+            ],
+        };
+        let mut mapper = Mapper::default();
+        for octets in 0..10 {
+            let record = record(octets);
+            let flow = mapper.flow(&record);
+            let expected = CommonFlow::from(&record);
+            assert_eq!(format!("{flow:?}"), format!("{expected:?}"));
+            assert_eq!(flow.bytes, Some(octets));
+            assert_eq!((flow.icmp_type, flow.icmp_code), (Some(8), Some(3)));
+            assert_eq!(flow.ip_ttl, Some(60));
+            assert_eq!(flow.sampling_rate, Some(100));
+            assert_eq!(flow.etype, Some(0x0800), "from the address family");
+        }
+        assert_eq!(mapper.known.len(), 1);
+    }
 
     #[test]
     fn the_field_list_names_every_field_of_the_struct() {

@@ -3,7 +3,6 @@
 //! adds appended.
 
 use std::borrow::Cow;
-use std::hash::Hash;
 use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
@@ -63,61 +62,39 @@ impl<P: Templated> Default for Converter<P> {
     }
 }
 
-/// The layouts of the templates converted so far, by whether uptimes
-/// convert, which a layout depends on, and by template: found by address
-/// for the data sets of a template the parser keeps, and by content when
-/// an address is new, as after a refresh that gave the parser a new value
-/// equal to the old one. Each address is kept alive by the `Arc` that
-/// owns it, so that no other template takes it.
-struct Layouts<T> {
-    layouts: Vec<Layout>,
-    by_content: FxHashMap<(Arc<T>, bool), usize>,
-    by_address: FxHashMap<(usize, bool), (Arc<T>, usize)>,
-}
+/// The layouts of the templates converted so far, by template and by
+/// whether uptimes convert, which a layout depends on. A template is known
+/// by its address: the parser keeps one value for a template however often
+/// it is sent, so the address names it, and the `Arc` kept with the layout
+/// keeps the address from being taken by another.
+struct Layouts<T>(FxHashMap<(usize, bool), (Arc<T>, Layout)>);
 
-/// Template addresses kept before everything is forgotten: templates
-/// expire in the parser without word, so the cache is bounded rather than
-/// swept. A layout's element lists are a few kilobytes at most, the dense
-/// index of each being bounded, so this bounds the cache to some
-/// megabytes.
+/// Layouts kept before they are all forgotten: templates expire in the
+/// parser without word, so the cache is bounded rather than swept. A
+/// layout's element lists are a few kilobytes at most, the dense index of
+/// each being bounded, so this bounds the cache to some megabytes.
 const MAX_LAYOUTS: usize = 1024;
 
 impl<T> Default for Layouts<T> {
     fn default() -> Self {
-        Self {
-            layouts: Vec::new(),
-            by_content: FxHashMap::default(),
-            by_address: FxHashMap::default(),
-        }
+        Self(FxHashMap::default())
     }
 }
 
 impl<T: DataTemplate> Layouts<T> {
     fn of(&mut self, context: &Context, template: &Arc<T>) -> &mut Layout {
-        let uptimes = context.time.uptimes_convert();
-        let address = (Arc::as_ptr(template) as usize, uptimes);
-        let index = match self.by_address.get(&address) {
-            Some(&(_, index)) => index,
-            None => {
-                if self.by_address.len() >= MAX_LAYOUTS {
-                    self.layouts.clear();
-                    self.by_content.clear();
-                    self.by_address.clear();
-                }
-                let layouts = &mut self.layouts;
-                let index = *self
-                    .by_content
-                    .entry((Arc::clone(template), uptimes))
-                    .or_insert_with(|| {
-                        layouts.push(Layout::of(context, &**template));
-                        layouts.len() - 1
-                    });
-                self.by_address
-                    .insert(address, (Arc::clone(template), index));
-                index
-            }
-        };
-        &mut self.layouts[index]
+        let key = (
+            Arc::as_ptr(template) as usize,
+            context.time.uptimes_convert(),
+        );
+        if self.0.len() >= MAX_LAYOUTS && !self.0.contains_key(&key) {
+            self.0.clear();
+        }
+        &mut self
+            .0
+            .entry(key)
+            .or_insert_with(|| (Arc::clone(template), Layout::of(context, &**template)))
+            .1
     }
 }
 
@@ -177,7 +154,7 @@ pub(crate) struct Context {
 }
 
 /// The template of a data set: every value has an element.
-pub trait DataTemplate: Hash + Eq {
+pub trait DataTemplate {
     fn element_ids(&self) -> impl Iterator<Item = ElementId>;
 }
 
@@ -548,17 +525,17 @@ mod tests {
         };
         let mut converter = Converter::<Packet>::default();
         let mut records = Vec::new();
+        // What a parser hands over for a template however often it is
+        // sent: the one value it keeps.
+        let template = octet_count_template();
         for octets in 0..100 {
-            // What a parser keeps after each refresh: a new value, equal to
-            // the old one.
             converter.convert(
-                packet(octet_count_template(), octets),
+                packet(Arc::clone(&template), octets),
                 &received,
                 &mut records,
             );
         }
         assert_eq!(records.len(), 100);
-        assert_eq!(converter.layouts.layouts.len(), 1);
-        assert_eq!(converter.layouts.by_address.len(), 100);
+        assert_eq!(converter.layouts.0.len(), 1);
     }
 }

@@ -15,7 +15,7 @@ pub use args::CollectArgs;
 use args::{FlowType, Input};
 use enrich::{EnrichmentConfig, EnrichmentEngine};
 use log::{error, info, warn};
-use rustflow_core::convert::CommonFlow;
+use rustflow_core::convert::{CommonFlow, Mapper};
 use rustflow_core::protocol::information_element::Registry;
 use rustflow_core::protocol::{Family, ParseError, Protocol};
 use rustflow_core::reader::{Collector, Received, Record};
@@ -69,6 +69,7 @@ fn collect(
 ) -> Result<(), EncoderGone> {
     let mut exporters = metrics::ExporterMetrics::new(metrics, collector.family().name());
     let mut records: Vec<Record> = Vec::new();
+    let mut mapper = Mapper::default();
 
     loop {
         let (src, payload, time) = match source.next() {
@@ -114,7 +115,7 @@ fn collect(
                         flows.extend(records.iter().filter(|record| !record.is_options()).map(
                             |record| CommonFlow {
                                 time_received_ns,
-                                ..CommonFlow::from(record)
+                                ..mapper.flow(record)
                             },
                         ));
                     })?;
