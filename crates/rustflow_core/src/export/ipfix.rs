@@ -9,16 +9,17 @@ use crate::export::{ExportError, unix_seconds};
 use crate::protocol::DataSet;
 use crate::protocol::information_element::ElementId;
 use crate::protocol::ipfix::{
-    FieldSpecifier, Header, OptionsTemplate, Packet, Set, Template, TemplateRef, VARIABLE_LENGTH,
-    VERSION,
+    BasicList, FieldSpecifier, Header, ListRecords, OptionsTemplate, Packet, Set, SubTemplateList,
+    SubTemplateMultiList, Template, TemplateRef, VARIABLE_LENGTH, VERSION,
 };
 use crate::protocol::value::{Value, natural_length};
 
 /// Exports records as the IPFIX messages of one observation domain.
 ///
-/// Records of one shape, the same scope and elements, share a template,
-/// made from the first record of the shape: each field as wide as its
-/// value's type, or variable-length for a string, an octet array or a list.
+/// Records whose values take the same fields share a template: each field
+/// as wide as its value's type, or variable-length for a string, an octet
+/// array or a list, so that records of the same elements with a value of
+/// another width get a template of their own.
 /// A message carries every template before the first data record of a new
 /// shape, and again once the refresh interval has passed, as a collector
 /// over UDP needs (RFC 7011 section 8.4).
@@ -27,7 +28,7 @@ pub struct Exporter {
     observation_domain_id: u32,
     /// Data records sent so far, modulo 2^32.
     sequence_number: u32,
-    templates: Catalog<TemplateRef>,
+    templates: Catalog<TemplateRef, FieldSpecifier>,
 }
 
 impl Exporter {
@@ -52,13 +53,11 @@ impl Exporter {
         self.templates.resend();
     }
 
-    /// Makes the template for records of `record`'s shape ahead of any such
+    /// Makes the template for records like `record` ahead of any such
     /// record, so that it goes out with the next templates rather than with
     /// the first record.
     pub fn declare(&mut self, record: &Record) -> Result<(), ExportError> {
-        self.templates
-            .template_of(record, |template_id| make_template(record, template_id))
-            .map(|_| ())
+        self.template_of(record).map(|_| ())
     }
 
     pub fn observation_domain_id(&self) -> u32 {
@@ -77,17 +76,17 @@ impl Exporter {
     pub fn export(&mut self, records: &[Record], now: SystemTime) -> Result<Packet, ExportError> {
         let mut data = Vec::new();
         for record in records {
-            let template = self
-                .templates
-                .template_of(record, |template_id| make_template(record, template_id))?;
-            let values = record
+            let template = self.template_of(record)?;
+            let mut values = Vec::with_capacity(record.scope.len() + record.values.len());
+            for value in record
                 .scope
                 .iter()
                 .map(|(_, value)| value)
                 .chain(&record.values)
-                .cloned()
-                .collect();
-            push(&mut data, template, values);
+            {
+                values.push(self.remapped(value)?);
+            }
+            push(&mut data, &template, values);
         }
 
         let mut sets = Vec::new();
@@ -109,6 +108,77 @@ impl Exporter {
         Ok(Packet { header, sets })
     }
 
+    fn template_of(&mut self, record: &Record) -> Result<TemplateRef, ExportError> {
+        self.templates
+            .template_of(
+                record,
+                scope_field,
+                |element, value| Ok(field(element, value)),
+                make,
+            )
+            .cloned()
+    }
+
+    /// A value as sent: a list's records, of templates the exporter it came
+    /// from had, go as records of this exporter's templates of the same
+    /// fields, which are sent along (RFC 6313 section 6); anything else as
+    /// it is.
+    fn remapped(&mut self, value: &Value) -> Result<Value, ExportError> {
+        Ok(match value {
+            Value::BasicList(list) => Value::BasicList(Box::new(BasicList {
+                semantic: list.semantic,
+                field: list.field,
+                values: self.remapped_all(&list.values)?,
+            })),
+            Value::SubTemplateList(list) => Value::SubTemplateList(Box::new(SubTemplateList {
+                semantic: list.semantic,
+                records: self.remapped_records(&list.records)?,
+            })),
+            Value::SubTemplateMultiList(list) => {
+                let groups = list
+                    .groups
+                    .iter()
+                    .map(|records| self.remapped_records(records))
+                    .collect::<Result<_, _>>()?;
+                Value::SubTemplateMultiList(Box::new(SubTemplateMultiList {
+                    semantic: list.semantic,
+                    groups,
+                }))
+            }
+            other => other.clone(),
+        })
+    }
+
+    fn remapped_all(&mut self, values: &[Value]) -> Result<Vec<Value>, ExportError> {
+        values.iter().map(|value| self.remapped(value)).collect()
+    }
+
+    fn remapped_records(&mut self, records: &ListRecords) -> Result<ListRecords, ExportError> {
+        match records {
+            ListRecords::Decoded { template, records } => {
+                let (scope_fields, fields): (&[FieldSpecifier], &[FieldSpecifier]) = match template
+                {
+                    TemplateRef::Data(template) => (&[], &template.fields),
+                    TemplateRef::Options(template) => {
+                        (&template.scope_fields, &template.option_fields)
+                    }
+                };
+                let template = self
+                    .templates
+                    .template_for(scope_fields, fields, make)?
+                    .clone();
+                let records = records
+                    .iter()
+                    .map(|values| self.remapped_all(values))
+                    .collect::<Result<_, _>>()?;
+                Ok(ListRecords::Decoded { template, records })
+            }
+            ListRecords::Undecoded { template_id, .. } => {
+                Err(ExportError::UndecodedList(*template_id))
+            }
+        }
+    }
+
     fn template_sets(&self) -> impl Iterator<Item = Set> {
         let mut data = Vec::new();
         let mut options = Vec::new();
@@ -124,19 +194,12 @@ impl Exporter {
     }
 }
 
-fn make_template(record: &Record, template_id: u16) -> Result<TemplateRef, ExportError> {
-    let mut scope_fields = Vec::with_capacity(record.scope.len());
-    for (scope, value) in &record.scope {
-        match scope {
-            Scope::Element(element) => scope_fields.push(field(*element, value)),
-            Scope::Type(scope_type) => return Err(ExportError::Scope(*scope_type)),
-        }
-    }
-    let fields = record
-        .iter()
-        .map(|(element, value)| field(element, value))
-        .collect();
-    Ok(if scope_fields.is_empty() {
+fn make(
+    template_id: u16,
+    scope_fields: Vec<FieldSpecifier>,
+    fields: Vec<FieldSpecifier>,
+) -> TemplateRef {
+    if scope_fields.is_empty() {
         TemplateRef::Data(Arc::new(Template {
             template_id,
             fields,
@@ -147,7 +210,7 @@ fn make_template(record: &Record, template_id: u16) -> Result<TemplateRef, Expor
             scope_fields,
             option_fields: fields,
         }))
-    })
+    }
 }
 
 /// Adds a record to the last set if it is of its template, or in a new set.
@@ -171,6 +234,14 @@ fn push(sets: &mut Vec<Set>, template: &TemplateRef, values: Vec<Value>) {
             template: Arc::clone(template),
             records: vec![values],
         })),
+    }
+}
+
+/// The scope field of a scope value, which in IPFIX is an element's.
+fn scope_field(scope: Scope, value: &Value) -> Result<FieldSpecifier, ExportError> {
+    match scope {
+        Scope::Element(element) => Ok(field(element, value)),
+        Scope::Type(scope_type) => Err(ExportError::Scope(scope_type)),
     }
 }
 
@@ -407,6 +478,90 @@ mod tests {
         };
         assert_eq!(first.records.len(), 2);
         assert_eq!(exporter.templates().count(), 2, "one template per shape");
+    }
+
+    #[test]
+    fn values_of_another_width_get_a_template_of_their_own() {
+        let mut exporter = Exporter::new(DOMAIN);
+        let narrow = record(
+            Vec::new(),
+            &[(iana::OCTET_DELTA_COUNT, Value::Unsigned8(1))],
+        );
+        let wide = record(
+            Vec::new(),
+            &[(iana::OCTET_DELTA_COUNT, Value::Unsigned64(1000))],
+        );
+        let packet = exporter.export(&[narrow, wide], NOW).unwrap();
+        assert_eq!(exporter.templates().count(), 2);
+        let mut buf = Vec::new();
+        ipfix::write(&packet, &mut buf).unwrap();
+        let mut parser = ipfix::Parser::new(Registry::iana(), Duration::from_secs(60));
+        let records = collected(&mut parser, &packet);
+        assert_eq!(
+            records[1].first(iana::OCTET_DELTA_COUNT),
+            Some(&Value::Unsigned64(1000))
+        );
+    }
+
+    #[test]
+    fn list_records_go_as_records_of_this_exporters_templates() {
+        use crate::protocol::ipfix::{ListRecords, ListSemantic, SubTemplateList};
+
+        // A template an upstream exporter had as 500, decoded by it.
+        let upstream = TemplateRef::Data(Arc::new(ipfix::Template {
+            template_id: 500,
+            fields: vec![FieldSpecifier {
+                information_element_id: iana::OCTET_DELTA_COUNT.id,
+                field_length: 4,
+                enterprise_number: None,
+            }],
+        }));
+        let list = Value::SubTemplateList(Box::new(SubTemplateList {
+            semantic: ListSemantic::AllOf,
+            records: ListRecords::Decoded {
+                template: upstream,
+                records: vec![vec![Value::Unsigned32(7)], vec![Value::Unsigned32(8)]],
+            },
+        }));
+        let mut exporter = Exporter::new(DOMAIN);
+        let listed = record(Vec::new(), &[(iana::SUB_TEMPLATE_LIST, list)]);
+        let packet = exporter.export(&[listed], at(1)).unwrap();
+
+        let ids: Vec<_> = exporter.templates().map(TemplateRef::template_id).collect();
+        assert_eq!(ids, [256, 257], "the list's template, advertised too");
+
+        let mut buf = Vec::new();
+        ipfix::write(&packet, &mut buf).unwrap();
+        let parsed = ipfix::Parser::new(Registry::iana(), Duration::from_secs(60))
+            .parse(&buf)
+            .unwrap();
+        let Set::Data(data) = &parsed.sets[1] else {
+            panic!("{:?}", parsed.sets);
+        };
+        let Value::SubTemplateList(list) = &data.records[0][0] else {
+            panic!("{:?}", data.records);
+        };
+        let ListRecords::Decoded { template, records } = &list.records else {
+            panic!("{:?}", list.records);
+        };
+        assert_eq!(template.template_id(), 257);
+        assert_eq!(
+            records,
+            &[vec![Value::Unsigned32(7)], vec![Value::Unsigned32(8)]]
+        );
+
+        let undecoded = Value::SubTemplateList(Box::new(SubTemplateList {
+            semantic: ListSemantic::AllOf,
+            records: ListRecords::Undecoded {
+                template_id: 600,
+                data: vec![1, 2],
+            },
+        }));
+        let undecodable = record(Vec::new(), &[(iana::SUB_TEMPLATE_LIST, undecoded)]);
+        assert_eq!(
+            exporter.export(&[undecodable], at(2)),
+            Err(ExportError::UndecodedList(600))
+        );
     }
 
     #[test]

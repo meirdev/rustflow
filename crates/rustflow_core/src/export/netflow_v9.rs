@@ -17,8 +17,9 @@ use crate::protocol::value::{Value, natural_length};
 ///
 /// Templates are made and sent as the [IPFIX exporter](super::ipfix)
 /// does, with what NetFlow v9 lacks: every field has a fixed length, a
-/// string or octet array's being that of the first value seen; enterprise
-/// elements and lists have no field and are errors. Absolute flow times are
+/// string or octet array's being its value's, so that values of another
+/// length get a template of their own; enterprise elements and lists have
+/// no field and are errors. Absolute flow times are
 /// sent as uptimes relative to when the exporter booted
 /// (`flowStartSysUpTime`), and an options record's scope as the scope type
 /// its element stands for (RFC 3954 section 6.1).
@@ -28,7 +29,7 @@ pub struct Exporter {
     boot_ms: u64,
     /// Packets sent so far, modulo 2^32.
     sequence_number: u32,
-    templates: Catalog<Kind>,
+    templates: Catalog<Kind, Field>,
 }
 
 #[derive(Debug)]
@@ -66,9 +67,12 @@ impl Exporter {
     pub fn declare(&mut self, record: &Record) -> Result<(), ExportError> {
         let boot_ms = self.boot_ms;
         self.templates
-            .template_of(record, |template_id| {
-                make_template(record, template_id, boot_ms)
-            })
+            .template_of(
+                record,
+                scope_field,
+                |element, value| field(element, value, boot_ms),
+                make,
+            )
             .map(|_| ())
     }
 
@@ -88,9 +92,12 @@ impl Exporter {
         let boot_ms = self.boot_ms;
         let mut data = Vec::new();
         for record in records {
-            let template = self.templates.template_of(record, |template_id| {
-                make_template(record, template_id, boot_ms)
-            })?;
+            let template = self.templates.template_of(
+                record,
+                scope_field,
+                |element, value| field(element, value, boot_ms),
+                make,
+            )?;
             let mut values: Vec<_> = record
                 .scope
                 .iter()
@@ -137,17 +144,8 @@ impl Exporter {
     }
 }
 
-fn make_template(record: &Record, template_id: u16, boot_ms: u64) -> Result<Kind, ExportError> {
-    let scope_fields = record
-        .scope
-        .iter()
-        .map(|(scope, value)| scope_field(*scope, value))
-        .collect::<Result<Vec<_>, _>>()?;
-    let fields = record
-        .iter()
-        .map(|(element, value)| field(element, value, boot_ms))
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(if scope_fields.is_empty() {
+fn make(template_id: u16, scope_fields: Vec<Field>, fields: Vec<Field>) -> Kind {
+    if scope_fields.is_empty() {
         Kind::Data(Arc::new(Template {
             template_id,
             fields,
@@ -158,7 +156,7 @@ fn make_template(record: &Record, template_id: u16, boot_ms: u64) -> Result<Kind
             scope_fields,
             option_fields: fields,
         }))
-    })
+    }
 }
 
 /// Adds a record to the last FlowSet if it is of its template, or in a new

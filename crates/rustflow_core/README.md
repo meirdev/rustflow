@@ -331,10 +331,11 @@ converter.convert(packet, &Received { exporter, time: None }, &mut records);
 ## Exporting records
 
 An `Exporter` is the reverse of a reader: records go in, packets of one
-protocol come out. Records of one shape, the same scope and elements, share
-a template made from the first of them, with each field as wide as its
-value's type and strings variable-length. A message carries the templates
-before the first data of a new shape, and again after the refresh interval.
+protocol come out. Records whose values take the same fields share a
+template, with each field as wide as its value's type and strings
+variable-length; records of a list carry their own templates along. A
+message carries the templates before the first data of a new shape, and
+again after the refresh interval.
 
 ```rust
 use std::time::{Duration, SystemTime};

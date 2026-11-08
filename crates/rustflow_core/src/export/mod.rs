@@ -40,6 +40,9 @@ pub enum ExportError {
     Missing(ElementId),
     /// Records of more shapes than there are template IDs.
     TemplateIds,
+    /// A list of records of a template the collector did not have, kept as
+    /// sent, which cannot be given a template here.
+    UndecodedList(u16),
 }
 
 impl fmt::Display for ExportError {
@@ -50,6 +53,9 @@ impl fmt::Display for ExportError {
             Self::NoField(element) => write!(f, "{element} has no field in the protocol"),
             Self::Missing(element) => write!(f, "record has no {element}"),
             Self::TemplateIds => write!(f, "no template ID left"),
+            Self::UndecodedList(template_id) => {
+                write!(f, "list records of template {template_id} were not decoded")
+            }
         }
     }
 }
@@ -101,6 +107,10 @@ mod tests {
             "record has no (8)"
         );
         assert_eq!(ExportError::TemplateIds.to_string(), "no template ID left");
+        assert_eq!(
+            ExportError::UndecodedList(500).to_string(),
+            "list records of template 500 were not decoded"
+        );
     }
 
     #[test]

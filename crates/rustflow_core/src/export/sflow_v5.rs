@@ -1,6 +1,7 @@
 //! Records exported as sFlow v5 datagrams, each record a flow sample of one
 //! packet.
 
+use std::io;
 use std::net::IpAddr;
 use std::time::SystemTime;
 
@@ -23,6 +24,11 @@ const IPPROTO_TCP: u8 = 6;
 const IPPROTO_UDP: u8 = 17;
 /// How many bytes of a sampled packet agents usually send.
 const HEADER_BYTES: usize = 128;
+/// The longest frame a flow's octets per packet are taken as: an Ethernet
+/// header and the largest IP packet. A count beyond it is not a packet's.
+const MAX_FRAME: usize = 14 + 65535;
+/// The payload of every sampled packet, as long as any can be.
+static ZEROS: [u8; MAX_FRAME] = [0; MAX_FRAME];
 /// A VLAN the agent does not know (sFlow version 5 section 4).
 const UNKNOWN_VLAN: u32 = 0xffff_ffff;
 /// The largest ifIndex a compact sample's source ID holds.
@@ -180,7 +186,8 @@ fn sampled_header(record: &Record) -> Result<SampledHeader, ExportError> {
         .or_else(|| number(record, iana::LAYER2_OCTET_DELTA_COUNT))
         .unwrap_or(0);
     let packets = number(record, iana::PACKET_DELTA_COUNT).unwrap_or(1).max(1);
-    let frame_length = usize::try_from(octets / packets).unwrap_or(usize::MAX);
+    let frame_length =
+        usize::try_from(octets / packets).map_or(MAX_FRAME, |length| length.min(MAX_FRAME));
 
     let ethernet = PacketBuilder::ethernet2(
         mac(record, iana::SOURCE_MAC_ADDRESS, [2, 0, 0, 0, 0, 1]),
@@ -217,7 +224,9 @@ fn sampled_header(record: &Record) -> Result<SampledHeader, ExportError> {
 
     let source_port = unsigned16(record, iana::SOURCE_TRANSPORT_PORT);
     let destination_port = unsigned16(record, iana::DESTINATION_TRANSPORT_PORT);
-    let mut frame = Vec::with_capacity(frame_length);
+    // Only the head of the frame is kept; the headers' lengths and
+    // checksums still count the whole payload.
+    let mut head = Head::default();
     let written = match protocol {
         IPPROTO_TCP => {
             let mut tcp = TcpHeader::new(source_port, destination_port, 0, 65535);
@@ -232,30 +241,49 @@ fn sampled_header(record: &Record) -> Result<SampledHeader, ExportError> {
             tcp.cwr = flags & 0x080 != 0;
             tcp.ns = flags & 0x100 != 0;
             let step = ip.tcp_header(tcp);
-            let payload = vec![0; frame_length.saturating_sub(step.size(0))];
-            step.write(&mut frame, &payload)
+            let payload = &ZEROS[..frame_length.saturating_sub(step.size(0))];
+            step.write(&mut head, payload)
         }
         IPPROTO_UDP => {
             let step = ip.udp(source_port, destination_port);
-            let payload = vec![0; frame_length.saturating_sub(step.size(0))];
-            step.write(&mut frame, &payload)
+            let payload = &ZEROS[..frame_length.saturating_sub(step.size(0))];
+            step.write(&mut head, payload)
         }
         _ => {
-            let payload = vec![0; frame_length.saturating_sub(ip.size(0))];
-            ip.write(&mut frame, IpNumber(protocol), &payload)
+            let payload = &ZEROS[..frame_length.saturating_sub(ip.size(0))];
+            ip.write(&mut head, IpNumber(protocol), payload)
         }
     };
     // Only a payload too long for the IP header's length field fails,
-    // which the octets per packet of a flow do not reach.
+    // which the longest frame leaves room for.
     written.map_err(|_| ExportError::Missing(iana::OCTET_DELTA_COUNT))?;
-    let frame_length = u32::try_from(frame.len()).unwrap_or(u32::MAX);
-    frame.truncate(HEADER_BYTES);
     Ok(SampledHeader {
         protocol: HeaderProtocol::EthernetIso88023,
-        frame_length,
+        frame_length: u32::try_from(head.written).unwrap_or(u32::MAX),
         stripped: 0,
-        header: frame,
+        header: head.bytes,
     })
+}
+
+/// A writer keeping the first [`HEADER_BYTES`] of what is written, and
+/// counting the rest.
+#[derive(Default)]
+struct Head {
+    bytes: Vec<u8>,
+    written: usize,
+}
+
+impl io::Write for Head {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        let room = HEADER_BYTES.saturating_sub(self.bytes.len());
+        self.bytes.extend_from_slice(&data[..data.len().min(room)]);
+        self.written += data.len();
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 fn extended_switch(record: &Record) -> Option<ExtendedSwitch> {
@@ -442,6 +470,48 @@ mod tests {
 
         let next = agent.export(&[flow()], at_ms(BOOT_MS + 3_000)).unwrap();
         assert_eq!(next.header.sequence_number, 1, "datagrams are counted");
+    }
+
+    #[test]
+    fn the_sampled_packet_is_no_longer_than_a_packet_can_be() {
+        let mut agent = Agent::new([192, 0, 2, 1].into(), 5, at_ms(BOOT_MS));
+        let flow = |octets, packets| {
+            record(&[
+                (
+                    iana::SOURCE_IPV4_ADDRESS,
+                    Value::Ipv4Address([10, 0, 0, 1].into()),
+                ),
+                (
+                    iana::DESTINATION_IPV4_ADDRESS,
+                    Value::Ipv4Address([10, 0, 0, 2].into()),
+                ),
+                (iana::PROTOCOL_IDENTIFIER, Value::Unsigned8(17)),
+                (iana::OCTET_DELTA_COUNT, Value::Unsigned64(octets)),
+                (iana::PACKET_DELTA_COUNT, Value::Unsigned64(packets)),
+            ])
+        };
+        let packet = agent
+            .export(&[flow(u64::MAX, 1), flow(9000, 1)], at_ms(BOOT_MS))
+            .unwrap();
+        let lengths: Vec<_> = packet
+            .samples
+            .iter()
+            .map(|sample| {
+                let Sample::Flow(sample) = sample else {
+                    unreachable!()
+                };
+                let FlowRecord::SampledHeader(header) = &sample.records[0] else {
+                    unreachable!()
+                };
+                (header.frame_length as usize, header.header.len())
+            })
+            .collect();
+        assert_eq!(lengths, [(MAX_FRAME, HEADER_BYTES), (9000, HEADER_BYTES)]);
+        let records = collected(&packet);
+        assert_eq!(
+            records[1].first(iana::LAYER2_OCTET_DELTA_COUNT),
+            Some(&Value::Unsigned64(9000))
+        );
     }
 
     #[test]
