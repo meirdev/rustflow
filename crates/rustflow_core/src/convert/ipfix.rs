@@ -2,12 +2,35 @@
 
 use crate::convert::templated::{PacketHeader, Sets, Templated};
 use crate::convert::time::{TimeBase, Uptime};
-use crate::convert::{Protocol, templated};
+use crate::convert::{Received, Record, templated};
+use crate::protocol::Protocol;
 use crate::protocol::ipfix::{OptionsTemplate, Packet, Set, Template};
 
-/// Converts one exporter's IPFIX messages; see
-/// [`templated::Converter`].
-pub type Converter = templated::Converter<Packet>;
+/// Converts one exporter's IPFIX messages, keeping what its options
+/// records said of each observation domain, as a parser keeps its
+/// templates. Use one converter per exporter address.
+#[derive(Default)]
+pub struct Converter(templated::Converter<Packet>);
+
+impl Converter {
+    /// Converts a message's records, adding them to `records`: its options
+    /// records first, with their scope, then its data records, with the
+    /// sampling the options records gave their observation domain, if any.
+    pub fn convert(
+        &mut self,
+        packet: Packet,
+        received: &Received,
+        records: &mut impl Extend<Record>,
+    ) {
+        self.0.convert(packet, received, records);
+    }
+
+    /// The latest options record of each kind the exporter sent, with its
+    /// observation domain.
+    pub fn options(&self) -> impl Iterator<Item = (u32, &Record)> {
+        self.0.options()
+    }
+}
 
 impl Templated for Packet {
     type Data = Template;
@@ -284,7 +307,7 @@ mod tests {
             time: None,
         };
         let mut records = Vec::new();
-        crate::convert::sflow_v5::convert(packet, &received, &mut records);
+        crate::convert::sflow_v5::Converter::default().convert(packet, &received, &mut records);
         let by_sflow = records.remove(0);
 
         for element in [

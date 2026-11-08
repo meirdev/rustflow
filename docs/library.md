@@ -55,19 +55,16 @@ By default an exporter is one session whatever source port its datagrams come fr
 Elements go into the registry before the collector is built, which is the same mechanism behind the collector's `--ie-mapping` flag:
 
 ```rust
-use std::borrow::Cow;
-
 use rustflow_core::protocol::information_element::{
     DataType, ElementId, InformationElement, Registry,
 };
 
 let mut registry = Registry::iana();
-registry.insert(InformationElement {
-    id: ElementId::from((9, 1)),
-    name: Cow::Borrowed("ciscoExample"),
-    data_type: DataType::Unsigned32,
-    semantics: None,
-});
+registry.insert(InformationElement::new(
+    ElementId::from((9, 1)),
+    "ciscoExample",
+    DataType::Unsigned32,
+));
 ```
 
 ## Exporting

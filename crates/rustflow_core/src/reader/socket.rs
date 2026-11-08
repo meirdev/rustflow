@@ -319,5 +319,5 @@ mod tests {
         assert_eq!(flows.reader().options().iter().count(), 1);
     }
 
-    use crate::convert::Protocol;
+    use crate::protocol::Protocol;
 }

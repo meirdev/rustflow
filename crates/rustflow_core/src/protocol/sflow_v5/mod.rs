@@ -140,6 +140,7 @@ fn too_large(field: &'static str, value: u32) -> WriteError {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub enum Sample {
     Flow(FlowSample),
     Counters(CountersSample),
@@ -226,6 +227,7 @@ pub struct DiscardedPacket {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub enum FlowRecord {
     SampledHeader(SampledHeader),
     SampledEthernet(SampledEthernet),
@@ -249,6 +251,7 @@ pub enum FlowRecord {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub enum CounterRecord {
     IfCounters(IfCounters),
     EthernetCounters(EthernetCounters),

@@ -15,6 +15,7 @@ mod registry;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, TryFromPrimitive, IntoPrimitive)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum DataType {
     OctetArray = 0,
     Unsigned8 = 1,
@@ -47,6 +48,7 @@ pub enum DataType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, TryFromPrimitive, IntoPrimitive)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum DataTypeSemantics {
     Default = 0,
     Quantity = 1,
@@ -103,11 +105,28 @@ impl From<(u32, u16)> for ElementId {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct InformationElement {
     pub id: ElementId,
     pub name: Cow<'static, str>,
     pub data_type: DataType,
     pub semantics: Option<DataTypeSemantics>,
+}
+
+impl InformationElement {
+    pub fn new(id: ElementId, name: impl Into<Cow<'static, str>>, data_type: DataType) -> Self {
+        Self {
+            id,
+            name: name.into(),
+            data_type,
+            semantics: None,
+        }
+    }
+
+    pub fn with_semantics(mut self, semantics: DataTypeSemantics) -> Self {
+        self.semantics = Some(semantics);
+        self
+    }
 }
 
 #[cfg(test)]

@@ -3,7 +3,6 @@
 //! `data_type`, the type named as the registry's own or as the earlier
 //! release named it, `Unsigned` standing for any width.
 
-use std::borrow::Cow;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
@@ -28,15 +27,14 @@ pub fn load(registry: &mut Registry, path: &Path) -> Result<usize> {
         let row: Row = row?;
         let data_type = data_type(&row.data_type)
             .with_context(|| format!("element {}: unknown data type", row.name))?;
-        registry.insert(InformationElement {
-            id: ElementId {
+        registry.insert(InformationElement::new(
+            ElementId {
                 enterprise_number: row.enterprise_number,
                 id: row.id,
             },
-            name: Cow::Owned(row.name),
+            row.name,
             data_type,
-            semantics: None,
-        });
+        ));
         count += 1;
     }
     Ok(count)

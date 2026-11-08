@@ -139,8 +139,8 @@ mod tests {
     use std::time::{Duration, UNIX_EPOCH};
 
     use super::*;
-    use crate::convert::{self, Elements, Protocol, Received};
-    use crate::protocol::netflow_v5;
+    use crate::convert::{self, Elements, Received};
+    use crate::protocol::{Protocol, netflow_v5};
 
     const BOOT_MS: u64 = 1_700_000_000_000;
     const START_MS: u64 = BOOT_MS + 90_000;
@@ -231,7 +231,7 @@ mod tests {
             time: None,
         };
         let mut records = Vec::new();
-        convert::netflow_v5::convert(parsed, &received, &mut records);
+        convert::netflow_v5::Converter::default().convert(parsed, &received, &mut records);
         assert_eq!(records.len(), 2);
         let sent = flow();
         let back = &records[0];

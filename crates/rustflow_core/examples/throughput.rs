@@ -21,13 +21,13 @@ use std::net::SocketAddr;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use pcap_file::pcap::PcapReader;
-use rustflow_core::convert::Mapper;
+use rustflow_core::convert::{Mapper, Received, Record};
 use rustflow_core::dissect::udp_payload;
 use rustflow_core::protocol::information_element::Registry;
 use rustflow_core::protocol::{
     Family, ParseError, Protocol, ipfix, netflow_v5, netflow_v9, sflow_v5,
 };
-use rustflow_core::reader::{Collector, Received, Record};
+use rustflow_core::reader::Collector;
 
 struct Datagram {
     exporter: SocketAddr,

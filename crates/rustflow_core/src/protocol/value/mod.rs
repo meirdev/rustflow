@@ -23,6 +23,7 @@ mod timestamp;
 /// A decoded field value. Timestamps keep their wire encoding.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub enum Value {
     Unsigned8(u8),
     Unsigned16(u16),

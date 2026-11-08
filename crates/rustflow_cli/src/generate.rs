@@ -17,11 +17,11 @@ use pcap_file::pcap::{PcapPacket, PcapWriter};
 use rand::Rng;
 use rand::distr::uniform::SampleUniform;
 use rand::seq::IndexedRandom;
-use rustflow_core::convert::{Elements, Protocol, Record, Scope};
+use rustflow_core::convert::{Elements, Record, Scope};
 use rustflow_core::export;
 use rustflow_core::protocol::information_element::iana;
 use rustflow_core::protocol::value::Value;
-use rustflow_core::protocol::{ipfix, netflow_v5, netflow_v9, sflow_v5};
+use rustflow_core::protocol::{Protocol, ipfix, netflow_v5, netflow_v9, sflow_v5};
 
 const IPPROTO_TCP: u8 = 6;
 
@@ -121,7 +121,7 @@ enum Generator {
     NetflowV5(export::netflow_v5::Exporter),
     NetflowV9(export::netflow_v9::Exporter),
     Ipfix(export::ipfix::Exporter),
-    Sflow(export::sflow_v5::Agent),
+    Sflow(export::sflow_v5::Exporter),
 }
 
 impl Generator {
@@ -138,7 +138,7 @@ impl Generator {
                     IpNet::V4(_) => IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
                     IpNet::V6(_) => IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)),
                 };
-                Self::Sflow(export::sflow_v5::Agent::new(agent_address, domain, boot))
+                Self::Sflow(export::sflow_v5::Exporter::new(agent_address, domain, boot))
             }
         }
     }

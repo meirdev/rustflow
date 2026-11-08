@@ -30,6 +30,7 @@ pub struct Link {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Net {
     Ipv4(Ipv4),
     Ipv6(Ipv6),
@@ -60,6 +61,7 @@ pub struct Ipv6 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Transport {
     Tcp {
         source_port: u16,

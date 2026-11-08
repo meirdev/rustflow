@@ -16,9 +16,10 @@ use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-use rustflow_core::convert::{Elements, Protocol, Record};
+use rustflow_core::convert::{Elements, Record};
 use rustflow_core::export::{ipfix, netflow_v5, netflow_v9, sflow_v5};
 use rustflow_core::protocol;
+use rustflow_core::protocol::Protocol;
 use rustflow_core::protocol::information_element::iana;
 use rustflow_core::protocol::value::Value;
 
@@ -60,7 +61,7 @@ macro_rules! exporting {
 exporting!(netflow_v5::Exporter, protocol::netflow_v5::write);
 exporting!(netflow_v9::Exporter, protocol::netflow_v9::write);
 exporting!(ipfix::Exporter, protocol::ipfix::write);
-exporting!(sflow_v5::Agent, protocol::sflow_v5::write);
+exporting!(sflow_v5::Exporter, protocol::sflow_v5::write);
 
 fn main() -> Result<(), Error> {
     let mut args = std::env::args().skip(1);
@@ -77,7 +78,7 @@ fn main() -> Result<(), Error> {
     );
 
     let boot = SystemTime::now() - Duration::from_secs(3600);
-    let agent = || sflow_v5::Agent::new(Ipv4Addr::new(192, 0, 2, 1).into(), 1, boot);
+    let sflow = || sflow_v5::Exporter::new(Ipv4Addr::new(192, 0, 2, 1).into(), 1, boot);
     let v9 = || netflow_v9::Exporter::new(1, boot);
     let v5 = || netflow_v5::Exporter::new(boot);
     let ipfix = || ipfix::Exporter::new(1);
@@ -89,7 +90,7 @@ fn main() -> Result<(), Error> {
     run("NetFlow v5", &records, per_packet, v5)?;
     run("NetFlow v9", &records, per_packet, v9)?;
     run("IPFIX", &records, per_packet, ipfix)?;
-    run("sFlow", &records, per_packet, agent)?;
+    run("sFlow", &records, per_packet, sflow)?;
     Ok(())
 }
 

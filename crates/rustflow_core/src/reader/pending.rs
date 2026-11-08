@@ -12,6 +12,7 @@ use crate::convert::Received;
 /// have yet; see
 /// [`Collector::with_pending`](crate::reader::Collector::with_pending).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PendingLimits {
     /// Bytes held for one session, an exporter's transport address; past
     /// them, the session's oldest datagrams are dropped.
@@ -21,8 +22,18 @@ pub struct PendingLimits {
     pub max_age: Duration,
 }
 
+impl PendingLimits {
+    pub fn new(session_bytes: usize, max_age: Duration) -> Self {
+        Self {
+            session_bytes,
+            max_age,
+        }
+    }
+}
+
 /// What a collector holds, and what it had to drop.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PendingStats {
     /// Original datagram sizes charged to the queue. A partially decoded
     /// datagram keeps its charge until all of its pending sets are released.

@@ -10,7 +10,8 @@ use std::net::IpAddr;
 use crate::convert::packet_fields::{self, IPV4_ETHERNET_TYPE, IPV6_ETHERNET_TYPE, Layer};
 use crate::convert::record::{Fields, Shapes};
 use crate::convert::sampling::{Method, Sampling};
-use crate::convert::{Protocol, Received, Record};
+use crate::convert::{Received, Record};
+use crate::protocol::Protocol;
 use crate::protocol::information_element::iana;
 use crate::protocol::sflow_v5::{
     AsPathSegment, ExtendedGateway, ExtendedRouter, ExtendedSwitch, FlowRecord, FlowSample,
@@ -23,17 +24,6 @@ use crate::protocol::value::Value;
 /// interface. The expanded encoding defines no such value.
 const INTERNAL_INTERFACE: u32 = 0x3fff_ffff;
 
-/// Converts an sFlow v5 datagram's flow samples, adding a record of each to
-/// `records`.
-///
-/// The agent's address is the `exporterIPv4Address` (or IPv6), and its
-/// sub-agent ID the original observation domain, as the scope of the
-/// datagrams' sequence numbers. The sampling rate is one packet in that
-/// many, chosen at random as sFlow samples.
-pub fn convert(packet: Packet, received: &Received, records: &mut impl Extend<Record>) {
-    Converter::default().convert(packet, received, records);
-}
-
 /// Converts sFlow datagrams, keeping the element lists of the records
 /// converted so that samples of one shape share them across datagrams. Use
 /// one converter per agent, or one for all.
@@ -43,8 +33,13 @@ pub struct Converter {
 }
 
 impl Converter {
-    /// Converts a datagram's flow samples, adding them to `records`; see
-    /// [`convert`].
+    /// Converts a datagram's flow samples, adding a record of each to
+    /// `records`.
+    ///
+    /// The agent's address is the `exporterIPv4Address` (or IPv6), and its
+    /// sub-agent ID the original observation domain, as the scope of the
+    /// datagrams' sequence numbers. The sampling rate is one packet in that
+    /// many, chosen at random as sFlow samples.
     pub fn convert(
         &mut self,
         packet: Packet,

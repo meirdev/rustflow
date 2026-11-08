@@ -20,7 +20,7 @@ const MAX_SESSIONS: usize = 65_536;
 /// as its [`SessionKey`] tells exporters apart, keeps the templates and
 /// options its protocols need between datagrams. A session not heard from
 /// for the template timeout is forgotten, its templates having expired by
-/// then; datagrams of a new session past [`MAX_SESSIONS`] are dropped.
+/// then; datagrams of a new session past `MAX_SESSIONS` are dropped.
 pub struct Collector {
     family: Family,
     registry: Registry,
@@ -400,7 +400,7 @@ impl Collector {
     }
 
     /// The session of `exporter`, marked as heard from now; `None` for a
-    /// new one past [`MAX_SESSIONS`].
+    /// new one past `MAX_SESSIONS`.
     fn session(&mut self, exporter: SocketAddr, now: Instant) -> Option<&mut Session> {
         let new = !self.sessions.contains_key(&exporter);
         if now >= self.next_sweep || (new && self.sessions.len() >= MAX_SESSIONS) {

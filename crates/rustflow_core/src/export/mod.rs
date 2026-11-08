@@ -25,6 +25,7 @@ mod templated;
 
 /// Why a record cannot be exported.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ExportError {
     /// An options record scoped by a NetFlow v9 scope type that no element
     /// carries (RFC 3954 section 6.1), in a protocol whose scopes are

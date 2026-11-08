@@ -4,12 +4,35 @@
 
 use crate::convert::templated::{PacketHeader, Sets, Templated};
 use crate::convert::time::{TimeBase, Uptime};
-use crate::convert::{Protocol, templated};
+use crate::convert::{Received, Record, templated};
+use crate::protocol::Protocol;
 use crate::protocol::netflow_v9::{FlowSet, OptionsTemplate, Packet, Template};
 
-/// Converts one exporter's NetFlow v9 packets; see
-/// [`templated::Converter`].
-pub type Converter = templated::Converter<Packet>;
+/// Converts one exporter's NetFlow v9 packets, keeping what its options
+/// records said of each source ID, as a parser keeps its templates. Use
+/// one converter per exporter address.
+#[derive(Default)]
+pub struct Converter(templated::Converter<Packet>);
+
+impl Converter {
+    /// Converts a packet's records, adding them to `records`: its options
+    /// records first, with their scope, then its data records, with the
+    /// sampling the options records gave their source ID, if any.
+    pub fn convert(
+        &mut self,
+        packet: Packet,
+        received: &Received,
+        records: &mut impl Extend<Record>,
+    ) {
+        self.0.convert(packet, received, records);
+    }
+
+    /// The latest options record of each kind the exporter sent, with its
+    /// source ID.
+    pub fn options(&self) -> impl Iterator<Item = (u32, &Record)> {
+        self.0.options()
+    }
+}
 
 impl Templated for Packet {
     type Data = Template;

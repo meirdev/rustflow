@@ -12,8 +12,6 @@
 pub use common_flow::{CommonFlow, Mapper, Mapping};
 pub use record::{Elements, Received, Record, Scope};
 
-pub use crate::protocol::{Family, Protocol};
-
 mod common_flow;
 pub mod ipfix;
 pub mod netflow_v5;
@@ -22,5 +20,5 @@ mod packet_fields;
 mod record;
 mod sampling;
 pub mod sflow_v5;
-pub mod templated;
+pub(crate) mod templated;
 mod time;

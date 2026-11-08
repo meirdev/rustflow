@@ -265,9 +265,9 @@ mod tests {
     use std::time::UNIX_EPOCH;
 
     use super::*;
-    use crate::convert::{self, Elements, Protocol, Received};
+    use crate::convert::{self, Elements, Received};
     use crate::protocol::information_element::{Registry, iana};
-    use crate::protocol::ipfix;
+    use crate::protocol::{Protocol, ipfix};
 
     const DOMAIN: u32 = 7;
     const NOW: SystemTime = UNIX_EPOCH;

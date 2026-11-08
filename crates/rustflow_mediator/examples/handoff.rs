@@ -43,7 +43,7 @@ fn record(i: u32) -> Record {
         iana::COLLECTION_TIME_MILLISECONDS,
     ]));
     Record {
-        protocol: rustflow_core::convert::Protocol::NetflowV5,
+        protocol: rustflow_core::protocol::Protocol::NetflowV5,
         sequence_number: i,
         scope: Vec::new(),
         elements,

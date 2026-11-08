@@ -6,7 +6,8 @@ use std::sync::Arc;
 use crate::convert::record::{Fields, Shapes};
 use crate::convert::sampling::Sampling;
 use crate::convert::time::uptime_to_unix_millis;
-use crate::convert::{Protocol, Received, Record};
+use crate::convert::{Received, Record};
+use crate::protocol::Protocol;
 use crate::protocol::information_element::{ElementId, iana};
 use crate::protocol::netflow_v5::{FlowRecord, Packet};
 use crate::protocol::value::Value;
@@ -33,15 +34,6 @@ const ELEMENTS: [ElementId; 18] = [
     iana::DESTINATION_IPV4_PREFIX_LENGTH,
 ];
 
-/// Converts a NetFlow v5 packet's flow records, adding them to `records`.
-///
-/// The header's sampling interval is taken as one packet in that many, by
-/// a method it does not say: its sampling mode bits are not interpreted. An
-/// interval of 0, which unsampled exporters send, is one in one.
-pub fn convert(packet: Packet, received: &Received, records: &mut impl Extend<Record>) {
-    Converter::default().convert(packet, received, records);
-}
-
 /// Converts NetFlow v5 packets, keeping the element lists of the records
 /// converted so that the records of successive packets share them. Use one
 /// converter per exporter, or one for all.
@@ -51,8 +43,12 @@ pub struct Converter {
 }
 
 impl Converter {
-    /// Converts a packet's flow records, adding them to `records`; see
-    /// [`convert`].
+    /// Converts a packet's flow records, adding them to `records`.
+    ///
+    /// The header's sampling interval is taken as one packet in that many,
+    /// by a method it does not say: its sampling mode bits are not
+    /// interpreted. An interval of 0, which unsampled exporters send, is
+    /// one in one.
     pub fn convert(
         &mut self,
         packet: Packet,
@@ -193,7 +189,7 @@ mod tests {
 
     fn converted(packet: Packet, received: &Received) -> Vec<Record> {
         let mut records = Vec::new();
-        convert(packet, received, &mut records);
+        Converter::default().convert(packet, received, &mut records);
         records
     }
 

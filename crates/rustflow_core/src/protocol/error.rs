@@ -4,6 +4,7 @@ use crate::bytes::Truncated;
 
 /// Why a datagram could not be parsed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ParseError {
     Truncated(Truncated),
     /// The header carries a version other than the parser's.
@@ -53,6 +54,7 @@ impl fmt::Display for ParseError {
 
 /// Why a packet could not be written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum WriteError {
     /// A value larger than its field on the wire holds.
     TooLarge { field: &'static str, value: usize },

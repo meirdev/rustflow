@@ -36,7 +36,8 @@ const COMPACT_SOURCE: u32 = 1 << 24;
 /// The largest ifIndex a compact sample's interfaces hold.
 const COMPACT_INTERFACE: u32 = 1 << 30;
 
-/// Exports records as the sFlow v5 datagrams of one agent.
+/// Exports records as the sFlow v5 datagrams of one agent, which is what
+/// sFlow calls an exporter.
 ///
 /// sFlow samples packets, not flows, so each record goes as a flow sample
 /// of one packet: a sampled header built from the record's addresses,
@@ -46,7 +47,7 @@ const COMPACT_INTERFACE: u32 = 1 << 30;
 /// rate is the agent's. Each ingress interface is a data source with its
 /// own sample sequence.
 #[derive(Debug)]
-pub struct Agent {
+pub struct Exporter {
     agent_address: IpAddr,
     sub_agent_id: u32,
     boot_ms: u64,
@@ -62,7 +63,7 @@ struct Source {
     sample_pool: u32,
 }
 
-impl Agent {
+impl Exporter {
     pub fn new(agent_address: IpAddr, sub_agent_id: u32, boot: SystemTime) -> Self {
         Self {
             agent_address,
@@ -350,8 +351,8 @@ mod tests {
     use std::time::{Duration, UNIX_EPOCH};
 
     use super::*;
-    use crate::convert::{self, Elements, Protocol, Received};
-    use crate::protocol::sflow_v5;
+    use crate::convert::{self, Elements, Received};
+    use crate::protocol::{Protocol, sflow_v5};
 
     const BOOT_MS: u64 = 1_700_000_000_000;
 
@@ -419,14 +420,14 @@ mod tests {
             time: None,
         };
         let mut records = Vec::new();
-        convert::sflow_v5::convert(parsed, &received, &mut records);
+        convert::sflow_v5::Converter::default().convert(parsed, &received, &mut records);
         records
     }
 
     #[test]
     fn records_come_back_through_a_collector_as_sampled_packets() {
         let mut agent =
-            Agent::new([192, 0, 2, 1].into(), 5, at_ms(BOOT_MS)).with_sampling_rate(100);
+            Exporter::new([192, 0, 2, 1].into(), 5, at_ms(BOOT_MS)).with_sampling_rate(100);
         let packet = agent
             .export(&[flow(), flow()], at_ms(BOOT_MS + 2_500))
             .unwrap();
@@ -474,7 +475,7 @@ mod tests {
 
     #[test]
     fn the_sampled_packet_is_no_longer_than_a_packet_can_be() {
-        let mut agent = Agent::new([192, 0, 2, 1].into(), 5, at_ms(BOOT_MS));
+        let mut agent = Exporter::new([192, 0, 2, 1].into(), 5, at_ms(BOOT_MS));
         let flow = |octets, packets| {
             record(&[
                 (
@@ -516,7 +517,7 @@ mod tests {
 
     #[test]
     fn ipv6_and_udp_flows_are_sampled_too() {
-        let mut agent = Agent::new([192, 0, 2, 1].into(), 5, at_ms(BOOT_MS));
+        let mut agent = Exporter::new([192, 0, 2, 1].into(), 5, at_ms(BOOT_MS));
         let flow = record(&[
             (
                 iana::SOURCE_IPV6_ADDRESS,
@@ -549,7 +550,7 @@ mod tests {
 
     #[test]
     fn a_record_without_addresses_cannot_be_sampled() {
-        let mut agent = Agent::new([192, 0, 2, 1].into(), 5, at_ms(BOOT_MS));
+        let mut agent = Exporter::new([192, 0, 2, 1].into(), 5, at_ms(BOOT_MS));
         let bare = record(&[(iana::OCTET_DELTA_COUNT, Value::Unsigned64(80))]);
         assert_eq!(
             agent.export(&[bare], at_ms(BOOT_MS)),
@@ -559,7 +560,7 @@ mod tests {
 
     #[test]
     fn large_interface_numbers_take_an_expanded_sample() {
-        let mut agent = Agent::new([192, 0, 2, 1].into(), 5, at_ms(BOOT_MS));
+        let mut agent = Exporter::new([192, 0, 2, 1].into(), 5, at_ms(BOOT_MS));
         let flow = record(&[
             (
                 iana::SOURCE_IPV4_ADDRESS,

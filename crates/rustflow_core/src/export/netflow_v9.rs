@@ -249,9 +249,9 @@ mod tests {
     use std::time::{Duration, UNIX_EPOCH};
 
     use super::*;
-    use crate::convert::{self, Elements, Protocol, Received};
+    use crate::convert::{self, Elements, Received};
     use crate::protocol::information_element::Registry;
-    use crate::protocol::netflow_v9;
+    use crate::protocol::{Protocol, netflow_v9};
 
     const SOURCE_ID: u32 = 3;
     const BOOT_MS: u64 = 1_700_000_000_000;

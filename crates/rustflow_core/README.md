@@ -139,10 +139,7 @@ use rustflow_core::reader::{Collector, Family, PendingLimits, Reader};
 
 let registry = Registry::iana();
 let collector = Collector::new(Family::Netflow, registry, Duration::from_secs(1800))
-    .with_pending(PendingLimits {
-        session_bytes: 1 << 20,
-        max_age: Duration::from_secs(60),
-    });
+    .with_pending(PendingLimits::new(1 << 20, Duration::from_secs(60)));
 let reader = Reader::new(UdpSocket::bind("0.0.0.0:9995")?, collector)
     .with_recv_buffer_size(8 << 20)?;
 ```
@@ -161,19 +158,16 @@ exporting processes share a host.
 Custom elements go into the registry before the collector is built:
 
 ```rust
-use std::borrow::Cow;
-
 use rustflow_core::protocol::information_element::{
     DataType, ElementId, InformationElement, Registry,
 };
 
 let mut registry = Registry::iana();
-registry.insert(InformationElement {
-    id: ElementId::from((9, 1)),
-    name: Cow::Borrowed("ciscoExample"),
-    data_type: DataType::Unsigned32,
-    semantics: None,
-});
+registry.insert(InformationElement::new(
+    ElementId::from((9, 1)),
+    "ciscoExample",
+    DataType::Unsigned32,
+));
 ```
 
 ### Async and captures
@@ -321,7 +315,7 @@ converter where it came from:
 
 ```rust
 use rustflow_core::convert::{Received, ipfix};
-use rustflow_core::reader::Record;
+use rustflow_core::convert::Record;
 
 let mut converter = ipfix::Converter::default();
 let mut records: Vec<Record> = Vec::new();
@@ -355,7 +349,7 @@ many records go in a message.
 
 Each protocol has one: `netflow_v9::Exporter` works as the IPFIX one with
 flow times sent as uptimes, `netflow_v5::Exporter` fills the fixed format
-from the elements it has fields for, and `sflow_v5::Agent` sends each record
+from the elements it has fields for, and `sflow_v5::Exporter` sends each record
 as a flow sample of one packet, its header built from the record's
 addresses, ports and protocol. Those that count from boot take when the
 exporter booted.

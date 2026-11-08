@@ -10,11 +10,11 @@ use rustc_hash::FxHashMap;
 use crate::convert::record::{Elements, Fields, Scope, Shapes};
 use crate::convert::sampling::{Domain, Domains, Method, SAMPLING_KEYS, Sampling, sampling_key};
 use crate::convert::time::{TimeBase, Uptime};
-use crate::convert::{Protocol, Received, Record, packet_fields};
+use crate::convert::{Received, Record, packet_fields};
 use crate::protocol::information_element::{ElementId, iana};
 use crate::protocol::netflow_v9::ScopeType;
 use crate::protocol::value::Value;
-use crate::protocol::{DataSet, ipfix, netflow_v9};
+use crate::protocol::{DataSet, Protocol, ipfix, netflow_v9};
 
 /// A packet of a protocol whose records templates describe: NetFlow v9 and
 /// IPFIX.

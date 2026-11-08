@@ -433,8 +433,9 @@ mod domain_tests {
     use std::sync::Arc;
 
     use super::*;
+    use crate::convert::Scope;
     use crate::convert::sampling::Method;
-    use crate::convert::{Protocol, Scope};
+    use crate::protocol::Protocol;
     use crate::protocol::information_element::ElementId;
 
     fn learn(domains: &mut Domains, domain: u32, fields: &[(ElementId, Value)]) {
