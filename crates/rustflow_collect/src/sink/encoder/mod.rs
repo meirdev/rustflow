@@ -5,6 +5,7 @@ mod discard;
 mod ndjson;
 mod parquet;
 mod protobuf;
+mod text;
 
 use std::io::{self, Write};
 
