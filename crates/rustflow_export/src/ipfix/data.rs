@@ -1,14 +1,10 @@
 use std::net::IpAddr;
-use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use rustflow_core::common::ie_registry::DataType;
-use rustflow_core::ipfix::parser::{DataRecord, FieldValue, ResolvedField};
+use rustflow_core::value::Value;
 
 use crate::capture::Link;
-use crate::ipfix::template::{
-    FLOW_IPV4_TEMPLATE_ID, FLOW_IPV6_TEMPLATE_ID, packet_fields, packet_template_id,
-};
+use crate::ipfix::template::{FLOW_IPV4_TEMPLATE_ID, FLOW_IPV6_TEMPLATE_ID, packet_template_id};
 use crate::sampler::Sampling;
 
 #[derive(Debug, Clone)]
@@ -41,29 +37,34 @@ impl FlowData {
         }
     }
 
-    pub fn to_data_record(&self) -> DataRecord {
-        DataRecord::new(vec![
+    pub fn to_record(&self) -> Vec<Value> {
+        vec![
             address(self.source_ip),
             address(self.destination_ip),
-            FieldValue::Unsigned8(self.ip_version()),
-            FieldValue::Unsigned8(self.protocol),
-            FieldValue::Unsigned16(self.source_port),
-            FieldValue::Unsigned16(self.destination_port),
-            FieldValue::Unsigned64(self.octet_count),
-            FieldValue::Unsigned64(self.packet_count),
-            FieldValue::Unsigned16(self.tcp_flags),
-            FieldValue::DateTimeMilliseconds(self.flow_start),
-            FieldValue::DateTimeMilliseconds(self.flow_end),
-            FieldValue::Unsigned8(self.flow_end_reason),
-        ])
+            Value::Unsigned8(self.ip_version()),
+            Value::Unsigned8(self.protocol),
+            Value::Unsigned16(self.source_port),
+            Value::Unsigned16(self.destination_port),
+            Value::Unsigned64(self.octet_count),
+            Value::Unsigned64(self.packet_count),
+            Value::Unsigned16(self.tcp_flags),
+            unix_millis(self.flow_start),
+            unix_millis(self.flow_end),
+            Value::Unsigned8(self.flow_end_reason),
+        ]
     }
 }
 
-fn address(ip: IpAddr) -> FieldValue {
+fn address(ip: IpAddr) -> Value {
     match ip {
-        IpAddr::V4(v4) => FieldValue::Ipv4Address(v4),
-        IpAddr::V6(v6) => FieldValue::Ipv6Address(v6),
+        IpAddr::V4(v4) => Value::Ipv4Address(v4),
+        IpAddr::V6(v6) => Value::Ipv6Address(v6),
     }
+}
+
+/// A time before 1970 cannot be sent, so it is sent as 1970.
+fn unix_millis(time: DateTime<Utc>) -> Value {
+    Value::DateTimeMilliseconds(u64::try_from(time.timestamp_millis()).unwrap_or(0))
 }
 
 #[derive(Debug, Clone)]
@@ -78,22 +79,11 @@ impl PacketData {
         packet_template_id(self.link)
     }
 
-    pub fn to_data_record(&self) -> DataRecord {
-        let fields: Arc<[ResolvedField]> = packet_fields(self.link)
-            .into_iter()
-            .map(|spec| ResolvedField {
-                spec,
-                data_type: DataType::OctetArray,
-                name: Arc::from(""),
-            })
-            .collect();
-        DataRecord::from_template(
-            fields,
-            vec![
-                FieldValue::Unsigned16(u16::try_from(self.length).unwrap_or(u16::MAX)),
-                FieldValue::OctetArray(self.section.clone()),
-            ],
-        )
+    pub fn to_record(&self) -> Vec<Value> {
+        vec![
+            Value::Unsigned16(u16::try_from(self.length).unwrap_or(u16::MAX)),
+            Value::OctetArray(self.section.clone()),
+        ]
     }
 }
 
@@ -114,47 +104,31 @@ impl OptionsData {
         }
     }
 
-    pub fn to_data_record(&self) -> DataRecord {
-        let mut values = vec![FieldValue::Unsigned32(self.observation_domain_id)];
+    pub fn to_record(&self) -> Vec<Value> {
+        let mut values = vec![Value::Unsigned32(self.observation_domain_id)];
         match self.sampling {
             Sampling::Count { interval } => values.extend([
-                FieldValue::Unsigned32(interval),
-                FieldValue::Unsigned16(SYSTEMATIC_COUNT_BASED),
-                FieldValue::Unsigned32(1),
-                FieldValue::Unsigned32(interval.saturating_sub(1)),
+                Value::Unsigned32(interval),
+                Value::Unsigned16(SYSTEMATIC_COUNT_BASED),
+                Value::Unsigned32(1),
+                Value::Unsigned32(interval.saturating_sub(1)),
             ]),
         }
-        DataRecord::new(values)
+        values
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use chrono::Utc;
-    use rustflow_core::common::encoder::Encode;
-    use rustflow_core::ipfix::parser::{
-        Header, IPFIX_TEMPLATE_SET_ID, IPFIX_VERSION, IpfixPacket, IpfixParser, Record, Set,
-    };
+    use std::time::Duration;
+
+    use rustflow_core::information_element::{ElementId, Registry};
+    use rustflow_core::ipfix::{self, DataSet, Header, Packet, Set, VERSION, encode_packet};
+    use rustflow_core::timed_map::BoundedTimedMap;
 
     use super::*;
     use crate::ipfix::template::create_templates;
     use crate::meter::Mode;
-
-    fn message(sets: Vec<Set>) -> Vec<u8> {
-        let packet = IpfixPacket {
-            header: Header {
-                version: IPFIX_VERSION,
-                length: 0,
-                export_time: Utc::now(),
-                sequence_number: 0,
-                observation_domain_id: 1,
-            },
-            sets,
-        };
-        let mut encoded = Vec::new();
-        packet.encode(&mut encoded);
-        encoded
-    }
 
     #[test]
     fn packet_records_round_trip_at_every_prefix_width() {
@@ -168,42 +142,55 @@ mod tests {
                 length: 70_000,
                 section: (0..section_len).map(|i| i as u8).collect(),
             };
-            let encoded = message(vec![
-                Set {
-                    id: IPFIX_TEMPLATE_SET_ID,
+            let templates = create_templates(Mode::Packet);
+            let template = templates
+                .iter()
+                .find(|template| template.template_id == packet.template_id())
+                .unwrap()
+                .clone();
+            let message = Packet {
+                header: Header {
+                    version: VERSION,
                     length: 0,
-                    records: create_templates(Mode::Packet)
-                        .into_iter()
-                        .map(Record::Template)
-                        .collect(),
+                    export_time: 0,
+                    sequence_number: 0,
+                    observation_domain_id: 1,
                 },
-                Set {
-                    id: packet.template_id(),
-                    length: 0,
-                    records: vec![Record::Data(packet.to_data_record()); 2],
-                },
-            ]);
+                sets: vec![
+                    Set::Templates(templates),
+                    Set::Data(DataSet {
+                        template,
+                        records: vec![packet.to_record(); 2],
+                    }),
+                ],
+            };
+            let mut encoded = Vec::new();
+            encode_packet(&mut encoded, &message).unwrap();
 
-            let (rest, parsed) = IpfixParser::default().parse(&encoded).unwrap();
-            assert!(rest.is_empty());
-            let set = &parsed.sets[1];
-            let prefix = if section_len < 255 { 1 } else { 3 };
-            assert_eq!(set.length as usize, 4 + 2 * (2 + prefix + section_len));
-            let Record::Data(record) = &set.records[1] else {
-                panic!("data record");
-            };
-            let values = record.values();
-            assert!(matches!(values[0], FieldValue::Unsigned16(u16::MAX)));
-            assert!(
-                matches!(&values[1], FieldValue::OctetArray(bytes) if *bytes == packet.section)
+            let ttl = Duration::from_mins(10);
+            let mut parser = ipfix::Parser::new(
+                Registry::iana(),
+                BoundedTimedMap::new(16, ttl),
+                BoundedTimedMap::new(16, ttl),
             );
-            let names: Vec<_> = record.iter().map(|(_, name, _)| name).collect();
+            let parsed = parser.parse(&encoded).unwrap();
+            let set = parsed.sets[1].as_data().unwrap();
+            assert_eq!(set.records.len(), 2);
+            let values = &set.records[1];
+            assert_eq!(values[0], Value::Unsigned16(u16::MAX));
+            assert_eq!(values[1], Value::OctetArray(packet.section.clone()));
             let section = if link == Link::Ethernet {
-                "dataLinkFrameSection"
+                ElementId::DATA_LINK_FRAME_SECTION
             } else {
-                "ipHeaderPacketSection"
+                ElementId::IP_HEADER_PACKET_SECTION
             };
-            assert_eq!(names, ["dataLinkFrameSize", section]);
+            let elements: Vec<_> = set
+                .template
+                .fields
+                .iter()
+                .map(|field| field.element_id())
+                .collect();
+            assert_eq!(elements, [ElementId::DATA_LINK_FRAME_SIZE, section]);
         }
     }
 }

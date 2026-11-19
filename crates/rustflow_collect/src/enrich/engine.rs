@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use arrayvec::ArrayVec;
-use rustflow_core::common::common_flow::CommonFlow;
+use rustflow_core::common_flow::CommonFlow;
 
 use crate::enrich::config::{EnrichmentConfig, LookupKey, MAX_KEYS};
 use crate::enrich::table::Table;

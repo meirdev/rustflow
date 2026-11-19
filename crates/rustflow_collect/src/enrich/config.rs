@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
 
-use rustflow_core::common::common_flow::CommonFlow;
+use rustflow_core::common_flow::CommonFlow;
 use rustflow_core::for_each_flow_field;
 
 use crate::enrich::{Error, Key, KeyType, ReloadPolicy, Result};
@@ -171,7 +171,7 @@ macro_rules! lookup_fields {
     ($( $name:ident : $kind:ident $presence:ident ),* $(,)?) => {
         lookup_fields!(@fields [] $( $name : $kind $presence, )*);
     };
-    (@fields [$($acc:tt)*] $name:ident : FlowType $presence:ident, $($rest:tt)*) => {
+    (@fields [$($acc:tt)*] $name:ident : Protocol $presence:ident, $($rest:tt)*) => {
         lookup_fields!(@fields [$($acc)*] $($rest)*);
     };
     (@fields [$($acc:tt)*] $name:ident : Timestamp $presence:ident, $($rest:tt)*) => {
@@ -179,6 +179,13 @@ macro_rules! lookup_fields {
     };
     (@fields [$($acc:tt)*] $name:ident : Mac $presence:ident, $($rest:tt)*) => {
         lookup_fields!(@fields [$($acc)*] $($rest)*);
+    };
+    (@fields [$($acc:tt)*] $name:ident : Ip required, $($rest:tt)*) => {
+        lookup_fields!(@fields [$($acc)* LookupKey {
+            name: stringify!($name),
+            key_type: KeyType::Ip,
+            extract: |flow| Some(Key::Ip(flow.$name)),
+        },] $($rest)*);
     };
     (@fields [$($acc:tt)*] $name:ident : Ip optional, $($rest:tt)*) => {
         lookup_fields!(@fields [$($acc)* LookupKey {

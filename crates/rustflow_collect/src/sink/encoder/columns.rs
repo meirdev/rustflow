@@ -6,7 +6,7 @@ use arrow_array::builder::{PrimitiveBuilder, StringBuilder, TimestampNanosecondB
 use arrow_array::types::{UInt8Type, UInt16Type, UInt32Type, UInt64Type};
 use arrow_array::{ArrayRef, RecordBatch};
 use arrow_schema::{DataType, Field, Schema, TimeUnit};
-use rustflow_core::common::common_flow::CommonFlow;
+use rustflow_core::common_flow::CommonFlow;
 use rustflow_core::for_each_flow_field;
 
 use crate::enrich::Enriched;
@@ -15,7 +15,7 @@ use crate::enrich::Enriched;
 pub const BATCH_ROWS: usize = 32_768;
 
 macro_rules! builder {
-    (FlowType) => { StringBuilder };
+    (Protocol) => { StringBuilder };
     (Timestamp) => { TimestampNanosecondBuilder };
     (U8) => { PrimitiveBuilder<UInt8Type> };
     (U16) => { PrimitiveBuilder<UInt16Type> };
@@ -35,7 +35,7 @@ macro_rules! new_builder {
 }
 
 macro_rules! data_type {
-    (FlowType) => {
+    (Protocol) => {
         DataType::Utf8
     };
     (Timestamp) => {
@@ -71,7 +71,10 @@ macro_rules! nullable {
 }
 
 macro_rules! append {
-    ($b:expr, FlowType required, $v:expr) => {
+    ($b:expr, Protocol required, $v:expr) => {
+        append_text($b, $v)
+    };
+    ($b:expr, Ip required, $v:expr) => {
         append_text($b, $v)
     };
     ($b:expr, Ip optional, $v:expr) => {
