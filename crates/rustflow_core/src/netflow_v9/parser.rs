@@ -10,7 +10,7 @@ use winnow::{Parser as _, Result};
 use super::*;
 use crate::information_element::{DataType, Registry};
 use crate::set::DataSet;
-use crate::template::{FieldSpecifier, OptionsTemplate, Template};
+use crate::template::{FieldSpecifier, OptionsTemplate, ResolvedTemplate, Template};
 use crate::timed_map::BoundedTimedMap;
 use crate::value::{Value, parse_value};
 
@@ -20,14 +20,14 @@ type TemplateId = u16;
 #[derive(Debug)]
 pub struct Parser {
     registry: Registry,
-    templates: BoundedTimedMap<(SourceId, TemplateId), TemplateRef>,
+    templates: BoundedTimedMap<(SourceId, TemplateId), ResolvedTemplate<ScopeField>>,
     now: Instant,
 }
 
 impl Parser {
     pub fn new(
         registry: Registry,
-        templates: BoundedTimedMap<(SourceId, TemplateId), TemplateRef>,
+        templates: BoundedTimedMap<(SourceId, TemplateId), ResolvedTemplate<ScopeField>>,
     ) -> Self {
         Self {
             registry,
@@ -105,8 +105,36 @@ impl Parser {
     }
 
     fn insert(&mut self, source_id: SourceId, template_id: TemplateId, template: TemplateRef) {
+        let data_types = match &template {
+            TemplateRef::Data(template) => template
+                .fields
+                .iter()
+                .map(|field| self.data_type(field))
+                .collect(),
+            TemplateRef::Options(template) => template
+                .scope_fields
+                .iter()
+                .map(|_| Some(DataType::Unsigned64))
+                .chain(
+                    template
+                        .option_fields
+                        .iter()
+                        .map(|field| self.data_type(field)),
+                )
+                .collect(),
+        };
+        let template = ResolvedTemplate {
+            template,
+            data_types,
+        };
         self.templates
             .insert_at((source_id, template_id), template, self.now);
+    }
+
+    fn data_type(&self, field: &FieldSpecifier) -> Option<DataType> {
+        self.registry
+            .get(field.element_id())
+            .map(|element| element.data_type)
     }
 
     fn decode_data_flow_set(&self, source_id: SourceId, flow_set_id: u16, body: &[u8]) -> FlowSet {
@@ -114,10 +142,10 @@ impl Parser {
             set_id: flow_set_id,
             body: body.to_vec(),
         };
-        let Some(template) = self.templates.get_at(&(source_id, flow_set_id), self.now) else {
+        let Some(resolved) = self.templates.get_at(&(source_id, flow_set_id), self.now) else {
             return undecoded();
         };
-        let record_length = record_length(template);
+        let record_length = record_length(&resolved.template);
         if record_length == 0 {
             return undecoded();
         }
@@ -125,13 +153,13 @@ impl Parser {
         let mut input = body;
         let mut records = Vec::new();
         while input.len() >= record_length {
-            match self.parse_record(&mut input, template) {
+            match self.parse_record(&mut input, resolved) {
                 Ok(record) => records.push(record),
                 Err(_) => return undecoded(),
             }
         }
 
-        match template {
+        match &resolved.template {
             TemplateRef::Data(template) => FlowSet::Data(DataSet {
                 template: Arc::clone(template),
                 records,
@@ -143,37 +171,26 @@ impl Parser {
         }
     }
 
-    fn parse_record(&self, input: &mut &[u8], template: &TemplateRef) -> Result<Vec<Value>> {
-        let mut record = Vec::new();
-        match template {
-            TemplateRef::Data(template) => {
-                for field in &template.fields {
-                    record.push(self.parse_field(input, field)?);
-                }
-            }
-            TemplateRef::Options(template) => {
-                for scope in &template.scope_fields {
-                    record.push(parse_scope_value(input, *scope)?);
-                }
-                for field in &template.option_fields {
-                    record.push(self.parse_field(input, field)?);
-                }
-            }
+    fn parse_record(
+        &self,
+        input: &mut &[u8],
+        template: &ResolvedTemplate<ScopeField>,
+    ) -> Result<Vec<Value>> {
+        let (scope_fields, fields): (&[ScopeField], &[FieldSpecifier]) = match &template.template {
+            TemplateRef::Data(template) => (&[], &template.fields),
+            TemplateRef::Options(template) => (&template.scope_fields, &template.option_fields),
+        };
+        let lengths = scope_fields
+            .iter()
+            .map(|scope| scope.length)
+            .chain(fields.iter().map(|field| field.field_length));
+        let mut record = Vec::with_capacity(template.data_types.len());
+        for (length, data_type) in lengths.zip(&template.data_types) {
+            let data_type = data_type.unwrap_or(DataType::OctetArray);
+            record.push(parse_value(data_type, length.into()).parse_next(input)?);
         }
         Ok(record)
     }
-
-    fn parse_field(&self, input: &mut &[u8], field: &FieldSpecifier) -> Result<Value> {
-        let data_type = self
-            .registry
-            .get(field.element_id())
-            .map_or(DataType::OctetArray, |element| element.data_type);
-        parse_value(data_type, field.field_length.into()).parse_next(input)
-    }
-}
-
-fn parse_scope_value(input: &mut &[u8], scope: ScopeField) -> Result<Value> {
-    parse_value(DataType::Unsigned64, scope.length.into()).parse_next(input)
 }
 
 fn parse_records<'i, T>(

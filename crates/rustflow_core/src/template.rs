@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::information_element::ElementId;
+use crate::information_element::{DataType, ElementId};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -59,4 +59,10 @@ impl TemplateRef {
         };
         scope_fields.iter().chain(fields)
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolvedTemplate<S = FieldSpecifier> {
+    pub(crate) template: TemplateRef<S>,
+    pub(crate) data_types: Box<[Option<DataType>]>,
 }

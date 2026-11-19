@@ -12,7 +12,7 @@ use winnow::{Parser as _, Result};
 use super::*;
 use crate::information_element::{DataType, ElementId, InformationElement, ListSemantic, Registry};
 use crate::set::DataSet;
-use crate::template::TemplateRef;
+use crate::template::{ResolvedTemplate, TemplateRef};
 use crate::timed_map::BoundedTimedMap;
 use crate::value::{BasicList, ListRecords, SubTemplateList, SubTemplateMultiList, Value};
 
@@ -29,14 +29,14 @@ pub enum LearnedElement {
 pub struct Parser {
     registry: Registry,
     learned: BoundedTimedMap<ElementId, LearnedElement>,
-    templates: BoundedTimedMap<(DomainId, TemplateId), TemplateRef>,
+    templates: BoundedTimedMap<(DomainId, TemplateId), ResolvedTemplate>,
     now: Instant,
 }
 
 impl Parser {
     pub fn new(
         registry: Registry,
-        templates: BoundedTimedMap<(DomainId, TemplateId), TemplateRef>,
+        templates: BoundedTimedMap<(DomainId, TemplateId), ResolvedTemplate>,
         learned: BoundedTimedMap<ElementId, LearnedElement>,
     ) -> Self {
         Self {
@@ -143,12 +143,27 @@ impl Parser {
             })
     }
 
+    /// Keeps `template` with the data types the registry gives its fields;
+    /// the others are learned elements, looked up as each record is decoded
+    /// since what is learned changes.
     fn insert(&mut self, domain: DomainId, template_id: TemplateId, template: TemplateRef) {
+        let data_types = template
+            .fields()
+            .map(|field| {
+                self.registry
+                    .get(field.element_id())
+                    .map(|element| element.data_type)
+            })
+            .collect();
+        let template = ResolvedTemplate {
+            template,
+            data_types,
+        };
         self.templates
             .insert_at((domain, template_id), template, self.now);
     }
 
-    fn template(&self, domain: DomainId, template_id: TemplateId) -> Option<&TemplateRef> {
+    fn template(&self, domain: DomainId, template_id: TemplateId) -> Option<&ResolvedTemplate> {
         self.templates.get_at(&(domain, template_id), self.now)
     }
 
@@ -162,10 +177,10 @@ impl Parser {
             set_id,
             body: body.to_vec(),
         };
-        let Some(template) = self.template(domain, set_id) else {
+        let Some(resolved) = self.template(domain, set_id) else {
             return undecoded();
         };
-        let min_length = min_record_length(template);
+        let min_length = min_record_length(&resolved.template);
         if min_length == 0 {
             // Every record would be empty; there is nothing to decode.
             return undecoded();
@@ -175,13 +190,13 @@ impl Parser {
         let mut records = Vec::new();
         // Fewer octets than the smallest record are padding (RFC 7011 §3.3.1).
         while input.len() >= min_length {
-            match self.parse_record(&mut input, domain, template, 0) {
+            match self.parse_record(&mut input, domain, resolved, 0) {
                 Ok(record) => records.push(record),
                 Err(_) => return undecoded(),
             }
         }
 
-        match template {
+        match &resolved.template {
             TemplateRef::Data(template) => Set::Data(DataSet {
                 template: Arc::clone(template),
                 records,
@@ -197,17 +212,17 @@ impl Parser {
         &self,
         input: &mut &[u8],
         domain: DomainId,
-        template: &TemplateRef,
+        template: &ResolvedTemplate,
         depth: usize,
     ) -> Result<Vec<Value>> {
-        template
-            .fields()
-            .map(|field| {
-                let length = parse_field_length(input, field.field_length)?;
-                let bytes = take(length).parse_next(input)?;
-                Ok(self.decode_field(domain, self.data_type(field), bytes, depth))
-            })
-            .collect()
+        let mut record = Vec::with_capacity(template.data_types.len());
+        for (field, data_type) in template.template.fields().zip(&template.data_types) {
+            let length = parse_field_length(input, field.field_length)?;
+            let bytes = take(length).parse_next(input)?;
+            let data_type = data_type.unwrap_or_else(|| self.data_type(field));
+            record.push(self.decode_field(domain, data_type, bytes, depth));
+        }
+        Ok(record)
     }
 
     fn decode_field(
@@ -322,7 +337,7 @@ impl Parser {
     ) -> Result<ListRecords> {
         Ok(match self.template(domain, template_id) {
             Some(template) => ListRecords::Decoded {
-                template: template.clone(),
+                template: template.template.clone(),
                 records: parse_all(input, |input| {
                     self.parse_record(input, domain, template, depth + 1)
                 })?,
