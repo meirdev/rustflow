@@ -1,0 +1,102 @@
+{
+  "reference": "RFC 3954 section 6.1",
+  "description": "Options Template FlowSets. Option Scope Length and Option Length are in bytes, not fields. One template scoped by all five scope types (System, Interface, Line Card, Cache, Template), in a FlowSet with two padding bytes; two more templates in one FlowSet, the second with strings.",
+  "datagrams": 2,
+  "expected": [
+    {
+      "protocol": "netflow_v9",
+      "packet": {
+        "version": 9,
+        "count": 3,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "sequence_number": 0,
+        "source_id": 0,
+        "flow_sets": [
+          {
+            "type": "options_templates",
+            "templates": [
+              {
+                "template_id": 300,
+                "scope_fields": [
+                  {"field_type": "System", "length": 4},
+                  {"field_type": "Interface", "length": 4},
+                  {"field_type": "LineCard", "length": 4},
+                  {"field_type": "Cache", "length": 4},
+                  {"field_type": "Template", "length": 2}
+                ],
+                "option_fields": [
+                  {"information_element_id": 34, "field_length": 4, "enterprise_number": null}
+                ]
+              }
+            ]
+          },
+          {
+            "type": "options_templates",
+            "templates": [
+              {
+                "template_id": 301,
+                "scope_fields": [
+                  {"field_type": "System", "length": 4}
+                ],
+                "option_fields": [
+                  {"information_element_id": 34, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 35, "field_length": 1, "enterprise_number": null}
+                ]
+              },
+              {
+                "template_id": 302,
+                "scope_fields": [
+                  {"field_type": "Interface", "length": 4}
+                ],
+                "option_fields": [
+                  {"information_element_id": 82, "field_length": 8, "enterprise_number": null},
+                  {"information_element_id": 83, "field_length": 16, "enterprise_number": null}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "netflow_v9",
+      "packet": {
+        "version": 9,
+        "count": 4,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "sequence_number": 1,
+        "source_id": 0,
+        "flow_sets": [
+          {
+            "type": "options_data",
+            "template_id": 300,
+            "records": [
+              {"system": 167772161, "interface": 7, "lineCard": 2, "cache": 3, "template": 256, "samplingInterval": 1000}
+            ]
+          },
+          {
+            "type": "options_data",
+            "template_id": 301,
+            "records": [
+              {"system": 1, "samplingInterval": 100, "samplingAlgorithm": 2}
+            ]
+          },
+          {
+            "type": "options_data",
+            "template_id": 302,
+            "records": [
+              {"interface": 1, "interfaceName": "Gi0/0/1\u0000", "interfaceDescription": "uplink to core\u0000\u0000"},
+              {"interface": 2, "interfaceName": "Te0/1/10", "interfaceDescription": "0123456789abcdef"}
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "tshark": {
+    "cflow.template_id": ["300", "301", "302"],
+    "cflow.if_name": ["Gi0/0/1", "Te0/1/10"]
+  }
+}

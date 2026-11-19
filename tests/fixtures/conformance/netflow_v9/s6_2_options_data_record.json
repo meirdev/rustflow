@@ -1,0 +1,76 @@
+{
+  "reference": "RFC 3954 section 6.2",
+  "description": "Options data records: scope values first, then the option values, in template order. Scope fields of 1, 2 and 4 bytes; a FlowSet of three records, and one of a single record with padding.",
+  "datagrams": 2,
+  "expected": [
+    {
+      "protocol": "netflow_v9",
+      "packet": {
+        "version": 9,
+        "count": 2,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "sequence_number": 0,
+        "source_id": 0,
+        "flow_sets": [
+          {
+            "type": "options_templates",
+            "templates": [
+              {
+                "template_id": 400,
+                "scope_fields": [
+                  {"field_type": "LineCard", "length": 1},
+                  {"field_type": "Interface", "length": 2}
+                ],
+                "option_fields": [
+                  {"information_element_id": 41, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 42, "field_length": 8, "enterprise_number": null}
+                ]
+              },
+              {
+                "template_id": 401,
+                "scope_fields": [
+                  {"field_type": "System", "length": 4}
+                ],
+                "option_fields": [
+                  {"information_element_id": 36, "field_length": 2, "enterprise_number": null},
+                  {"information_element_id": 37, "field_length": 2, "enterprise_number": null},
+                  {"information_element_id": 34, "field_length": 2, "enterprise_number": null}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "netflow_v9",
+      "packet": {
+        "version": 9,
+        "count": 4,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "sequence_number": 1,
+        "source_id": 0,
+        "flow_sets": [
+          {
+            "type": "options_data",
+            "template_id": 400,
+            "records": [
+              {"lineCard": 1, "interface": 101, "exportedMessageTotalCount": 11, "exportedFlowRecordTotalCount": 8589934592},
+              {"lineCard": 2, "interface": 102, "exportedMessageTotalCount": 22, "exportedFlowRecordTotalCount": 17179869184},
+              {"lineCard": 255, "interface": 65535, "exportedMessageTotalCount": 4294967295, "exportedFlowRecordTotalCount": 18446744073709551615}
+            ]
+          },
+          {
+            "type": "options_data",
+            "template_id": 401,
+            "records": [
+              {"system": 42, "flowActiveTimeout": 60, "flowIdleTimeout": 15, "samplingInterval": 1024}
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

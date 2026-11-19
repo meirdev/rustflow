@@ -1,0 +1,108 @@
+{
+  "reference": "RFC 7011 sections 8 and 8.4",
+  "description": "Over UDP a template may be lost or arrive after its data. A message is printed as it was read, so the first two keep their Data Sets undecoded, as sent; once the templates arrive, data of the same templates is decoded.",
+  "datagrams": 4,
+  "expected": [
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 36,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "undecoded",
+            "set_id": 256,
+            "body": [192, 0, 2, 1, 198, 51, 100, 1, 0, 0, 0, 1, 0, 0, 0, 100]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 28,
+        "export_time": 1700000000,
+        "sequence_number": 1,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "undecoded",
+            "set_id": 257,
+            "body": [0, 0, 0, 1, 0, 0, 0, 10]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 58,
+        "export_time": 1700000000,
+        "sequence_number": 2,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [
+                  {"information_element_id": 8, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 12, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 2, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 1, "field_length": 4, "enterprise_number": null}
+                ]
+              }
+            ]
+          },
+          {
+            "type": "options_templates",
+            "templates": [
+              {
+                "template_id": 257,
+                "scope_fields": [
+                  {"information_element_id": 141, "field_length": 4, "enterprise_number": null}
+                ],
+                "option_fields": [
+                  {"information_element_id": 41, "field_length": 4, "enterprise_number": null}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 48,
+        "export_time": 1700000000,
+        "sequence_number": 2,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"sourceIPv4Address": "192.0.2.2", "destinationIPv4Address": "198.51.100.2", "packetDeltaCount": 2, "octetDeltaCount": 200}
+            ]
+          },
+          {
+            "type": "options_data",
+            "template_id": 257,
+            "records": [
+              {"lineCardId": 2, "exportedMessageTotalCount": 20}
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "clean": false
+}

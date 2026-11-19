@@ -1,0 +1,64 @@
+{
+  "reference": "RFC 7011 sections 5.1 and 5.2",
+  "description": "Export Time is seconds since the UNIX epoch in 32 bits, as dateTimeSeconds values are. Flow times given as microsecond offsets from the Export Time (flowStartDeltaMicroseconds and flowEndDeltaMicroseconds) are unsigned 32-bit integers, up to about 71 minutes. dateTimeSeconds at the two ends of its range: the epoch, and one second before it wraps on 7 February 2106 at 06:28:16.",
+  "datagrams": 2,
+  "expected": [
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 88,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [
+                  {"information_element_id": 8, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 158, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 159, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 150, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 151, "field_length": 4, "enterprise_number": null}
+                ]
+              }
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"sourceIPv4Address": "192.0.2.1", "flowStartDeltaMicroseconds": 5000000, "flowEndDeltaMicroseconds": 1, "flowStartSeconds": "2023-11-14T22:13:15Z", "flowEndSeconds": "2023-11-14T22:13:20Z"},
+              {"sourceIPv4Address": "192.0.2.2", "flowStartDeltaMicroseconds": 4294967295, "flowEndDeltaMicroseconds": 0, "flowStartSeconds": "1970-01-01T00:00:00Z", "flowEndSeconds": "2106-02-07T06:28:15Z"}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 40,
+        "export_time": 4294967295,
+        "sequence_number": 2,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"sourceIPv4Address": "192.0.2.3", "flowStartDeltaMicroseconds": 0, "flowEndDeltaMicroseconds": 0, "flowStartSeconds": "2000-02-29T00:00:00Z", "flowEndSeconds": "2000-02-29T23:59:59Z"}
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "tshark": {
+    "cflow.srcaddr": ["192.0.2.1", "192.0.2.2", "192.0.2.3"]
+  }
+}

@@ -1,0 +1,135 @@
+{
+  "reference": "sFlow Version 5 section 5, extended_switch (format 1001), extended_router (1002) and extended_gateway (1003)",
+  "description": "Switch, router and gateway data. A next hop of each address type: IPv4, IPv6 and unknown. Gateway data with an AS path of a sequence, a set and another sequence, with communities; one with an empty path and no communities; and one whose path holds an empty segment.",
+  "datagrams": 1,
+  "expected": [
+    {
+      "protocol": "sflow_v5",
+      "packet": {
+        "version": 5,
+        "agent_address": "192.0.2.1",
+        "sub_agent_id": 0,
+        "sequence_number": 1,
+        "uptime": 3600000,
+        "samples": [
+          {
+            "Flow": {
+              "sequence_number": 1,
+              "source_id": {"source_id_type": 0, "source_id_index": 3},
+              "sampling_rate": 1000,
+              "sample_pool": 1000,
+              "drops": 0,
+              "input": {"format": 0, "value": 3},
+              "output": {"format": 0, "value": 4},
+              "records": [
+                {
+                  "ExtendedSwitch": {"src_vlan": 100, "src_priority": 3, "dst_vlan": 200, "dst_priority": 5}
+                },
+                {
+                  "ExtendedRouter": {"nexthop": "203.0.113.1", "src_mask_len": 24, "dst_mask_len": 16}
+                },
+                {
+                  "ExtendedGateway": {
+                    "nexthop": "203.0.113.254",
+                    "as": 64496,
+                    "src_as": 64497,
+                    "src_peer_as": 64498,
+                    "dst_as_path": [
+                      {
+                        "AsSequence": [64499, 64500]
+                      },
+                      {
+                        "AsSet": [64501, 64502, 64503]
+                      },
+                      {
+                        "AsSequence": [4200000000]
+                      }
+                    ],
+                    "communities": [4259840100, 4294967041],
+                    "localpref": 150
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "Flow": {
+              "sequence_number": 2,
+              "source_id": {"source_id_type": 0, "source_id_index": 3},
+              "sampling_rate": 1000,
+              "sample_pool": 2000,
+              "drops": 0,
+              "input": {"format": 0, "value": 3},
+              "output": {"format": 0, "value": 4},
+              "records": [
+                {
+                  "ExtendedRouter": {"nexthop": "2001:db8:ffff::1", "src_mask_len": 48, "dst_mask_len": 64}
+                },
+                {
+                  "ExtendedGateway": {
+                    "nexthop": "2001:db8:ffff::fe",
+                    "as": 64496,
+                    "src_as": 0,
+                    "src_peer_as": 0,
+                    "dst_as_path": [],
+                    "communities": [],
+                    "localpref": 100
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "Flow": {
+              "sequence_number": 3,
+              "source_id": {"source_id_type": 0, "source_id_index": 3},
+              "sampling_rate": 1000,
+              "sample_pool": 3000,
+              "drops": 0,
+              "input": {"format": 0, "value": 3},
+              "output": {"format": 0, "value": 4},
+              "records": [
+                {
+                  "ExtendedRouter": {"nexthop": null, "src_mask_len": 0, "dst_mask_len": 0}
+                },
+                {
+                  "ExtendedGateway": {
+                    "nexthop": null,
+                    "as": 1,
+                    "src_as": 2,
+                    "src_peer_as": 3,
+                    "dst_as_path": [
+                      {
+                        "AsSet": []
+                      },
+                      {
+                        "AsSequence": [64510]
+                      }
+                    ],
+                    "communities": [1],
+                    "localpref": 4294967295
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tshark": {
+    "sflow_245.vlan.in": ["100"],
+    "sflow_245.vlan.out": ["200"],
+    "sflow_245.pri.in": ["3"],
+    "sflow_245.pri.out": ["5"],
+    "sflow_245.nexthop": ["203.0.113.1", "203.0.113.254"],
+    "sflow_245.nexthop.v6": ["2001:db8:ffff::1", "2001:db8:ffff::fe"],
+    "sflow_245.nexthop.src_mask": ["24", "48", "0"],
+    "sflow_245.nexthop.dst_mask": ["16", "64", "0"],
+    "sflow_245.as": ["64496", "64496", "1"],
+    "sflow_245.srcAS": ["64497", "0", "2"],
+    "sflow_245.peerAS": ["64498", "0", "3"],
+    "sflow_245.dstAS": ["64499", "64500", "64501", "64502", "64503", "4200000000", "4259840100", "4294967041", "64510", "1"],
+    "sflow_245.localpref": ["150", "100", "4294967295"]
+  }
+}

@@ -1,0 +1,74 @@
+{
+  "reference": "sFlow Version 5 section 5, flow_sample_expanded (format 3)",
+  "description": "Expanded flow samples, whose source ID and interfaces each take two 32-bit integers: a type and an index, a format and a value. Indexes past what the compact form holds (2^24 and 2^30), and every field at its highest.",
+  "datagrams": 1,
+  "expected": [
+    {
+      "protocol": "sflow_v5",
+      "packet": {
+        "version": 5,
+        "agent_address": "192.0.2.1",
+        "sub_agent_id": 0,
+        "sequence_number": 1,
+        "uptime": 3600000,
+        "samples": [
+          {
+            "ExpandedFlow": {
+              "sequence_number": 1,
+              "source_id": {"source_id_type": 0, "source_id_index": 16777216},
+              "sampling_rate": 2000,
+              "sample_pool": 2000,
+              "drops": 0,
+              "input": {"format": 0, "value": 1073741824},
+              "output": {"format": 0, "value": 1073741825},
+              "records": [
+                {
+                  "SampledHeader": {
+                    "protocol": "EthernetIso88023",
+                    "frame_length": 50,
+                    "stripped": 4,
+                    "header": [2, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 1, 8, 0, 69, 0, 0, 32, 0, 0, 64, 0, 64, 17, 78, 102, 192, 0, 2, 50, 198, 51, 100, 1, 156, 64, 195, 80, 0, 12, 221, 249, 102, 108, 111, 119]
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "ExpandedFlow": {
+              "sequence_number": 2,
+              "source_id": {"source_id_type": 1, "source_id_index": 4094},
+              "sampling_rate": 2000,
+              "sample_pool": 4000,
+              "drops": 5,
+              "input": {"format": 0, "value": 9},
+              "output": {"format": 2, "value": 3},
+              "records": [
+                {
+                  "ExtendedSwitch": {"src_vlan": 4094, "src_priority": 7, "dst_vlan": 4094, "dst_priority": 7}
+                }
+              ]
+            }
+          },
+          {
+            "ExpandedFlow": {
+              "sequence_number": 4294967295,
+              "source_id": {"source_id_type": 4294967295, "source_id_index": 4294967295},
+              "sampling_rate": 4294967295,
+              "sample_pool": 4294967295,
+              "drops": 4294967295,
+              "input": {"format": 4294967295, "value": 4294967295},
+              "output": {"format": 4294967295, "value": 4294967295},
+              "records": []
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tshark": {
+    "sflow.flow_sample.sequence_number": ["1", "2", "4294967295"],
+    "sflow.flow_sample.source_id_type": ["0", "1", "4294967295"],
+    "sflow.flow_sample.source_id_index": ["16777216", "4094", "4294967295"],
+    "sflow.flow_sample.sampling_rate": ["2000", "2000", "4294967295"]
+  }
+}

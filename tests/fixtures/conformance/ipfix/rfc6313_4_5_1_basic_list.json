@@ -1,0 +1,81 @@
+{
+  "reference": "RFC 6313 section 4.5.1",
+  "description": "basicList: a semantic octet, a field specifier (with an enterprise number when its top bit is set) and the values. Lists of a fixed-length IANA element, of an enterprise-specific element, of a variable-length element, and an empty list; in a variable-length field with the one- and the three-octet length, and in a field of fixed length. Each list is reported with its values, and the fields before and after it are read.",
+  "datagrams": 1,
+  "expected": [
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 172,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [
+                  {"information_element_id": 10, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 291, "field_length": 65535, "enterprise_number": null},
+                  {"information_element_id": 14, "field_length": 4, "enterprise_number": null}
+                ]
+              },
+              {
+                "template_id": 257,
+                "fields": [
+                  {"information_element_id": 10, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 291, "field_length": 11, "enterprise_number": null},
+                  {"information_element_id": 14, "field_length": 4, "enterprise_number": null}
+                ]
+              }
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {
+                "ingressInterface": 1,
+                "basicList": [80, 443, 8080],
+                "egressInterface": 11
+              },
+              {
+                "ingressInterface": 2,
+                "basicList": ["00000001", "00000002"],
+                "egressInterface": 12
+              },
+              {
+                "ingressInterface": 3,
+                "basicList": ["eth0", "", "eth10"],
+                "egressInterface": 13
+              },
+              {
+                "ingressInterface": 4,
+                "basicList": [],
+                "egressInterface": 14
+              }
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 257,
+            "records": [
+              {
+                "ingressInterface": 5,
+                "basicList": [80, 443, 8080],
+                "egressInterface": 15
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "tshark": {
+    "cflow.inputint": ["1", "2", "3", "4", "5"],
+    "cflow.outputint": ["11", "12", "13", "14", "15"]
+  }
+}

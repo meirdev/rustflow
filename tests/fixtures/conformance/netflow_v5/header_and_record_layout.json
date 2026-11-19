@@ -1,0 +1,47 @@
+{
+  "reference": "Cisco NetFlow Export Datagram Format, \"Version 5 Header Format\"; Cisco NetFlow Export Datagram Format, \"Version 5 Flow Record Format\"",
+  "description": "One datagram with one record. Every header and record field holds a different value, so each must be read from its own offset and width.",
+  "datagrams": 1,
+  "expected": [
+    {
+      "protocol": "netflow_v5",
+      "packet": {
+        "version": 5,
+        "count": 1,
+        "sys_uptime": 572728357,
+        "unix_secs": 640100393,
+        "unix_nsecs": 707472429,
+        "flow_sequence": 774844465,
+        "engine_type": 50,
+        "engine_id": 51,
+        "sampling_interval": {"mode": 1, "interval": 100},
+        "flow_records": [
+          {"srcaddr": "192.0.2.17", "dstaddr": "198.51.100.34", "nexthop": "203.0.113.51", "input": 258, "output": 772, "d_pkts": 84281096, "d_octets": 151653132, "first": 219025168, "last": 286397204, "srcport": 5398, "dstport": 5912, "tcp_flags": 25, "prot": 26, "tos": 27, "src_as": 7197, "dst_as": 7711, "src_mask": 32, "dst_mask": 33}
+        ]
+      }
+    }
+  ],
+  "tshark": {
+    "cflow.version": ["5"],
+    "cflow.count": ["1"],
+    "cflow.sequence": ["774844465"],
+    "cflow.engine_type": ["50"],
+    "cflow.engine_id": ["51"],
+    "cflow.samplingmode": ["1"],
+    "cflow.samplerate": ["100"],
+    "cflow.srcaddr": ["192.0.2.17"],
+    "cflow.dstaddr": ["198.51.100.34"],
+    "cflow.nexthop": ["203.0.113.51"],
+    "cflow.inputint": ["258"],
+    "cflow.outputint": ["772"],
+    "cflow.packets": ["84281096"],
+    "cflow.octets": ["151653132"],
+    "cflow.srcport": ["5398"],
+    "cflow.dstport": ["5912"],
+    "cflow.protocol": ["26"],
+    "cflow.srcas": ["7197"],
+    "cflow.dstas": ["7711"],
+    "cflow.srcmask": ["32"],
+    "cflow.dstmask": ["33"]
+  }
+}

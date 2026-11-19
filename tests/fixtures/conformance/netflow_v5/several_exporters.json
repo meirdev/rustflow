@@ -1,0 +1,82 @@
+{
+  "reference": "Cisco NetFlow Export Datagram Format, \"Version 5 Header Format\"",
+  "description": "Datagrams from three exporters, one of them over IPv6, and two engines of one exporter: v5 is stateless, so each datagram is read on its own, in capture order.",
+  "datagrams": 4,
+  "expected": [
+    {
+      "protocol": "netflow_v5",
+      "packet": {
+        "version": 5,
+        "count": 2,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "unix_nsecs": 0,
+        "flow_sequence": 0,
+        "engine_type": 0,
+        "engine_id": 1,
+        "sampling_interval": {"mode": 0, "interval": 0},
+        "flow_records": [
+          {"srcaddr": "192.0.2.100", "dstaddr": "198.51.100.100", "nexthop": "0.0.0.0", "input": 0, "output": 0, "d_pkts": 1, "d_octets": 0, "first": 0, "last": 0, "srcport": 0, "dstport": 0, "tcp_flags": 0, "prot": 0, "tos": 0, "src_as": 0, "dst_as": 0, "src_mask": 0, "dst_mask": 0},
+          {"srcaddr": "192.0.2.101", "dstaddr": "198.51.100.101", "nexthop": "0.0.0.0", "input": 0, "output": 0, "d_pkts": 2, "d_octets": 0, "first": 0, "last": 0, "srcport": 0, "dstport": 0, "tcp_flags": 0, "prot": 0, "tos": 0, "src_as": 0, "dst_as": 0, "src_mask": 0, "dst_mask": 0}
+        ]
+      }
+    },
+    {
+      "protocol": "netflow_v5",
+      "packet": {
+        "version": 5,
+        "count": 2,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "unix_nsecs": 0,
+        "flow_sequence": 2,
+        "engine_type": 0,
+        "engine_id": 1,
+        "sampling_interval": {"mode": 0, "interval": 0},
+        "flow_records": [
+          {"srcaddr": "192.0.2.100", "dstaddr": "198.51.100.100", "nexthop": "0.0.0.0", "input": 0, "output": 0, "d_pkts": 1, "d_octets": 0, "first": 0, "last": 0, "srcport": 0, "dstport": 0, "tcp_flags": 0, "prot": 0, "tos": 0, "src_as": 0, "dst_as": 0, "src_mask": 0, "dst_mask": 0},
+          {"srcaddr": "192.0.2.101", "dstaddr": "198.51.100.101", "nexthop": "0.0.0.0", "input": 0, "output": 0, "d_pkts": 2, "d_octets": 0, "first": 0, "last": 0, "srcport": 0, "dstport": 0, "tcp_flags": 0, "prot": 0, "tos": 0, "src_as": 0, "dst_as": 0, "src_mask": 0, "dst_mask": 0}
+        ]
+      }
+    },
+    {
+      "protocol": "netflow_v5",
+      "packet": {
+        "version": 5,
+        "count": 2,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "unix_nsecs": 0,
+        "flow_sequence": 4,
+        "engine_type": 0,
+        "engine_id": 2,
+        "sampling_interval": {"mode": 0, "interval": 0},
+        "flow_records": [
+          {"srcaddr": "192.0.2.100", "dstaddr": "198.51.100.100", "nexthop": "0.0.0.0", "input": 0, "output": 0, "d_pkts": 1, "d_octets": 0, "first": 0, "last": 0, "srcport": 0, "dstport": 0, "tcp_flags": 0, "prot": 0, "tos": 0, "src_as": 0, "dst_as": 0, "src_mask": 0, "dst_mask": 0},
+          {"srcaddr": "192.0.2.101", "dstaddr": "198.51.100.101", "nexthop": "0.0.0.0", "input": 0, "output": 0, "d_pkts": 2, "d_octets": 0, "first": 0, "last": 0, "srcport": 0, "dstport": 0, "tcp_flags": 0, "prot": 0, "tos": 0, "src_as": 0, "dst_as": 0, "src_mask": 0, "dst_mask": 0}
+        ]
+      }
+    },
+    {
+      "protocol": "netflow_v5",
+      "packet": {
+        "version": 5,
+        "count": 2,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "unix_nsecs": 0,
+        "flow_sequence": 6,
+        "engine_type": 0,
+        "engine_id": 3,
+        "sampling_interval": {"mode": 0, "interval": 0},
+        "flow_records": [
+          {"srcaddr": "192.0.2.100", "dstaddr": "198.51.100.100", "nexthop": "0.0.0.0", "input": 0, "output": 0, "d_pkts": 1, "d_octets": 0, "first": 0, "last": 0, "srcport": 0, "dstport": 0, "tcp_flags": 0, "prot": 0, "tos": 0, "src_as": 0, "dst_as": 0, "src_mask": 0, "dst_mask": 0},
+          {"srcaddr": "192.0.2.101", "dstaddr": "198.51.100.101", "nexthop": "0.0.0.0", "input": 0, "output": 0, "d_pkts": 2, "d_octets": 0, "first": 0, "last": 0, "srcport": 0, "dstport": 0, "tcp_flags": 0, "prot": 0, "tos": 0, "src_as": 0, "dst_as": 0, "src_mask": 0, "dst_mask": 0}
+        ]
+      }
+    }
+  ],
+  "tshark": {
+    "cflow.engine_id": ["1", "1", "2", "3"]
+  }
+}

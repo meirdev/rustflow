@@ -1,0 +1,45 @@
+{
+  "reference": "RFC 3954 sections 4 and 5.2",
+  "description": "FlowSet IDs 2 to 255 are reserved for FlowSets yet to be defined. A collector steps over them by their Length and reads the FlowSets around them.",
+  "datagrams": 1,
+  "expected": [
+    {
+      "protocol": "netflow_v9",
+      "packet": {
+        "version": 9,
+        "count": 2,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "sequence_number": 0,
+        "source_id": 0,
+        "flow_sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [
+                  {"information_element_id": 8, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 12, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 2, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 1, "field_length": 4, "enterprise_number": null}
+                ]
+              }
+            ]
+          },
+          {"type": "unknown", "set_id": 2},
+          {"type": "unknown", "set_id": 3},
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"sourceIPv4Address": "192.0.2.1", "destinationIPv4Address": "198.51.100.1", "packetDeltaCount": 1, "octetDeltaCount": 100}
+            ]
+          },
+          {"type": "unknown", "set_id": 255}
+        ]
+      }
+    }
+  ],
+  "clean": false
+}

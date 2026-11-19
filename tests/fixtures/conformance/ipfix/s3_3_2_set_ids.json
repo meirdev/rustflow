@@ -1,0 +1,66 @@
+{
+  "reference": "RFC 7011 section 3.3.2",
+  "description": "Set IDs: 2 is a Template Set, 3 an Options Template Set, 256 and above a Data Set. 0 and 1 are not used and 4 to 255 are reserved: a collector steps over such a Set by its Length and reads the Sets around it.",
+  "datagrams": 1,
+  "expected": [
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 138,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 0,
+        "sets": [
+          {"type": "unknown", "set_id": 0},
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [
+                  {"information_element_id": 8, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 12, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 2, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 1, "field_length": 4, "enterprise_number": null}
+                ]
+              }
+            ]
+          },
+          {"type": "unknown", "set_id": 1},
+          {"type": "unknown", "set_id": 4},
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"sourceIPv4Address": "192.0.2.1", "destinationIPv4Address": "198.51.100.1", "packetDeltaCount": 1, "octetDeltaCount": 100}
+            ]
+          },
+          {"type": "unknown", "set_id": 255},
+          {
+            "type": "options_templates",
+            "templates": [
+              {
+                "template_id": 257,
+                "scope_fields": [
+                  {"information_element_id": 141, "field_length": 4, "enterprise_number": null}
+                ],
+                "option_fields": [
+                  {"information_element_id": 41, "field_length": 4, "enterprise_number": null}
+                ]
+              }
+            ]
+          },
+          {
+            "type": "options_data",
+            "template_id": 257,
+            "records": [
+              {"lineCardId": 3, "exportedMessageTotalCount": 33}
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "clean": false
+}

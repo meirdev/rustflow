@@ -1,0 +1,82 @@
+{
+  "reference": "sFlow Version 5 section 5, sampled_ethernet (format 2), sampled_ipv4 (3) and sampled_ipv6 (4)",
+  "description": "The parsed packet records: Ethernet frame data, whose MAC addresses are six bytes padded to eight, and IPv4 and IPv6 data, whose addresses are fixed-length and carry no type. Every field holds a different value.",
+  "datagrams": 1,
+  "expected": [
+    {
+      "protocol": "sflow_v5",
+      "packet": {
+        "version": 5,
+        "agent_address": "192.0.2.1",
+        "sub_agent_id": 0,
+        "sequence_number": 1,
+        "uptime": 3600000,
+        "samples": [
+          {
+            "Flow": {
+              "sequence_number": 1,
+              "source_id": {"source_id_type": 0, "source_id_index": 3},
+              "sampling_rate": 1000,
+              "sample_pool": 1000,
+              "drops": 0,
+              "input": {"format": 0, "value": 3},
+              "output": {"format": 0, "value": 4},
+              "records": [
+                {
+                  "SampledEthernet": {"length": 1518, "src_mac": "02:00:00:00:00:aa", "dst_mac": "02:00:00:00:00:bb", "type": 2048}
+                },
+                {
+                  "SampledIpv4": {"length": 1500, "protocol": 6, "src_ip": "192.0.2.1", "dst_ip": "198.51.100.1", "src_port": 51000, "dst_port": 443, "tcp_flags": 27, "tos": 184}
+                }
+              ]
+            }
+          },
+          {
+            "Flow": {
+              "sequence_number": 2,
+              "source_id": {"source_id_type": 0, "source_id_index": 3},
+              "sampling_rate": 1000,
+              "sample_pool": 2000,
+              "drops": 0,
+              "input": {"format": 0, "value": 3},
+              "output": {"format": 0, "value": 4},
+              "records": [
+                {
+                  "SampledEthernet": {"length": 86, "src_mac": "02:11:22:33:44:55", "dst_mac": "ff:ff:ff:ff:ff:ff", "type": 34525}
+                },
+                {
+                  "SampledIpv6": {"length": 72, "protocol": 17, "src_ip": "2001:db8:1::1", "dst_ip": "2001:db8:2::2", "src_port": 53, "dst_port": 5353, "tcp_flags": 0, "priority": 46}
+                }
+              ]
+            }
+          },
+          {
+            "Flow": {
+              "sequence_number": 3,
+              "source_id": {"source_id_type": 0, "source_id_index": 3},
+              "sampling_rate": 1000,
+              "sample_pool": 3000,
+              "drops": 0,
+              "input": {"format": 0, "value": 3},
+              "output": {"format": 0, "value": 4},
+              "records": [
+                {
+                  "SampledIpv4": {"length": 4294967295, "protocol": 255, "src_ip": "255.255.255.255", "dst_ip": "0.0.0.0", "src_port": 65535, "dst_port": 0, "tcp_flags": 255, "tos": 255}
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tshark": {
+    "sflow_245.ethernet.length": ["1518", "86"],
+    "sflow_245.ethernet.packet_type": ["0x00000800", "0x000086dd"],
+    "sflow_245.ip.length": ["1500", "72", "4294967295"],
+    "sflow_245.ipv4_src": ["192.0.2.1", "255.255.255.255"],
+    "sflow_245.ipv4_dst": ["198.51.100.1", "0.0.0.0"],
+    "sflow_245.ipv6_src": ["2001:db8:1::1"],
+    "sflow_245.ipv6_dst": ["2001:db8:2::2"]
+  }
+}

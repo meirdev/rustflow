@@ -1,0 +1,40 @@
+{
+  "reference": "RFC 7011 section 9.1",
+  "description": "Messages holding a variable-length value longer than its enclosing Set: a one-octet length of 5 with 4 octets left, and a three-octet length of 1000. The Template Set and the first record of each message are valid; the RFC has the collector discard the message. The well-formed message after them is read.",
+  "datagrams": 3,
+  "expected": [
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 45,
+        "export_time": 1700000000,
+        "sequence_number": 3,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 257,
+                "fields": [
+                  {"information_element_id": 10, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 82, "field_length": 65535, "enterprise_number": null}
+                ]
+              }
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 257,
+            "records": [
+              {"ingressInterface": 3, "interfaceName": "eth3"}
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "clean": false,
+  "deviation": "rustflow keeps both messages, reporting the Data Set as undecoded octets, where RFC 7011 section 9.1 has the collector discard a message with such a length."
+}

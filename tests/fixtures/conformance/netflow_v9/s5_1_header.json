@@ -1,0 +1,93 @@
+{
+  "reference": "RFC 3954 section 5.1",
+  "description": "The packet header, each field a different value: version, count, sysUpTime, UNIX secs, sequence number and source ID. Three packets from two source IDs, with sequence numbers that are not consecutive: the header is reported as sent.",
+  "datagrams": 3,
+  "expected": [
+    {
+      "protocol": "netflow_v9",
+      "packet": {
+        "version": 9,
+        "count": 2,
+        "sys_uptime": 16909060,
+        "unix_secs": 84281096,
+        "sequence_number": 151653132,
+        "source_id": 219025168,
+        "flow_sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [
+                  {"information_element_id": 8, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 12, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 2, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 1, "field_length": 4, "enterprise_number": null}
+                ]
+              }
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"sourceIPv4Address": "192.0.2.1", "destinationIPv4Address": "198.51.100.1", "packetDeltaCount": 1, "octetDeltaCount": 100}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "netflow_v9",
+      "packet": {
+        "version": 9,
+        "count": 1,
+        "sys_uptime": 4294967295,
+        "unix_secs": 4294967295,
+        "sequence_number": 4294967295,
+        "source_id": 219025168,
+        "flow_sets": [
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"sourceIPv4Address": "192.0.2.2", "destinationIPv4Address": "198.51.100.2", "packetDeltaCount": 2, "octetDeltaCount": 200}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "netflow_v9",
+      "packet": {
+        "version": 9,
+        "count": 1,
+        "sys_uptime": 0,
+        "unix_secs": 0,
+        "sequence_number": 0,
+        "source_id": 4294967295,
+        "flow_sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [
+                  {"information_element_id": 8, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 12, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 2, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 1, "field_length": 4, "enterprise_number": null}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "tshark": {
+    "cflow.count": ["2", "1", "1"],
+    "cflow.sequence": ["151653132", "4294967295", "0"],
+    "cflow.source_id": ["219025168", "219025168", "4294967295"]
+  }
+}

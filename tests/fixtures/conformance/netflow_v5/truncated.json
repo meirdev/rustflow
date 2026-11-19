@@ -1,0 +1,25 @@
+{
+  "reference": "Cisco NetFlow Export Datagram Format, \"Version 5 Header Format\"; Cisco NetFlow Export Datagram Format, \"Version 5 Flow Record Format\" (robustness)",
+  "description": "A datagram shorter than its header, one whose second record is cut short, and one of exactly 23 bytes are discarded; the whole datagram between them is read.",
+  "datagrams": 4,
+  "expected": [
+    {
+      "protocol": "netflow_v5",
+      "packet": {
+        "version": 5,
+        "count": 1,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "unix_nsecs": 0,
+        "flow_sequence": 1,
+        "engine_type": 0,
+        "engine_id": 0,
+        "sampling_interval": {"mode": 0, "interval": 0},
+        "flow_records": [
+          {"srcaddr": "192.0.2.1", "dstaddr": "198.51.100.1", "nexthop": "0.0.0.0", "input": 0, "output": 0, "d_pkts": 1, "d_octets": 0, "first": 0, "last": 0, "srcport": 0, "dstport": 0, "tcp_flags": 0, "prot": 0, "tos": 0, "src_as": 0, "dst_as": 0, "src_mask": 0, "dst_mask": 0}
+        ]
+      }
+    }
+  ],
+  "clean": false
+}

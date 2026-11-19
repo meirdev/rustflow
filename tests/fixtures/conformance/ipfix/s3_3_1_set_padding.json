@@ -1,0 +1,143 @@
+{
+  "reference": "RFC 7011 sections 3.3.1 and 9",
+  "description": "Sets padded to 4-octet and 8-octet boundaries; the padding is shorter than any record of the Set and is not read as one. Data records of 5 octets with 3, 2 and 1 padding octets, of 7 with 1, of 9 with 7 (an 8-octet boundary), and an Options Template Set with 2. One Data Set is padded with non-zero octets, which does not make the message malformed (section 9.1).",
+  "datagrams": 3,
+  "expected": [
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 84,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [
+                  {"information_element_id": 8, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 4, "field_length": 1, "enterprise_number": null}
+                ]
+              },
+              {
+                "template_id": 257,
+                "fields": [
+                  {"information_element_id": 12, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 7, "field_length": 2, "enterprise_number": null},
+                  {"information_element_id": 5, "field_length": 1, "enterprise_number": null}
+                ]
+              },
+              {
+                "template_id": 258,
+                "fields": [
+                  {"information_element_id": 1, "field_length": 8, "enterprise_number": null},
+                  {"information_element_id": 4, "field_length": 1, "enterprise_number": null}
+                ]
+              }
+            ]
+          },
+          {
+            "type": "options_templates",
+            "templates": [
+              {
+                "template_id": 259,
+                "scope_fields": [
+                  {"information_element_id": 141, "field_length": 4, "enterprise_number": null}
+                ],
+                "option_fields": [
+                  {"information_element_id": 41, "field_length": 2, "enterprise_number": null},
+                  {"information_element_id": 42, "field_length": 2, "enterprise_number": null}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 108,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"sourceIPv4Address": "192.0.2.1", "protocolIdentifier": 6}
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"sourceIPv4Address": "192.0.2.2", "protocolIdentifier": 17},
+              {"sourceIPv4Address": "192.0.2.3", "protocolIdentifier": 1}
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"sourceIPv4Address": "192.0.2.4", "protocolIdentifier": 4},
+              {"sourceIPv4Address": "192.0.2.5", "protocolIdentifier": 5},
+              {"sourceIPv4Address": "192.0.2.6", "protocolIdentifier": 6}
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 257,
+            "records": [
+              {"destinationIPv4Address": "198.51.100.1", "sourceTransportPort": 443, "ipClassOfService": 184}
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 258,
+            "records": [
+              {"octetDeltaCount": 1099511627776, "protocolIdentifier": 47}
+            ]
+          },
+          {
+            "type": "options_data",
+            "template_id": 259,
+            "records": [
+              {"lineCardId": 1, "exportedMessageTotalCount": 345, "exportedFlowRecordTotalCount": 10201}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 32,
+        "export_time": 1700000000,
+        "sequence_number": 9,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"sourceIPv4Address": "192.0.2.7", "protocolIdentifier": 7},
+              {"sourceIPv4Address": "192.0.2.8", "protocolIdentifier": 8}
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "tshark": {
+    "cflow.flowset_length": ["44", "24", "12", "16", "20", "12", "20", "12", "16"],
+    "cflow.srcaddr": ["192.0.2.1", "192.0.2.2", "192.0.2.3", "192.0.2.4", "192.0.2.5", "192.0.2.6", "192.0.2.7", "192.0.2.8"],
+    "cflow.dstaddr": ["198.51.100.1"]
+  }
+}

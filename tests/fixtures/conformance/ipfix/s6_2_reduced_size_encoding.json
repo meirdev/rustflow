@@ -1,0 +1,105 @@
+{
+  "reference": "RFC 7011 section 6.2",
+  "description": "Integers and floats sent in fewer octets than their type implies. unsigned64 elements in 1, 2, 3, 4, 5, 6, 7 and 8 octets; unsigned32 in 1, 2 and 3; unsigned16 in 1; signed32 in 1, 2 and 3, where the sign must be preserved; float64 as float32. Three records: the highest value of each size (the lowest for the signed ones), the highest positive signed values, and ordinary values.",
+  "datagrams": 1,
+  "expected": [
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 252,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [
+                  {"information_element_id": 1, "field_length": 1, "enterprise_number": null},
+                  {"information_element_id": 2, "field_length": 2, "enterprise_number": null},
+                  {"information_element_id": 3, "field_length": 3, "enterprise_number": null},
+                  {"information_element_id": 85, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 86, "field_length": 5, "enterprise_number": null},
+                  {"information_element_id": 40, "field_length": 6, "enterprise_number": null},
+                  {"information_element_id": 41, "field_length": 7, "enterprise_number": null},
+                  {"information_element_id": 42, "field_length": 8, "enterprise_number": null},
+                  {"information_element_id": 10, "field_length": 1, "enterprise_number": null},
+                  {"information_element_id": 14, "field_length": 2, "enterprise_number": null},
+                  {"information_element_id": 16, "field_length": 3, "enterprise_number": null},
+                  {"information_element_id": 7, "field_length": 1, "enterprise_number": null},
+                  {"information_element_id": 434, "field_length": 1, "enterprise_number": null},
+                  {"information_element_id": 434, "field_length": 2, "enterprise_number": null},
+                  {"information_element_id": 434, "field_length": 3, "enterprise_number": null},
+                  {"information_element_id": 311, "field_length": 4, "enterprise_number": null}
+                ]
+              }
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {
+                "octetDeltaCount": 255,
+                "packetDeltaCount": 65535,
+                "deltaFlowCount": 16777215,
+                "octetTotalCount": 4294967295,
+                "packetTotalCount": 1099511627775,
+                "exportedOctetTotalCount": 281474976710655,
+                "exportedMessageTotalCount": 72057594037927935,
+                "exportedFlowRecordTotalCount": 18446744073709551615,
+                "ingressInterface": 255,
+                "egressInterface": 65535,
+                "bgpSourceAsNumber": 16777215,
+                "sourceTransportPort": 255,
+                "mibObjectValueInteger": [-128, -32768, -8388608],
+                "samplingProbability": 1.5
+              },
+              {
+                "octetDeltaCount": 1,
+                "packetDeltaCount": 1,
+                "deltaFlowCount": 1,
+                "octetTotalCount": 1,
+                "packetTotalCount": 1,
+                "exportedOctetTotalCount": 1,
+                "exportedMessageTotalCount": 1,
+                "exportedFlowRecordTotalCount": 1,
+                "ingressInterface": 1,
+                "egressInterface": 1,
+                "bgpSourceAsNumber": 1,
+                "sourceTransportPort": 1,
+                "mibObjectValueInteger": [127, 32767, 8388607],
+                "samplingProbability": -0.25
+              },
+              {
+                "octetDeltaCount": 200,
+                "packetDeltaCount": 258,
+                "deltaFlowCount": 66051,
+                "octetTotalCount": 16909060,
+                "packetTotalCount": 4328719365,
+                "exportedOctetTotalCount": 1108152157446,
+                "exportedMessageTotalCount": 283686952306183,
+                "exportedFlowRecordTotalCount": 72623859790382856,
+                "ingressInterface": 128,
+                "egressInterface": 32769,
+                "bgpSourceAsNumber": 8388609,
+                "sourceTransportPort": 53,
+                "mibObjectValueInteger": [-1, -2, -3],
+                "samplingProbability": 1024.0
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "tshark": {
+    "cflow.octets": ["255", "1", "200"],
+    "cflow.packets": ["65535", "1", "258"],
+    "cflow.inputint": ["255", "1", "128"],
+    "cflow.outputint": ["65535", "1", "32769"]
+  }
+}

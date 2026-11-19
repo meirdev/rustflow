@@ -1,0 +1,159 @@
+{
+  "reference": "sFlow Version 5 section 5, sample_datagram_v5 and address",
+  "description": "The datagram header, each field a different value: agent address, sub-agent ID, sequence number and uptime. An agent address of each type: IPv4, IPv6 and unknown, which carries no bytes. A datagram of no samples, and one with every integer at its highest.",
+  "datagrams": 5,
+  "expected": [
+    {
+      "protocol": "sflow_v5",
+      "packet": {
+        "version": 5,
+        "agent_address": "192.0.2.10",
+        "sub_agent_id": 16909060,
+        "sequence_number": 84281096,
+        "uptime": 151653132,
+        "samples": [
+          {
+            "Flow": {
+              "sequence_number": 1,
+              "source_id": {"source_id_type": 0, "source_id_index": 3},
+              "sampling_rate": 1000,
+              "sample_pool": 1000,
+              "drops": 0,
+              "input": {"format": 0, "value": 3},
+              "output": {"format": 0, "value": 4},
+              "records": [
+                {
+                  "SampledHeader": {
+                    "protocol": "EthernetIso88023",
+                    "frame_length": 50,
+                    "stripped": 4,
+                    "header": [2, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 1, 8, 0, 69, 0, 0, 32, 0, 0, 64, 0, 64, 17, 78, 102, 192, 0, 2, 50, 198, 51, 100, 1, 156, 64, 195, 80, 0, 12, 177, 219, 1, 1, 1, 1]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "sflow_v5",
+      "packet": {
+        "version": 5,
+        "agent_address": "2001:db8::10",
+        "sub_agent_id": 1,
+        "sequence_number": 2,
+        "uptime": 3,
+        "samples": [
+          {
+            "Flow": {
+              "sequence_number": 2,
+              "source_id": {"source_id_type": 0, "source_id_index": 3},
+              "sampling_rate": 1000,
+              "sample_pool": 2000,
+              "drops": 0,
+              "input": {"format": 0, "value": 3},
+              "output": {"format": 0, "value": 4},
+              "records": [
+                {
+                  "SampledHeader": {
+                    "protocol": "EthernetIso88023",
+                    "frame_length": 50,
+                    "stripped": 4,
+                    "header": [2, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 1, 8, 0, 69, 0, 0, 32, 0, 0, 64, 0, 64, 17, 78, 102, 192, 0, 2, 50, 198, 51, 100, 1, 156, 64, 195, 80, 0, 12, 175, 217, 2, 2, 2, 2]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "sflow_v5",
+      "packet": {
+        "version": 5,
+        "agent_address": null,
+        "sub_agent_id": 4,
+        "sequence_number": 5,
+        "uptime": 6,
+        "samples": [
+          {
+            "Flow": {
+              "sequence_number": 3,
+              "source_id": {"source_id_type": 0, "source_id_index": 3},
+              "sampling_rate": 1000,
+              "sample_pool": 3000,
+              "drops": 0,
+              "input": {"format": 0, "value": 3},
+              "output": {"format": 0, "value": 4},
+              "records": [
+                {
+                  "SampledHeader": {
+                    "protocol": "EthernetIso88023",
+                    "frame_length": 50,
+                    "stripped": 4,
+                    "header": [2, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 1, 8, 0, 69, 0, 0, 32, 0, 0, 64, 0, 64, 17, 78, 102, 192, 0, 2, 50, 198, 51, 100, 1, 156, 64, 195, 80, 0, 12, 173, 215, 3, 3, 3, 3]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "sflow_v5",
+      "packet": {
+        "version": 5,
+        "agent_address": "192.0.2.10",
+        "sub_agent_id": 7,
+        "sequence_number": 8,
+        "uptime": 9,
+        "samples": []
+      }
+    },
+    {
+      "protocol": "sflow_v5",
+      "packet": {
+        "version": 5,
+        "agent_address": "255.255.255.255",
+        "sub_agent_id": 4294967295,
+        "sequence_number": 4294967295,
+        "uptime": 4294967295,
+        "samples": [
+          {
+            "Flow": {
+              "sequence_number": 4,
+              "source_id": {"source_id_type": 0, "source_id_index": 3},
+              "sampling_rate": 1000,
+              "sample_pool": 4000,
+              "drops": 0,
+              "input": {"format": 0, "value": 3},
+              "output": {"format": 0, "value": 4},
+              "records": [
+                {
+                  "SampledHeader": {
+                    "protocol": "EthernetIso88023",
+                    "frame_length": 50,
+                    "stripped": 4,
+                    "header": [2, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 1, 8, 0, 69, 0, 0, 32, 0, 0, 64, 0, 64, 17, 78, 102, 192, 0, 2, 50, 198, 51, 100, 1, 156, 64, 195, 80, 0, 12, 171, 213, 4, 4, 4, 4]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tshark": {
+    "sflow_245.version": ["5", "5", "5", "5", "5"],
+    "sflow_245.agent": ["192.0.2.10", "192.0.2.10", "255.255.255.255"],
+    "sflow_245.agent.v6": ["2001:db8::10"],
+    "sflow_245.sub_agent_id": ["16909060", "1", "4", "7", "4294967295"],
+    "sflow_245.sequence_number": ["84281096", "2", "5", "8", "4294967295"],
+    "sflow_245.sysuptime": ["151653132", "3", "6", "9", "4294967295"],
+    "sflow_245.numsamples": ["1", "1", "1", "0", "1"]
+  }
+}

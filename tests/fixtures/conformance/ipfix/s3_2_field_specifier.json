@@ -1,0 +1,47 @@
+{
+  "reference": "RFC 7011 section 3.2",
+  "description": "Field specifiers with and without the enterprise bit. With it, four more octets carry the enterprise number and the element belongs to that enterprise: element 8 of enterprise 32473 is not IANA's sourceIPv4Address. Enterprise numbers 1 and 4294967295, and the highest element ID, 32767, in both spaces. The elements the collector has no definition of keep their octets, and the fields after them are read at the right offset.",
+  "datagrams": 1,
+  "expected": [
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 100,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [
+                  {"information_element_id": 8, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 8, "field_length": 4, "enterprise_number": 32473},
+                  {"information_element_id": 1, "field_length": 2, "enterprise_number": 4294967295},
+                  {"information_element_id": 32767, "field_length": 2, "enterprise_number": 1},
+                  {"information_element_id": 32767, "field_length": 1, "enterprise_number": null},
+                  {"information_element_id": 12, "field_length": 4, "enterprise_number": null}
+                ]
+              }
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"sourceIPv4Address": "192.0.2.1", "32473/8": "c6336401", "4294967295/1": "beef", "1/32767": "0102", "32767": "7f", "destinationIPv4Address": "198.51.100.1"},
+              {"sourceIPv4Address": "192.0.2.2", "32473/8": "00000000", "4294967295/1": "0000", "1/32767": "ffff", "32767": "00", "destinationIPv4Address": "198.51.100.2"}
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "tshark": {
+    "cflow.srcaddr": ["192.0.2.1", "192.0.2.2"],
+    "cflow.dstaddr": ["198.51.100.1", "198.51.100.2"]
+  }
+}

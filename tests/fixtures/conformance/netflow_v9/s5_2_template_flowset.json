@@ -1,0 +1,96 @@
+{
+  "reference": "RFC 3954 section 5.2",
+  "description": "Template FlowSets: one holding two template records (256 and 257), a second in the same packet holding a third with the highest template ID (65535) and a single one-byte field. Data of each template follows, in the same packet and in the next.",
+  "datagrams": 2,
+  "expected": [
+    {
+      "protocol": "netflow_v9",
+      "packet": {
+        "version": 9,
+        "count": 5,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "sequence_number": 0,
+        "source_id": 0,
+        "flow_sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [
+                  {"information_element_id": 8, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 12, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 2, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 1, "field_length": 4, "enterprise_number": null}
+                ]
+              },
+              {
+                "template_id": 257,
+                "fields": [
+                  {"information_element_id": 27, "field_length": 16, "enterprise_number": null},
+                  {"information_element_id": 28, "field_length": 16, "enterprise_number": null},
+                  {"information_element_id": 2, "field_length": 8, "enterprise_number": null}
+                ]
+              }
+            ]
+          },
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 65535,
+                "fields": [
+                  {"information_element_id": 4, "field_length": 1, "enterprise_number": null}
+                ]
+              }
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 257,
+            "records": [
+              {"sourceIPv6Address": "2001:db8:1::1", "destinationIPv6Address": "2001:db8:2::2", "packetDeltaCount": 1099511627783}
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"sourceIPv4Address": "192.0.2.1", "destinationIPv4Address": "198.51.100.1", "packetDeltaCount": 3, "octetDeltaCount": 300}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "netflow_v9",
+      "packet": {
+        "version": 9,
+        "count": 4,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "sequence_number": 1,
+        "source_id": 0,
+        "flow_sets": [
+          {
+            "type": "data",
+            "template_id": 65535,
+            "records": [
+              {"protocolIdentifier": 6},
+              {"protocolIdentifier": 17},
+              {"protocolIdentifier": 1},
+              {"protocolIdentifier": 58}
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "tshark": {
+    "cflow.template_id": ["256", "257", "65535"],
+    "cflow.srcaddrv6": ["2001:db8:1::1"],
+    "cflow.srcaddr": ["192.0.2.1"],
+    "cflow.protocol": ["6", "17", "1", "58"]
+  }
+}

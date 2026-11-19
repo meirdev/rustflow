@@ -1,0 +1,46 @@
+{
+  "reference": "RFC 3954 section 8",
+  "description": "Field types the collector has no definition for (40001, and 32769, whose top bit means nothing in v9) keep their bytes and their length, so the fields after them are still read at the right offset.",
+  "datagrams": 1,
+  "expected": [
+    {
+      "protocol": "netflow_v9",
+      "packet": {
+        "version": 9,
+        "count": 3,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "sequence_number": 0,
+        "source_id": 0,
+        "flow_sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [
+                  {"information_element_id": 8, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 32769, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 40001, "field_length": 2, "enterprise_number": null},
+                  {"information_element_id": 1, "field_length": 4, "enterprise_number": null}
+                ]
+              }
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"sourceIPv4Address": "192.0.2.1", "32769": "deadbeef", "40001": "cafe", "octetDeltaCount": 1000},
+              {"sourceIPv4Address": "192.0.2.2", "32769": "00000001", "40001": "0002", "octetDeltaCount": 2000}
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "tshark": {
+    "cflow.srcaddr": ["192.0.2.1", "192.0.2.2"],
+    "cflow.octets": ["1000", "2000"]
+  }
+}

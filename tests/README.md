@@ -65,6 +65,13 @@ the collector.
 `test_expire.py` seeds an output tree and checks that `--expire` removes only
 the collector's own old files.
 
+## Protocol conformance
+
+`test_conformance.py` replays the captures under `fixtures/conformance/`,
+one per section of the protocol specifications, and compares what rustflow
+reads with expected results written from the specifications. See
+[conformance/README.md](conformance/README.md).
+
 ## Updating a snapshot
 
 When an output change is intended, regenerate the affected snapshot with

@@ -1,0 +1,87 @@
+{
+  "reference": "RFC 7011 sections 3.4.1 and 8",
+  "description": "Template records: two in one Template Set, a second Template Set in the same message, the highest Template ID (65535), a template of a single one-octet field, and a template holding an element more than once, whose values are reported in template order.",
+  "datagrams": 1,
+  "expected": [
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 124,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [
+                  {"information_element_id": 8, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 12, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 2, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 1, "field_length": 4, "enterprise_number": null}
+                ]
+              },
+              {
+                "template_id": 65535,
+                "fields": [
+                  {"information_element_id": 4, "field_length": 1, "enterprise_number": null}
+                ]
+              }
+            ]
+          },
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 257,
+                "fields": [
+                  {"information_element_id": 7, "field_length": 2, "enterprise_number": null},
+                  {"information_element_id": 8, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 7, "field_length": 2, "enterprise_number": null},
+                  {"information_element_id": 8, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 8, "field_length": 4, "enterprise_number": null}
+                ]
+              }
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 65535,
+            "records": [
+              {"protocolIdentifier": 6},
+              {"protocolIdentifier": 17},
+              {"protocolIdentifier": 1},
+              {"protocolIdentifier": 58}
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"sourceIPv4Address": "192.0.2.1", "destinationIPv4Address": "198.51.100.1", "packetDeltaCount": 1, "octetDeltaCount": 100}
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 257,
+            "records": [
+              {
+                "sourceTransportPort": [1001, 1002],
+                "sourceIPv4Address": ["192.0.2.1", "192.0.2.2", "192.0.2.3"]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "tshark": {
+    "cflow.template_id": ["256", "65535", "257"],
+    "cflow.protocol": ["6", "17", "1", "58"],
+    "cflow.srcport": ["1001", "1002"],
+    "cflow.srcaddr": ["192.0.2.1", "192.0.2.1", "192.0.2.2", "192.0.2.3"]
+  }
+}

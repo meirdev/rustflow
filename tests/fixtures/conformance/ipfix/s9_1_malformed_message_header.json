@@ -1,0 +1,41 @@
+{
+  "reference": "RFC 7011 section 9.1",
+  "description": "Malformed messages, which a collector must discard: a Length (15) shorter than a message header, a Length (0), a datagram cut inside the header, a message cut short of its Length, and reserved Version values (0, 11 and 0x0a00). The well-formed message after them is read.",
+  "datagrams": 8,
+  "expected": [
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 60,
+        "export_time": 1700000000,
+        "sequence_number": 9,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [
+                  {"information_element_id": 8, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 12, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 2, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 1, "field_length": 4, "enterprise_number": null}
+                ]
+              }
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"sourceIPv4Address": "192.0.2.9", "destinationIPv4Address": "198.51.100.9", "packetDeltaCount": 9, "octetDeltaCount": 900}
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "clean": false
+}

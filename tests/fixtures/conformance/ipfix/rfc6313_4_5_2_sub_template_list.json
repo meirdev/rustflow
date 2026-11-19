@@ -1,0 +1,64 @@
+{
+  "reference": "RFC 6313 section 4.5.2",
+  "description": "subTemplateList: a semantic octet, a Template ID and records of that template. A list of two records, an empty list, and a list of a template the collector does not have, which is reported as null. The fields before and after each list are read.",
+  "datagrams": 1,
+  "expected": [
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 117,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 300,
+                "fields": [
+                  {"information_element_id": 8, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 7, "field_length": 2, "enterprise_number": null}
+                ]
+              },
+              {
+                "template_id": 256,
+                "fields": [
+                  {"information_element_id": 10, "field_length": 4, "enterprise_number": null},
+                  {"information_element_id": 292, "field_length": 65535, "enterprise_number": null},
+                  {"information_element_id": 14, "field_length": 4, "enterprise_number": null}
+                ]
+              }
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {
+                "ingressInterface": 1,
+                "subTemplateList": [
+                  {"sourceIPv4Address": "192.0.2.1", "sourceTransportPort": 1001},
+                  {"sourceIPv4Address": "192.0.2.2", "sourceTransportPort": 1002}
+                ],
+                "egressInterface": 11
+              },
+              {
+                "ingressInterface": 2,
+                "subTemplateList": [],
+                "egressInterface": 12
+              },
+              {"ingressInterface": 3, "subTemplateList": null, "egressInterface": 13}
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "tshark": {
+    "cflow.inputint": ["1", "2", "3"],
+    "cflow.outputint": ["11", "12", "13"]
+  },
+  "clean": false
+}

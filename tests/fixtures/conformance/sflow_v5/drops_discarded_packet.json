@@ -1,0 +1,98 @@
+{
+  "reference": "sFlow Dropped Packet Notification Structures section 2, discarded_packet (format 5), extended_egress_queue (1036), extended_acl (1037) and extended_function (1038)",
+  "description": "Dropped-packet notifications: a sample with an expanded source ID, drops, input and output ifIndex, a reason and the records describing the packet. Reasons from the ICMP unreachable codes (0), from the sFlow codes (257 TTL exceeded, 258 ACL), and one the specification does not assign (9999), which is reported by number. The records added for drops: egress queue, ACL and function.",
+  "datagrams": 1,
+  "expected": [
+    {
+      "protocol": "sflow_v5",
+      "packet": {
+        "version": 5,
+        "agent_address": "192.0.2.1",
+        "sub_agent_id": 0,
+        "sequence_number": 1,
+        "uptime": 3600000,
+        "samples": [
+          {
+            "Discarded": {
+              "sequence_number": 16909060,
+              "source_id": {"source_id_type": 0, "source_id_index": 84281096},
+              "drops": 151653132,
+              "input_if_index": 219025168,
+              "output_if_index": 286397204,
+              "reason": "Acl",
+              "records": [
+                {
+                  "SampledHeader": {
+                    "protocol": "EthernetIso88023",
+                    "frame_length": 50,
+                    "stripped": 4,
+                    "header": [2, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 1, 8, 0, 69, 0, 0, 32, 0, 0, 64, 0, 64, 17, 78, 102, 192, 0, 2, 50, 198, 51, 100, 1, 156, 64, 195, 80, 0, 12, 223, 250, 100, 114, 111, 112]
+                  }
+                },
+                {
+                  "ExtendedAcl": {"number": 101, "name": "edge-in", "direction": "Ingress"}
+                },
+                {
+                  "ExtendedEgressQueue": {"queue": 3}
+                }
+              ]
+            }
+          },
+          {
+            "Discarded": {
+              "sequence_number": 2,
+              "source_id": {"source_id_type": 0, "source_id_index": 7},
+              "drops": 0,
+              "input_if_index": 7,
+              "output_if_index": 0,
+              "reason": "TtlExceeded",
+              "records": [
+                {
+                  "SampledHeader": {
+                    "protocol": "EthernetIso88023",
+                    "frame_length": 50,
+                    "stripped": 4,
+                    "header": [2, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 1, 8, 0, 69, 0, 0, 32, 0, 0, 64, 0, 64, 17, 78, 102, 192, 0, 2, 50, 198, 51, 100, 1, 156, 64, 195, 80, 0, 12, 223, 250, 100, 114, 111, 112]
+                  }
+                },
+                {
+                  "ExtendedFunction": {"symbol": "ip_forward"}
+                }
+              ]
+            }
+          },
+          {
+            "Discarded": {
+              "sequence_number": 3,
+              "source_id": {"source_id_type": 0, "source_id_index": 8},
+              "drops": 0,
+              "input_if_index": 0,
+              "output_if_index": 8,
+              "reason": "NetUnreachable",
+              "records": [
+                {
+                  "ExtendedAcl": {"number": 0, "name": "", "direction": "Unknown"}
+                },
+                {
+                  "ExtendedAcl": {"number": 2, "name": "out", "direction": "Egress"}
+                }
+              ]
+            }
+          },
+          {
+            "Discarded": {
+              "sequence_number": 4,
+              "source_id": {"source_id_type": 0, "source_id_index": 9},
+              "drops": 1,
+              "input_if_index": 9,
+              "output_if_index": 0,
+              "reason": {"Unassigned": 9999},
+              "records": []
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "clean": false
+}
