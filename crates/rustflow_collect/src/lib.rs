@@ -15,6 +15,7 @@ pub use args::CollectArgs;
 use args::{FlowType, Input};
 use enrich::{EnrichmentConfig, EnrichmentEngine};
 use log::{error, info, warn};
+use rustflow_core::common_flow;
 use rustflow_core::information_element::Registry;
 use rustflow_core::reader::{
     NetflowPacket, NetflowProcessor, PcapSource, Processor, Recv, SflowPacket, SflowProcessor,
@@ -104,11 +105,7 @@ trait Counted {
 
 impl Counted for NetflowPacket {
     fn version(&self) -> &'static str {
-        match self {
-            Self::V5(_) => "netflow_v5",
-            Self::V9(_) => "netflow_v9",
-            Self::Ipfix(_) => "ipfix",
-        }
+        self.flow_type().name()
     }
 
     fn flow_count(&self) -> usize {
@@ -132,9 +129,7 @@ impl Counted for NetflowPacket {
 
 impl Counted for SflowPacket {
     fn version(&self) -> &'static str {
-        match self {
-            Self::V5(_) => "sflow_v5",
-        }
+        self.flow_type().name()
     }
 
     fn flow_count(&self) -> usize {
@@ -148,18 +143,18 @@ impl Counted for SflowPacket {
     }
 }
 
-/// The version a datagram of `family` starts with, as metric labels name
-/// it; `None` for one the family does not have.
 fn version_of(family: FlowType, payload: &[u8]) -> Option<&'static str> {
-    match family {
+    let version = match family {
         FlowType::Netflow => match payload.get(..2)? {
-            [0, 5] => Some("netflow_v5"),
-            [0, 9] => Some("netflow_v9"),
-            [0, 10] => Some("ipfix"),
-            _ => None,
+            [0, 5] => common_flow::FlowType::NetflowV5,
+            [0, 9] => common_flow::FlowType::NetflowV9,
+            [0, 10] => common_flow::FlowType::Ipfix,
+            _ => return None,
         },
-        FlowType::Sflow => (payload.get(..4)? == [0, 0, 0, 5]).then_some("sflow_v5"),
-    }
+        FlowType::Sflow if payload.get(..4)? == [0, 0, 0, 5] => common_flow::FlowType::SflowV5,
+        FlowType::Sflow => return None,
+    };
+    Some(version.name())
 }
 
 fn collect<P: Processor>(

@@ -30,6 +30,17 @@ pub enum FlowType {
     SflowV5,
 }
 
+impl FlowType {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::NetflowV5 => "netflow_v5",
+            Self::NetflowV9 => "netflow_v9",
+            Self::Ipfix => "ipfix",
+            Self::SflowV5 => "sflow_v5",
+        }
+    }
+}
+
 #[macro_export]
 macro_rules! for_each_flow_field {
     ($callback:ident) => {

@@ -3,7 +3,8 @@ use std::time::{Duration, Instant};
 
 use super::ReadError;
 use crate::common_flow::{
-    CommonFlow, ExporterOptions, from_ipfix, from_netflow_v5, from_netflow_v9, from_sflow_v5,
+    CommonFlow, ExporterOptions, FlowType, from_ipfix, from_netflow_v5, from_netflow_v9,
+    from_sflow_v5,
 };
 use crate::information_element::Registry;
 use crate::timed_map::BoundedTimedMap;
@@ -45,6 +46,16 @@ pub enum NetflowPacket {
     V9(netflow_v9::Packet),
     #[cfg_attr(feature = "serde", serde(rename = "ipfix"))]
     Ipfix(ipfix::Packet),
+}
+
+impl NetflowPacket {
+    pub fn flow_type(&self) -> FlowType {
+        match self {
+            Self::V5(_) => FlowType::NetflowV5,
+            Self::V9(_) => FlowType::NetflowV9,
+            Self::Ipfix(_) => FlowType::Ipfix,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -166,6 +177,14 @@ impl Processor for NetflowProcessor {
 pub enum SflowPacket {
     #[cfg_attr(feature = "serde", serde(rename = "sflow_v5"))]
     V5(sflow_v5::Packet),
+}
+
+impl SflowPacket {
+    pub fn flow_type(&self) -> FlowType {
+        match self {
+            Self::V5(_) => FlowType::SflowV5,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
