@@ -46,7 +46,12 @@ for_each_flow_field!(flow_fields);
 fn write_field(record: &mut Vec<u8>, value: &str) {
     if value.contains([',', '"', '\n', '\r']) {
         record.push(b'"');
-        record.extend_from_slice(value.replace('"', "\"\"").as_bytes());
+        for byte in value.bytes() {
+            if byte == b'"' {
+                record.push(b'"');
+            }
+            record.push(byte);
+        }
         record.push(b'"');
     } else {
         record.extend_from_slice(value.as_bytes());
