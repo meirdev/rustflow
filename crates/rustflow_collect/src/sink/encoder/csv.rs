@@ -1,10 +1,9 @@
-use std::cell::RefCell;
-use std::fmt::Write as _;
 use std::io::{self, BufWriter, Write};
 
-use rustflow_core::common::common_flow::CommonFlow;
+use rustflow_core::common_flow::CommonFlow;
 use rustflow_core::for_each_flow_field;
 
+use super::text::Text;
 use super::{Encoder, WRITE_BUFFER_BYTES, Writer};
 use crate::enrich::Enriched;
 
@@ -12,93 +11,86 @@ use crate::enrich::Enriched;
 /// the enrichment fields.
 pub struct Csv {
     out: BufWriter<Writer>,
-    /// One record at a time, encoded in memory, where it cannot fail, and
-    /// handed to `out` in a single write, so a failed write leaves no
+    /// One record, written in a single call so a failed write leaves no
     /// partial record behind.
-    record: csv::Writer<Record>,
-    scratch: String,
+    record: Vec<u8>,
 }
 
-/// Where the csv writer encodes a record. `csv::Writer` hands out no `&mut`
-/// to it, so it is read and cleared through `get_ref`, hence the `RefCell`.
-#[derive(Default)]
-struct Record(RefCell<Vec<u8>>);
-
-impl Write for Record {
-    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
-        self.0.get_mut().extend_from_slice(data);
-        Ok(data.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-macro_rules! text {
-    ($scratch:expr, required, $value:expr) => {
-        let _ = write!($scratch, "{}", $value);
+macro_rules! field {
+    ($record:ident, required, $value:expr) => {
+        $value.write_text($record);
     };
-    ($scratch:expr, optional, $value:expr) => {
+    ($record:ident, optional, $value:expr) => {
         if let Some(value) = $value {
-            let _ = write!($scratch, "{value}");
+            value.write_text($record);
         }
     };
 }
 
 macro_rules! flow_fields {
     ($( $name:ident : $kind:ident $presence:ident ),* $(,)?) => {
-        const HEADERS: &[&str] = &[$( stringify!($name), )*];
-
-        fn write_flow(
-            out: &mut csv::Writer<Record>,
-            scratch: &mut String,
-            flow: &CommonFlow,
-        ) -> io::Result<()> {
+        /// Writes the flow's fields, each followed by a comma.
+        fn write_flow(record: &mut Vec<u8>, flow: &CommonFlow) {
             let CommonFlow { $( $name, )* } = flow;
             $(
-                scratch.clear();
-                text!(scratch, $presence, $name);
-                out.write_field(scratch.as_bytes())?;
+                field!(record, $presence, $name);
+                record.push(b',');
             )*
-            Ok(())
         }
     };
 }
 for_each_flow_field!(flow_fields);
 
+/// Writes `value` followed by a comma, quoted when it holds a delimiter, a
+/// quote or a line break.
+fn write_field(record: &mut Vec<u8>, value: &str) {
+    if value.contains([',', '"', '\n', '\r']) {
+        record.push(b'"');
+        for byte in value.bytes() {
+            if byte == b'"' {
+                record.push(b'"');
+            }
+            record.push(byte);
+        }
+        record.push(b'"');
+    } else {
+        record.extend_from_slice(value.as_bytes());
+    }
+    record.push(b',');
+}
+
 impl Csv {
     pub fn open(out: Writer, enriched_fields: &[String]) -> io::Result<Self> {
         let mut csv = Self {
             out: BufWriter::with_capacity(WRITE_BUFFER_BYTES, out),
-            record: csv::Writer::from_writer(Record::default()),
-            scratch: String::new(),
+            record: Vec::with_capacity(1024),
         };
-        let names = HEADERS.iter().copied();
-        csv.record
-            .write_record(names.chain(enriched_fields.iter().map(String::as_str)))?;
+        let names = CommonFlow::FIELD_NAMES.iter().copied();
+        for name in names.chain(enriched_fields.iter().map(String::as_str)) {
+            write_field(&mut csv.record, name);
+        }
         csv.write_record()?;
         Ok(csv)
     }
 
-    /// Moves the record encoded so far to `out`, and starts the next.
+    /// Replaces the last field's comma with the line end, moves the record
+    /// to `out`, and starts the next.
     fn write_record(&mut self) -> io::Result<()> {
-        self.record.flush()?;
-        let mut record = self.record.get_ref().0.borrow_mut();
-        let written = self.out.write_all(&record);
-        record.clear();
+        if let Some(last) = self.record.last_mut() {
+            *last = b'\n';
+        }
+        let written = self.out.write_all(&self.record);
+        self.record.clear();
         written
     }
 }
 
 impl Encoder for Csv {
     fn encode(&mut self, flow: &CommonFlow, enriched: &Enriched) -> io::Result<()> {
-        write_flow(&mut self.record, &mut self.scratch, flow)?;
+        write_flow(&mut self.record, flow);
         for value in enriched.iter() {
-            self.record.write_field(value.as_deref().unwrap_or(""))?;
+            write_field(&mut self.record, value.as_deref().unwrap_or(""));
         }
-        // Terminates the record started by write_field.
-        self.record.write_record(None::<&[u8]>)?;
         self.write_record()
     }
 
@@ -116,7 +108,7 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
 
-    use rustflow_core::common::common_flow::FlowType;
+    use rustflow_core::common_flow::FlowType;
 
     use super::*;
 
@@ -145,9 +137,9 @@ mod tests {
     fn a_failed_write_loses_whole_records_only() {
         let disk = Disk::default();
         let mut csv = Csv::open(Box::new(disk.clone()), &["site".to_string()]).unwrap();
-        let flow = CommonFlow::new(FlowType::Ipfix);
+        let flow = CommonFlow::new(FlowType::Ipfix, 0, [192, 0, 2, 1].into(), 0);
         // A value that needs quoting.
-        let enriched = vec![Some(Arc::from("a,b"))];
+        let enriched = vec![Some(Arc::from("a,\"b\""))];
 
         let mut failed = 0;
         for i in 0..15_000 {
@@ -166,7 +158,7 @@ mod tests {
         for row in reader.records() {
             let row = row.unwrap();
             assert_eq!(row.len(), columns);
-            assert_eq!(&row[columns - 1], "a,b");
+            assert_eq!(&row[columns - 1], "a,\"b\"");
             rows += 1;
         }
         assert!(failed > 0);

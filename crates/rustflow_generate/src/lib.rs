@@ -3,6 +3,7 @@
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
@@ -11,12 +12,11 @@ use ipnet::IpNet;
 use rand::Rng;
 use rand::distr::uniform::SampleUniform;
 use rand::seq::IndexedRandom;
-use rustflow_core::common::InformationElement;
-use rustflow_core::common::encoder::Encode;
-use rustflow_core::ipfix::parser::{
-    DataRecord, FieldSpecifier, FieldValue, Header, IPFIX_OPTIONS_TEMPLATE_SET_ID,
-    IPFIX_TEMPLATE_SET_ID, IPFIX_VERSION, IpfixPacket, Record, Set, TemplateRecord,
+use rustflow_core::information_element::ElementId;
+use rustflow_core::ipfix::{
+    DataSet, FieldSpecifier, Header, OptionsTemplate, Packet, Set, Template, VERSION, encode_packet,
 };
+use rustflow_core::value::Value;
 
 const FLOW_TEMPLATE_ID: u16 = 256;
 const OPTIONS_TEMPLATE_ID: u16 = 257;
@@ -184,53 +184,58 @@ pub struct GenerateArgs {
     packet_range: InclusiveRange<u16>,
 }
 
-fn create_flow_template(family: AddressFamily) -> TemplateRecord {
-    use InformationElement::*;
-
-    let (source_address, destination_address, address_length) = match family {
-        AddressFamily::V4 => (SourceIpv4Address, DestinationIpv4Address, 4),
-        AddressFamily::V6 => (SourceIpv6Address, DestinationIpv6Address, 16),
-    };
-
-    TemplateRecord::new(
-        FLOW_TEMPLATE_ID,
-        vec![
-            FieldSpecifier::from_ie(source_address, address_length),
-            FieldSpecifier::from_ie(destination_address, address_length),
-            FieldSpecifier::from_ie(ProtocolIdentifier, 1),
-            FieldSpecifier::from_ie(TcpControlBits, 2),
-            FieldSpecifier::from_ie(SourceTransportPort, 2),
-            FieldSpecifier::from_ie(DestinationTransportPort, 2),
-            FieldSpecifier::from_ie(OctetDeltaCount, 8),
-            FieldSpecifier::from_ie(PacketDeltaCount, 8),
-            FieldSpecifier::from_ie(FlowStartMilliseconds, 8),
-            FieldSpecifier::from_ie(FlowEndMilliseconds, 8),
-        ],
-    )
-}
-
-fn address_field(
-    ip: IpAddr,
-    v4: InformationElement,
-    v6: InformationElement,
-) -> (InformationElement, FieldValue) {
-    match ip {
-        IpAddr::V4(addr) => (v4, FieldValue::Ipv4Address(addr)),
-        IpAddr::V6(addr) => (v6, FieldValue::Ipv6Address(addr)),
+fn field(element: ElementId, field_length: u16) -> FieldSpecifier {
+    FieldSpecifier {
+        information_element_id: element.id(),
+        field_length,
+        enterprise_number: element.enterprise(),
     }
 }
 
-fn create_options_template() -> rustflow_core::ipfix::parser::OptionsTemplateRecord {
-    use InformationElement::*;
+fn create_flow_template(family: AddressFamily) -> Arc<Template> {
+    let (source_address, destination_address, address_length) = match family {
+        AddressFamily::V4 => (
+            ElementId::SOURCE_IPV4_ADDRESS,
+            ElementId::DESTINATION_IPV4_ADDRESS,
+            4,
+        ),
+        AddressFamily::V6 => (
+            ElementId::SOURCE_IPV6_ADDRESS,
+            ElementId::DESTINATION_IPV6_ADDRESS,
+            16,
+        ),
+    };
 
-    rustflow_core::ipfix::parser::OptionsTemplateRecord::new(
-        OPTIONS_TEMPLATE_ID,
-        1,
-        vec![
-            FieldSpecifier::from_ie(ObservationDomainId, 4),
-            FieldSpecifier::from_ie(SamplingPacketInterval, 4),
+    Arc::new(Template {
+        template_id: FLOW_TEMPLATE_ID,
+        fields: vec![
+            field(source_address, address_length),
+            field(destination_address, address_length),
+            field(ElementId::PROTOCOL_IDENTIFIER, 1),
+            field(ElementId::TCP_CONTROL_BITS, 2),
+            field(ElementId::SOURCE_TRANSPORT_PORT, 2),
+            field(ElementId::DESTINATION_TRANSPORT_PORT, 2),
+            field(ElementId::OCTET_DELTA_COUNT, 8),
+            field(ElementId::PACKET_DELTA_COUNT, 8),
+            field(ElementId::FLOW_START_MILLISECONDS, 8),
+            field(ElementId::FLOW_END_MILLISECONDS, 8),
         ],
-    )
+    })
+}
+
+fn address(ip: IpAddr) -> Value {
+    match ip {
+        IpAddr::V4(addr) => Value::Ipv4Address(addr),
+        IpAddr::V6(addr) => Value::Ipv6Address(addr),
+    }
+}
+
+fn create_options_template() -> Arc<OptionsTemplate> {
+    Arc::new(OptionsTemplate {
+        template_id: OPTIONS_TEMPLATE_ID,
+        scope_fields: vec![field(ElementId::OBSERVATION_DOMAIN_ID, 4)],
+        option_fields: vec![field(ElementId::SAMPLING_PACKET_INTERVAL, 4)],
+    })
 }
 
 struct Flow {
@@ -246,32 +251,31 @@ struct Flow {
     flow_end: DateTime<Utc>,
 }
 
-fn create_flow_record(flow: &Flow) -> DataRecord {
-    use InformationElement::*;
-
-    let (_, source_value) = address_field(flow.src_ip, SourceIpv4Address, SourceIpv6Address);
-    let (_, destination_value) =
-        address_field(flow.dst_ip, DestinationIpv4Address, DestinationIpv6Address);
-
-    DataRecord::new(vec![
-        source_value,
-        destination_value,
-        FieldValue::Unsigned8(flow.protocol),
-        FieldValue::Unsigned16(flow.tcp_flags),
-        FieldValue::Unsigned16(flow.src_port),
-        FieldValue::Unsigned16(flow.dst_port),
-        FieldValue::Unsigned64(u64::from(flow.octets)),
-        FieldValue::Unsigned64(u64::from(flow.packets)),
-        FieldValue::DateTimeMilliseconds(flow.flow_start),
-        FieldValue::DateTimeMilliseconds(flow.flow_end),
-    ])
+/// A time before 1970 cannot be sent, so it is sent as 1970.
+fn unix_millis(time: DateTime<Utc>) -> Value {
+    Value::DateTimeMilliseconds(u64::try_from(time.timestamp_millis()).unwrap_or(0))
 }
 
-fn create_options_record(observation_domain_id: u32, sampling_interval: u32) -> DataRecord {
-    DataRecord::new(vec![
-        FieldValue::Unsigned32(observation_domain_id),
-        FieldValue::Unsigned32(sampling_interval),
-    ])
+fn create_flow_record(flow: &Flow) -> Vec<Value> {
+    vec![
+        address(flow.src_ip),
+        address(flow.dst_ip),
+        Value::Unsigned8(flow.protocol),
+        Value::Unsigned16(flow.tcp_flags),
+        Value::Unsigned16(flow.src_port),
+        Value::Unsigned16(flow.dst_port),
+        Value::Unsigned64(u64::from(flow.octets)),
+        Value::Unsigned64(u64::from(flow.packets)),
+        unix_millis(flow.flow_start),
+        unix_millis(flow.flow_end),
+    ]
+}
+
+fn create_options_record(observation_domain_id: u32, sampling_interval: u32) -> Vec<Value> {
+    vec![
+        Value::Unsigned32(observation_domain_id),
+        Value::Unsigned32(sampling_interval),
+    ]
 }
 
 struct IpfixGenerator {
@@ -280,7 +284,8 @@ struct IpfixGenerator {
     observation_domain_id: u32,
     sequence_number: u32,
     flows_per_packet: u16,
-    family: AddressFamily,
+    flow_template: Arc<Template>,
+    options_template: Arc<OptionsTemplate>,
     src_cidr: IpNet,
     dst_cidr: IpNet,
     protocols: Vec<u8>,
@@ -331,7 +336,8 @@ impl IpfixGenerator {
             observation_domain_id: args.observation_domain_id,
             sequence_number: 0,
             flows_per_packet: args.flows_per_packet,
-            family,
+            flow_template: create_flow_template(family),
+            options_template: create_options_template(),
             src_cidr: args.src_cidr,
             dst_cidr: args.dst_cidr,
             protocols: args.protocols.clone(),
@@ -343,66 +349,47 @@ impl IpfixGenerator {
         })
     }
 
-    fn send_packet(&mut self, packet: &IpfixPacket) -> std::io::Result<usize> {
+    /// Sends one message with `sets`, stamped `export_time`.
+    fn send_sets(&mut self, export_time: DateTime<Utc>, sets: Vec<Set>) -> std::io::Result<usize> {
+        let packet = Packet {
+            header: Header {
+                version: VERSION,
+                length: 0,
+                export_time: export_time.timestamp() as u32,
+                sequence_number: self.sequence_number,
+                observation_domain_id: self.observation_domain_id,
+            },
+            sets,
+        };
         let mut buf = Vec::new();
-        packet.encode(&mut buf);
+        encode_packet(&mut buf, &packet)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         self.socket.send_to(&buf, self.target)
     }
 
     fn send_templates(&mut self) -> std::io::Result<usize> {
-        let packet = IpfixPacket {
-            header: Header {
-                version: IPFIX_VERSION,
-                length: 0,
-                export_time: Utc::now(),
-                sequence_number: self.sequence_number,
-                observation_domain_id: self.observation_domain_id,
-            },
-            sets: vec![
-                Set {
-                    id: IPFIX_TEMPLATE_SET_ID,
-                    length: 0,
-                    records: vec![Record::Template(create_flow_template(self.family))],
-                },
-                Set {
-                    id: IPFIX_OPTIONS_TEMPLATE_SET_ID,
-                    length: 0,
-                    records: vec![Record::OptionsTemplate(create_options_template())],
-                },
-            ],
-        };
-
-        self.send_packet(&packet)
+        let sets = vec![
+            Set::Templates(vec![Arc::clone(&self.flow_template)]),
+            Set::OptionsTemplates(vec![Arc::clone(&self.options_template)]),
+        ];
+        self.send_sets(Utc::now(), sets)
     }
 
     fn send_options(&mut self) -> std::io::Result<usize> {
-        let packet = IpfixPacket {
-            header: Header {
-                version: IPFIX_VERSION,
-                length: 0,
-                export_time: Utc::now(),
-                sequence_number: self.sequence_number,
-                observation_domain_id: self.observation_domain_id,
-            },
-            sets: vec![Set {
-                id: OPTIONS_TEMPLATE_ID,
-                length: 0,
-                records: vec![Record::OptionsData(create_options_record(
-                    self.observation_domain_id,
-                    1,
-                ))],
-            }],
-        };
-
+        let sets = vec![Set::OptionsData(DataSet {
+            template: Arc::clone(&self.options_template),
+            records: vec![create_options_record(self.observation_domain_id, 1)],
+        })];
+        let sent = self.send_sets(Utc::now(), sets);
         self.sequence_number = self.sequence_number.wrapping_add(1);
-        self.send_packet(&packet)
+        sent
     }
 
     fn send_data_packet(&mut self) -> std::io::Result<usize> {
         let mut rng = rand::rng();
         let now = Utc::now();
 
-        let records: Vec<Record> = (0..self.flows_per_packet)
+        let records: Vec<Vec<Value>> = (0..self.flows_per_packet)
             .map(|_| {
                 let src_ip = random_ip_in_cidr(&self.src_cidr, &mut rng);
                 let dst_ip = random_ip_in_cidr(&self.dst_cidr, &mut rng);
@@ -421,7 +408,7 @@ impl IpfixGenerator {
                     now - chrono::Duration::milliseconds(rng.random_range(1000..60000));
                 let flow_end = now - chrono::Duration::milliseconds(rng.random_range(0..1000));
 
-                Record::Data(create_flow_record(&Flow {
+                create_flow_record(&Flow {
                     src_ip,
                     dst_ip,
                     protocol,
@@ -432,29 +419,19 @@ impl IpfixGenerator {
                     packets,
                     flow_start,
                     flow_end,
-                }))
+                })
             })
             .collect();
 
-        let packet = IpfixPacket {
-            header: Header {
-                version: IPFIX_VERSION,
-                length: 0,
-                export_time: now,
-                sequence_number: self.sequence_number,
-                observation_domain_id: self.observation_domain_id,
-            },
-            sets: vec![Set {
-                id: FLOW_TEMPLATE_ID,
-                length: 0,
-                records,
-            }],
-        };
-
+        let sets = vec![Set::Data(DataSet {
+            template: Arc::clone(&self.flow_template),
+            records,
+        })];
+        let sent = self.send_sets(now, sets);
         self.sequence_number = self
             .sequence_number
             .wrapping_add(self.flows_per_packet as u32);
-        self.send_packet(&packet)
+        sent
     }
 }
 

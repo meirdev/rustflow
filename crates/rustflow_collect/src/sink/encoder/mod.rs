@@ -5,6 +5,7 @@ mod discard;
 mod ndjson;
 mod parquet;
 mod protobuf;
+mod text;
 
 use std::io::{self, Write};
 
@@ -12,7 +13,7 @@ pub use arrow::ArrowIpc;
 pub use discard::Discard;
 pub use ndjson::Ndjson;
 pub use protobuf::Protobuf;
-use rustflow_core::common::common_flow::CommonFlow;
+use rustflow_core::common_flow::CommonFlow;
 
 pub use self::csv::Csv;
 pub use self::parquet::Parquet;

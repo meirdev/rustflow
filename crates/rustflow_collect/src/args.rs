@@ -181,14 +181,6 @@ pub(crate) enum Input {
     Pcap { flow_type: FlowType, path: PathBuf },
 }
 
-impl Input {
-    pub(crate) fn flow_type(&self) -> FlowType {
-        match self {
-            Self::Listen { flow_type, .. } | Self::Pcap { flow_type, .. } => *flow_type,
-        }
-    }
-}
-
 impl FromStr for Input {
     type Err = String;
 

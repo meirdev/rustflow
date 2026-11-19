@@ -1,1386 +1,518 @@
-use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-use macaddr::MacAddr6;
-use nom::bytes::complete::take;
-use nom::combinator::{fail, map, map_res, peek, verify};
-use nom::multi::count;
-use nom::number::complete::{be_i32, be_u32, be_u64, be_u128};
-use nom::{IResult, Parser, ToUsize};
-use num_enum::{FromPrimitive, TryFromPrimitive};
-use serde::Serialize;
+use winnow::binary::{be_i32, be_u32, be_u64, be_u128};
+use winnow::combinator::{fail, repeat, seq};
+use winnow::error::{StrContext, StrContextValue};
+use winnow::token::take;
+use winnow::{Parser as _, Result};
 
-use crate::common::parser::{ipv4_addr, ipv6_addr, macaddr6};
-use crate::common::serializer::serialize_mac;
+use super::*;
+use crate::mac_address::{MacAddress, mac_address};
 
-pub const SFLOW_V5_VERSION: u32 = 5;
+pub fn parse(input: &[u8]) -> Result<Packet> {
+    let mut input = input;
+    let header = parse_header(&mut input)?;
+    let samples = parse_array(&mut input, parse_sample)?;
 
-const UNKNOWN: u32 = 0;
-const IPV4: u32 = 1;
-const IPV6: u32 = 2;
+    Ok(Packet { header, samples })
+}
 
-pub struct SflowV5Parser;
+fn parse_header(input: &mut &[u8]) -> Result<Header> {
+    seq!(Header {
+        version: be_u32
+            .verify(|&version| version == VERSION)
+            .context(StrContext::Label("version"))
+            .context(StrContext::Expected(StrContextValue::Description("5"))),
+        agent_address: parse_address,
+        sub_agent_id: be_u32,
+        sequence_number: be_u32,
+        uptime: be_u32,
+    })
+    .parse_next(input)
+}
 
-impl SflowV5Parser {
-    pub fn parse<'a>(&mut self, input: &'a [u8]) -> IResult<&'a [u8], SFlowV5> {
-        parse_sflow_v5(input)
+// XDR (RFC 4506) building blocks.
+
+/// A variable-length array: its length, then its elements.
+fn parse_array<'i, T>(
+    input: &mut &'i [u8],
+    element: impl FnMut(&mut &'i [u8]) -> Result<T>,
+) -> Result<Vec<T>> {
+    let count = parse_length(input)?;
+    repeat(count, element).parse_next(input)
+}
+
+fn parse_u32s(input: &mut &[u8]) -> Result<Vec<u32>> {
+    parse_array(input, be_u32)
+}
+
+fn parse_length(input: &mut &[u8]) -> Result<usize> {
+    be_u32
+        .map(|length| usize::try_from(length).unwrap_or(usize::MAX))
+        .parse_next(input)
+}
+
+/// Variable-length opaque data: its length, then its bytes, padded to a
+/// multiple of four.
+fn parse_opaque<'i>(input: &mut &'i [u8]) -> Result<&'i [u8]> {
+    let length = parse_length(input)?;
+    let bytes = take(length).parse_next(input)?;
+    take(xdr_padding(length)).parse_next(input)?;
+
+    Ok(bytes)
+}
+
+/// Fails on invalid UTF-8, which keeps the enclosing record as bytes.
+fn parse_string(input: &mut &[u8]) -> Result<String> {
+    parse_opaque
+        .try_map(|bytes| std::str::from_utf8(bytes).map(str::to_owned))
+        .context(StrContext::Label("UTF-8 string"))
+        .parse_next(input)
+}
+
+fn parse_address(input: &mut &[u8]) -> Result<Option<IpAddr>> {
+    match be_u32.parse_next(input)? {
+        UNKNOWN_ADDRESS => Ok(None),
+        IPV4_ADDRESS => Ok(Some(IpAddr::V4(parse_ipv4(input)?))),
+        IPV6_ADDRESS => Ok(Some(IpAddr::V6(parse_ipv6(input)?))),
+        _ => fail
+            .context(StrContext::Label("address type"))
+            .parse_next(input),
     }
 }
 
-impl Default for SflowV5Parser {
-    fn default() -> Self {
-        Self
-    }
+fn parse_ipv4(input: &mut &[u8]) -> Result<Ipv4Addr> {
+    be_u32.map(Ipv4Addr::from).parse_next(input)
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub enum DataValue {
-    Null,
-    Ipv4(Ipv4Addr),
-    Ipv6(Ipv6Addr),
-    MacAddr(#[serde(serialize_with = "serialize_mac")] MacAddr6),
-    U8(u8),
-    U16(u16),
-    U32(u32),
-    Integer(i64),
-    Float(f64),
-    Boolean(bool),
+fn parse_ipv6(input: &mut &[u8]) -> Result<Ipv6Addr> {
+    be_u128.map(Ipv6Addr::from).parse_next(input)
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct SFlowV5 {
-    pub version: u32,
-    pub agent_address: Option<IpAddr>,
-    pub sub_agent_id: u32,
-    pub sequence_number: u32,
-    pub uptime: u32,
-    pub samples: Vec<Sample>,
+/// A MAC address, padded to eight bytes as XDR pads fixed-length opaque
+/// data.
+fn parse_mac(input: &mut &[u8]) -> Result<MacAddress> {
+    let mac = mac_address(input)?;
+    take(xdr_padding(6)).parse_next(input)?;
+
+    Ok(mac)
 }
 
-fn parse_sflow_v5(input: &[u8]) -> IResult<&[u8], SFlowV5> {
-    let (input, version) = verify(be_u32, |i| *i == SFLOW_V5_VERSION).parse(input)?;
-    let (input, agent_address) = parse_address(input)?;
-    let (input, sub_agent_id) = be_u32(input)?;
-    let (input, sequence_number) = be_u32(input)?;
-    let (input, uptime) = be_u32(input)?;
-    let (input, sample_count) = be_u32(input)?;
+/// A sample's or a record's format, then its data.
+fn parse_formatted<'i>(input: &mut &'i [u8]) -> Result<(DataFormat, &'i [u8])> {
+    let format = be_u32.map(DataFormat::from).parse_next(input)?;
+    let data = parse_opaque(input)?;
 
-    let (input, samples) = count(parse_sample, sample_count.to_usize()).parse(input)?;
-
-    Ok((
-        input,
-        SFlowV5 {
-            version,
-            agent_address,
-            sub_agent_id,
-            sequence_number,
-            uptime,
-            samples,
-        },
-    ))
+    Ok((format, data))
 }
 
-fn parse_sample(input: &[u8]) -> IResult<&[u8], Sample> {
-    let (_, (format, length)) = peek((be_u32, be_u32)).parse(input)?;
-    let (input, sample) = take(length.to_usize().saturating_add(8))(input)?;
+/// Parses all of `data`; `None` if it fails or leaves bytes over.
+fn parse_whole<'i, T>(
+    data: &'i [u8],
+    mut parser: impl FnMut(&mut &'i [u8]) -> Result<T>,
+) -> Option<T> {
+    let mut input = data;
+    let value = parser(&mut input).ok()?;
+    input.is_empty().then_some(value)
+}
 
-    let unknown = || Sample::Unknown(sample[8..].to_vec());
+// Samples.
 
-    let parsed = match SampleFormat::try_from(format) {
-        Ok(SampleFormat::Flow) => parse_flow_sample(sample).map(|(_, v)| Sample::Flow(v)),
-        Ok(SampleFormat::Counter) => parse_counter_sample(sample).map(|(_, v)| Sample::Counter(v)),
-        Ok(SampleFormat::ExpandedFlow) => {
-            parse_expanded_flow_sample(sample).map(|(_, v)| Sample::ExpandedFlow(v))
+fn parse_sample(input: &mut &[u8]) -> Result<Sample> {
+    let (format, data) = parse_formatted(input)?;
+    let sample = match (format.enterprise, format.format) {
+        (0, FLOW_SAMPLE) => parse_whole(data, |i| parse_flow_sample(i, false)).map(Sample::Flow),
+        (0, COUNTERS_SAMPLE) => {
+            parse_whole(data, |i| parse_counters_sample(i, false)).map(Sample::Counters)
         }
-        Ok(SampleFormat::ExpandedCounter) => {
-            parse_counter_sample(sample).map(|(_, v)| Sample::ExpandedCounter(v))
+        (0, FLOW_SAMPLE_EXPANDED) => {
+            parse_whole(data, |i| parse_flow_sample(i, true)).map(Sample::ExpandedFlow)
         }
-        Ok(SampleFormat::Drop) => parse_drop_sample(sample).map(|(_, v)| Sample::Drop(v)),
-        Err(_) => return Ok((input, unknown())),
+        (0, COUNTERS_SAMPLE_EXPANDED) => {
+            parse_whole(data, |i| parse_counters_sample(i, true)).map(Sample::ExpandedCounters)
+        }
+        (0, DISCARDED_PACKET) => parse_whole(data, parse_discarded_packet).map(Sample::Discarded),
+        _ => None,
     };
 
-    Ok((input, parsed.unwrap_or_else(|_| unknown())))
+    Ok(sample.unwrap_or_else(|| Sample::Unknown {
+        format,
+        data: data.to_vec(),
+    }))
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub enum Sample {
-    Flow(FlowSample),
-    Counter(CounterSample),
-    ExpandedFlow(ExpandedFlowSample),
-    ExpandedCounter(ExpandedCounterSample),
-    Drop(DropSample),
-    Unknown(Vec<u8>),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TryFromPrimitive)]
-#[repr(u32)]
-pub enum SampleFormat {
-    Flow = 1,
-    Counter = 2,
-    ExpandedFlow = 3,
-    ExpandedCounter = 4,
-    Drop = 5,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct SampleHeader {
-    pub format: u32,
-    pub length: u32,
-    pub sample_sequence_number: u32,
-    pub source_id_type: u32,
-    pub source_id_value: u32,
-}
-
-fn parse_sample_header(input: &[u8]) -> IResult<&[u8], SampleHeader> {
-    let (input, format) = be_u32(input)?;
-    let (input, length) = be_u32(input)?;
-    let (input, sample_sequence_number) = be_u32(input)?;
-
-    let (input, (source_id_type, source_id_value)) = match SampleFormat::try_from(format) {
-        Ok(SampleFormat::Flow | SampleFormat::Counter) => {
-            let (input, source_id) = be_u32(input)?;
-
-            let source_id_type = source_id >> 24;
-            let source_id_value = source_id & 0x00ffffff;
-
-            (input, (source_id_type, source_id_value))
-        }
-        Ok(SampleFormat::ExpandedFlow | SampleFormat::ExpandedCounter | SampleFormat::Drop) => {
-            let (input, source_id_type) = be_u32(input)?;
-            let (input, source_id_value) = be_u32(input)?;
-
-            (input, (source_id_type, source_id_value))
-        }
-        Err(_) => fail().parse(input)?,
-    };
-
-    Ok((
-        input,
-        SampleHeader {
-            format,
-            length,
-            sample_sequence_number,
-            source_id_type,
-            source_id_value,
-        },
-    ))
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct FlowSample {
-    pub header: SampleHeader,
-    pub sampling_rate: u32,
-    pub sample_pool: u32,
-    pub drops: u32,
-    pub input: u32,
-    pub output: u32,
-    pub records: Vec<FlowRecord>,
-}
-
-fn parse_flow_sample(input: &[u8]) -> IResult<&[u8], FlowSample> {
-    let (input, header) = parse_sample_header(input)?;
-    let (input, sampling_rate) = be_u32(input)?;
-    let (input, sample_pool) = be_u32(input)?;
-    let (input, drops) = be_u32(input)?;
-    let (input, input_) = be_u32(input)?;
-    let (input, output) = be_u32(input)?;
-    let (input, flow_records_count) = be_u32(input)?;
-    let (input, records) = count(parse_flow_record, flow_records_count.to_usize()).parse(input)?;
-
-    Ok((
-        input,
-        FlowSample {
-            header,
-            sampling_rate,
-            sample_pool,
-            drops,
-            input: input_,
-            output,
-            records,
-        },
-    ))
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct CounterSample {
-    pub header: SampleHeader,
-    pub records: Vec<CounterRecord>,
-}
-
-pub type ExpandedCounterSample = CounterSample;
-
-fn parse_counter_sample(input: &[u8]) -> IResult<&[u8], CounterSample> {
-    let (input, header) = parse_sample_header(input)?;
-    let (input, records_count) = be_u32(input)?;
-    let (input, records) = count(parse_counter_record, records_count.to_usize()).parse(input)?;
-
-    Ok((input, CounterSample { header, records }))
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ExpandedFlowSample {
-    pub header: SampleHeader,
-    pub sampling_rate: u32,
-    pub sample_pool: u32,
-    pub drops: u32,
-    pub input_if_format: u32,
-    pub input_if_value: u32,
-    pub output_if_format: u32,
-    pub output_if_value: u32,
-    pub records: Vec<FlowRecord>,
-}
-
-fn parse_expanded_flow_sample(input: &[u8]) -> IResult<&[u8], ExpandedFlowSample> {
-    let (input, header) = parse_sample_header(input)?;
-    let (input, sampling_rate) = be_u32(input)?;
-    let (input, sample_pool) = be_u32(input)?;
-    let (input, drops) = be_u32(input)?;
-    let (input, input_if_format) = be_u32(input)?;
-    let (input, input_if_value) = be_u32(input)?;
-    let (input, output_if_format) = be_u32(input)?;
-    let (input, output_if_value) = be_u32(input)?;
-    let (input, flow_records_count) = be_u32(input)?;
-    let (input, records) = count(parse_flow_record, flow_records_count.to_usize()).parse(input)?;
-
-    Ok((
-        input,
-        ExpandedFlowSample {
-            header,
-            sampling_rate,
-            sample_pool,
-            drops,
-            input_if_format,
-            input_if_value,
-            output_if_format,
-            output_if_value,
-            records,
-        },
-    ))
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct DropSample {
-    pub header: SampleHeader,
-    pub drops: u32,
-    pub input: u32,
-    pub output: u32,
-    pub reason: DropReason,
-    pub records: Vec<FlowRecord>,
-}
-
-fn parse_drop_sample(input: &[u8]) -> IResult<&[u8], DropSample> {
-    let (input, header) = parse_sample_header(input)?;
-    let (input, drops) = be_u32(input)?;
-    let (input, input_) = be_u32(input)?;
-    let (input, output) = be_u32(input)?;
-    let (input, reason) = map(be_u32, DropReason::from).parse(input)?;
-    let (input, records_count) = be_u32(input)?;
-    let (input, records) = count(parse_flow_record, records_count.to_usize()).parse(input)?;
-
-    Ok((
-        input,
-        DropSample {
-            header,
-            drops,
-            input: input_,
-            output,
-            reason,
-            records,
-        },
-    ))
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct RecordHeader {
-    pub data_format: u32,
-    pub length: u32,
-}
-
-fn parse_record_header(input: &[u8]) -> IResult<&[u8], RecordHeader> {
-    let (input, data_format) = be_u32(input)?;
-    let (input, length) = be_u32(input)?;
-
-    Ok((
-        input,
-        RecordHeader {
-            data_format,
-            length,
-        },
-    ))
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub enum FlowRecordType {
-    SampledHeader(SampledHeader),
-    SampledEthernet(SampledEthernet),
-    SampledIpv4(SampledIpv4),
-    SampledIpv6(SampledIpv6),
-    ExtendedSwitch(ExtendedSwitch),
-    ExtendedRouter(ExtendedRouter),
-    ExtendedGateway(ExtendedGateway),
-    ExtendedUser(ExtendedUser),
-    ExtendedUrl(ExtendedUrl),
-    ExtendedEgressQueue(ExtendedEgressQueue),
-    ExtendedAcl(ExtendedAcl),
-    ExtendedFunction(ExtendedFunction),
-    Unknown(Vec<u8>),
-}
-
-#[derive(Debug, Clone, Serialize, TryFromPrimitive)]
-#[repr(u32)]
-pub enum FlowType {
-    SampledHeader = 1,
-    SampledEthernet = 2,
-    SampledIpv4 = 3,
-    SampledIpv6 = 4,
-    ExtendedSwitch = 1001,
-    ExtendedRouter = 1002,
-    ExtendedGateway = 1003,
-    ExtendedUser = 1004,
-    ExtendedUrl = 1005,
-    ExtendedEgressQueue = 1036,
-    ExtendedAcl = 1037,
-    ExtendedFunction = 1038,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct FlowRecord {
-    pub header: RecordHeader,
-    pub data: FlowRecordType,
-}
-
-fn parse_flow_record(input: &[u8]) -> IResult<&[u8], FlowRecord> {
-    let (input, header) = parse_record_header(input)?;
-    let (input, data) = take(header.length as usize)(input)?;
-    let data = flow_record_data(header.data_format, data)
-        .unwrap_or_else(|_| FlowRecordType::Unknown(data.to_vec()));
-
-    Ok((input, FlowRecord { header, data }))
-}
-
-fn flow_record_data(
-    format: u32,
-    v: &[u8],
-) -> Result<FlowRecordType, nom::Err<nom::error::Error<&[u8]>>> {
-    match FlowType::try_from(format) {
-        Ok(FlowType::SampledHeader) => {
-            let (_input, v) = parse_sampled_header(v)?;
-            Ok(FlowRecordType::SampledHeader(v))
-        }
-        Ok(FlowType::SampledEthernet) => {
-            let (_input, v) = parse_sampled_ethernet(v)?;
-            Ok(FlowRecordType::SampledEthernet(v))
-        }
-        Ok(FlowType::SampledIpv4) => {
-            let (_input, v) = parse_sampled_ipv4(v)?;
-            Ok(FlowRecordType::SampledIpv4(v))
-        }
-        Ok(FlowType::SampledIpv6) => {
-            let (_input, v) = parse_sampled_ipv6(v)?;
-            Ok(FlowRecordType::SampledIpv6(v))
-        }
-        Ok(FlowType::ExtendedSwitch) => {
-            let (_input, v) = parse_extended_switch(v)?;
-            Ok(FlowRecordType::ExtendedSwitch(v))
-        }
-        Ok(FlowType::ExtendedRouter) => {
-            let (_input, v) = parse_extended_router(v)?;
-            Ok(FlowRecordType::ExtendedRouter(v))
-        }
-        Ok(FlowType::ExtendedGateway) => {
-            let (_input, v) = parse_extended_gateway(v)?;
-            Ok(FlowRecordType::ExtendedGateway(v))
-        }
-        Ok(FlowType::ExtendedUser) => {
-            let (_input, v) = parse_extended_user(v)?;
-            Ok(FlowRecordType::ExtendedUser(v))
-        }
-        Ok(FlowType::ExtendedUrl) => {
-            let (_input, v) = parse_extended_url(v)?;
-            Ok(FlowRecordType::ExtendedUrl(v))
-        }
-        Ok(FlowType::ExtendedEgressQueue) => {
-            let (_input, v) = parse_extended_egress_queue(v)?;
-            Ok(FlowRecordType::ExtendedEgressQueue(v))
-        }
-        Ok(FlowType::ExtendedAcl) => {
-            let (_input, v) = parse_extended_acl(v)?;
-            Ok(FlowRecordType::ExtendedAcl(v))
-        }
-        Ok(FlowType::ExtendedFunction) => {
-            let (_input, v) = parse_extended_function(v)?;
-            Ok(FlowRecordType::ExtendedFunction(v))
-        }
-        Err(_) => Ok(FlowRecordType::Unknown(v.to_vec())),
+/// A source ID, compact (8-bit type, 24-bit index) or `expanded`.
+fn parse_data_source(input: &mut &[u8], expanded: bool) -> Result<DataSource> {
+    if expanded {
+        return seq!(DataSource {
+            source_id_type: be_u32,
+            source_id_index: be_u32,
+        })
+        .parse_next(input);
     }
-}
+    let source_id = be_u32.parse_next(input)?;
 
-#[derive(Debug, Clone, Serialize)]
-pub enum CounterRecordType {
-    IfCounters(IfCounters),
-    EthernetCounters(EthernetCounters),
-    TokenringCounters(TokenringCounters),
-    VgCounters(VgCounters),
-    VlanCounters(VlanCounters),
-    Processor(Processor),
-    Unknown(Vec<u8>),
-}
-
-#[derive(Debug, Clone, Serialize, TryFromPrimitive)]
-#[repr(u32)]
-pub enum CounterType {
-    IfCounters = 1,
-    EthernetCounters = 2,
-    TokenringCounters = 3,
-    VgCounters = 4,
-    VlanCounters = 5,
-    Processor = 1001,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct CounterRecord {
-    pub header: RecordHeader,
-    pub data: Vec<CounterRecordType>,
-}
-
-fn parse_counter_record(input: &[u8]) -> IResult<&[u8], CounterRecord> {
-    let (input, header) = parse_record_header(input)?;
-    let (input, data) = take(header.length as usize)(input)?;
-
-    let record = counter_record_data(header.data_format, data)
-        .unwrap_or_else(|_| CounterRecordType::Unknown(data.to_vec()));
-
-    Ok((
-        input,
-        CounterRecord {
-            header,
-            data: vec![record],
-        },
-    ))
-}
-
-fn counter_record_data(
-    format: u32,
-    data: &[u8],
-) -> Result<CounterRecordType, nom::Err<nom::error::Error<&[u8]>>> {
-    Ok(match CounterType::try_from(format) {
-        Ok(CounterType::IfCounters) => CounterRecordType::IfCounters(parse_if_counters(data)?.1),
-        Ok(CounterType::EthernetCounters) => {
-            CounterRecordType::EthernetCounters(parse_ethernet_counters(data)?.1)
-        }
-        Ok(CounterType::TokenringCounters) => {
-            CounterRecordType::TokenringCounters(parse_tokenring_counters(data)?.1)
-        }
-        Ok(CounterType::VgCounters) => CounterRecordType::VgCounters(parse_vg_counters(data)?.1),
-        Ok(CounterType::VlanCounters) => {
-            CounterRecordType::VlanCounters(parse_vlan_counters(data)?.1)
-        }
-        Ok(CounterType::Processor) => CounterRecordType::Processor(parse_processor(data)?.1),
-        Err(_) => CounterRecordType::Unknown(data.to_vec()),
+    Ok(DataSource {
+        source_id_type: source_id >> SOURCE_INDEX_BITS,
+        source_id_index: source_id & ((1 << SOURCE_INDEX_BITS) - 1),
     })
 }
 
-#[derive(Debug, Clone, Serialize, TryFromPrimitive)]
-#[repr(u32)]
-pub enum HeaderProtocol {
-    EthernetIso8023 = 1,
-    Iso88024TokenBus = 2,
-    Iso88025TokenRing = 3,
-    Fddi = 4,
-    FrameRelay = 5,
-    X25 = 6,
-    Ppp = 7,
-    Smds = 8,
-    Aal5 = 9,
-    Aal5Ip = 10,
-    Ipv4 = 11,
-    Ipv6 = 12,
-    Mpls = 13,
-    Pos = 14,
-}
-
-#[derive(Debug, Clone, Serialize, FromPrimitive)]
-#[repr(u32)]
-pub enum DropReason {
-    NetUnreachable = 0,
-    HostUnreachable = 1,
-    ProtocolUnreachable = 2,
-    PortUnreachable = 3,
-    FragNeeded = 4,
-    SrcRouteFailed = 5,
-    DstNetUnknown = 6,
-    DstHostUnknown = 7,
-    SrcHostIsolated = 8,
-    DstNetProhibited = 9,
-    DstHostProhibited = 10,
-    DstNetTosUnreachable = 11,
-    DstHostTosUnreachable = 12,
-    CommAdminProhibited = 13,
-    HostPrecedenceViolation = 14,
-    PrecedenceCutoff = 15,
-    Unknown = 256,
-    TtlExceeded = 257,
-    Acl = 258,
-    NoBufferSpace = 259,
-    Red = 260,
-    TrafficShaping = 261,
-    PktTooBig = 262,
-    SrcMacIsMulticast = 263,
-    VlanTagMismatch = 264,
-    IngressVlanFilter = 265,
-    IngressSpanningTreeFilter = 266,
-    PortListIsEmpty = 267,
-    PortLoopbackFilter = 268,
-    BlackholeRoute = 269,
-    NonIp = 270,
-    UcDipOverMcDmac = 271,
-    DipIsLoopbackAddress = 272,
-    SipIsMc = 273,
-    SipIsLoopbackAddress = 274,
-    IpHeaderCorrupted = 275,
-    Ipv4SipIsLimitedBc = 276,
-    Ipv6McDipReservedScope = 277,
-    Ipv6McDipInterfaceLocalScope = 278,
-    UnresolvedNeigh = 279,
-    McReversePathForwarding = 280,
-    NonRoutablePacket = 281,
-    DecapError = 282,
-    OverlaySmacIsMc = 283,
-    UnknownL2 = 284,
-    UnknownL3 = 285,
-    UnknownL3Exception = 286,
-    UnknownBuffer = 287,
-    UnknownTunnel = 288,
-    UnknownL4 = 289,
-    SipIsUnspecified = 290,
-    MlagPortIsolated = 291,
-    BlackholeArpNeigh = 292,
-    SrcMacIsDmac = 293,
-    DmacIsReserved = 294,
-    SipIsClassE = 295,
-    McDmacMismatch = 296,
-    SipIsDip = 297,
-    DipIsLocalNetwork = 298,
-    DipIsLinkLocal = 299,
-    OverlaySmacIsDmac = 300,
-    EgressVlanFilter = 301,
-    UcReversePathForwarding = 302,
-    SplitHorizon = 303,
-    #[num_enum(catch_all)]
-    Unrecognized(u32),
-}
-
-#[derive(Debug, Clone, Serialize, TryFromPrimitive)]
-#[repr(u32)]
-pub enum FlowData {
-    SampledHeader = 1,
-    SampledEthernet = 2,
-    SampledIpv4 = 3,
-    SampledIpv6 = 4,
-    ExtendedSwitch = 1001,
-    ExtendedRouter = 1002,
-    ExtendedGateway = 1003,
-    ExtendedUser = 1004,
-    ExtendedUrl = 1005,
-    ExtendedEgressQueue = 1036,
-    ExtendedAcl = 1037,
-    ExtendedFunction = 1038,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct SampledHeader {
-    pub protocol: HeaderProtocol,
-    pub frame_length: u32,
-    pub stripped: u32,
-    pub header: Vec<u8>,
-}
-
-fn parse_sampled_header(input: &[u8]) -> IResult<&[u8], SampledHeader> {
-    let (input, protocol) = map_res(be_u32, |v| v.try_into()).parse(input)?;
-    let (input, frame_length) = be_u32(input)?;
-    let (input, stripped) = be_u32(input)?;
-    let (input, original_length) = be_u32(input)?;
-    let (input, header) = take(original_length.to_usize())(input)?;
-
-    Ok((
-        input,
-        SampledHeader {
-            protocol,
-            frame_length,
-            stripped,
-            header: header.to_vec(),
-        },
-    ))
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct SampledEthernet {
-    pub length: u32,
-    #[serde(serialize_with = "serialize_mac")]
-    pub src_mac: MacAddr6,
-    #[serde(serialize_with = "serialize_mac")]
-    pub dst_mac: MacAddr6,
-    pub r#type: u32,
-}
-
-fn parse_padded_mac(input: &[u8]) -> IResult<&[u8], MacAddr6> {
-    let (input, mac) = macaddr6(input)?;
-    let (input, _pad) = take(2usize)(input)?;
-
-    Ok((input, mac))
-}
-
-fn parse_sampled_ethernet(input: &[u8]) -> IResult<&[u8], SampledEthernet> {
-    let (input, length) = be_u32(input)?;
-    let (input, src_mac) = parse_padded_mac(input)?;
-    let (input, dst_mac) = parse_padded_mac(input)?;
-    let (input, type_) = be_u32(input)?;
-
-    Ok((
-        input,
-        SampledEthernet {
-            length,
-            src_mac,
-            dst_mac,
-            r#type: type_,
-        },
-    ))
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct SampledIpv4 {
-    pub length: u32,
-    pub protocol: u32,
-    pub src_ip: Ipv4Addr,
-    pub dst_ip: Ipv4Addr,
-    pub src_port: u32,
-    pub dst_port: u32,
-    pub tcp_flags: u32,
-    pub tos: u32,
-}
-
-fn parse_sampled_ipv4(input: &[u8]) -> IResult<&[u8], SampledIpv4> {
-    let (input, length) = be_u32(input)?;
-    let (input, protocol) = be_u32(input)?;
-    let (input, src_ip) = ipv4_addr(input)?;
-    let (input, dst_ip) = ipv4_addr(input)?;
-    let (input, src_port) = be_u32(input)?;
-    let (input, dst_port) = be_u32(input)?;
-    let (input, tcp_flags) = be_u32(input)?;
-    let (input, tos) = be_u32(input)?;
-
-    Ok((
-        input,
-        SampledIpv4 {
-            length,
-            protocol,
-            src_ip,
-            dst_ip,
-            src_port,
-            dst_port,
-            tcp_flags,
-            tos,
-        },
-    ))
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct SampledIpv6 {
-    pub length: u32,
-    pub protocol: u32,
-    pub src_ip: Ipv6Addr,
-    pub dst_ip: Ipv6Addr,
-    pub src_port: u32,
-    pub dst_port: u32,
-    pub tcp_flags: u32,
-    pub priority: u32,
-}
-
-fn parse_sampled_ipv6(input: &[u8]) -> IResult<&[u8], SampledIpv6> {
-    let (input, length) = be_u32(input)?;
-    let (input, protocol) = be_u32(input)?;
-    let (input, src_ip) = ipv6_addr(input)?;
-    let (input, dst_ip) = ipv6_addr(input)?;
-    let (input, src_port) = be_u32(input)?;
-    let (input, dst_port) = be_u32(input)?;
-    let (input, tcp_flags) = be_u32(input)?;
-    let (input, priority) = be_u32(input)?;
-
-    Ok((
-        input,
-        SampledIpv6 {
-            length,
-            protocol,
-            src_ip,
-            dst_ip,
-            src_port,
-            dst_port,
-            tcp_flags,
-            priority,
-        },
-    ))
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub enum PacketInformationType {
-    Header(SampledHeader),
-    Ethernet(SampledEthernet),
-    Ipv4(SampledIpv4),
-    Ipv6(SampledIpv6),
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ExtendedSwitch {
-    pub src_vlan: u32,
-    pub src_priority: u32,
-    pub dst_vlan: u32,
-    pub dst_priority: u32,
-}
-
-fn parse_extended_switch(input: &[u8]) -> IResult<&[u8], ExtendedSwitch> {
-    let (input, src_vlan) = be_u32(input)?;
-    let (input, src_priority) = be_u32(input)?;
-    let (input, dst_vlan) = be_u32(input)?;
-    let (input, dst_priority) = be_u32(input)?;
-
-    Ok((
-        input,
-        ExtendedSwitch {
-            src_vlan,
-            src_priority,
-            dst_vlan,
-            dst_priority,
-        },
-    ))
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ExtendedRouter {
-    pub nexthop: Option<IpAddr>,
-    pub src_mask: u32,
-    pub dst_mask: u32,
-}
-
-fn parse_address(input: &[u8]) -> IResult<&[u8], Option<IpAddr>> {
-    let (input, address_type) = be_u32(input)?;
-
-    match address_type {
-        UNKNOWN => Ok((input, None)),
-        IPV4 => {
-            let (input, addr) = be_u32(input)?;
-            Ok((input, Some(IpAddr::V4(Ipv4Addr::from(addr)))))
-        }
-        IPV6 => {
-            let (input, addr) = be_u128(input)?;
-            Ok((input, Some(IpAddr::V6(Ipv6Addr::from(addr)))))
-        }
-        _ => fail().parse(input),
+/// An interface, compact (2-bit format, 30-bit value) or `expanded`.
+fn parse_interface(input: &mut &[u8], expanded: bool) -> Result<Interface> {
+    if expanded {
+        return seq!(Interface {
+            format: be_u32,
+            value: be_u32,
+        })
+        .parse_next(input);
     }
+    let interface = be_u32.parse_next(input)?;
+
+    Ok(Interface {
+        format: interface >> INTERFACE_VALUE_BITS,
+        value: interface & ((1 << INTERFACE_VALUE_BITS) - 1),
+    })
 }
 
-fn parse_extended_router(input: &[u8]) -> IResult<&[u8], ExtendedRouter> {
-    let (input, nexthop) = parse_address(input)?;
-    let (input, src_mask) = be_u32(input)?;
-    let (input, dst_mask) = be_u32(input)?;
-
-    Ok((
-        input,
-        ExtendedRouter {
-            nexthop,
-            src_mask,
-            dst_mask,
-        },
-    ))
+fn parse_flow_sample(input: &mut &[u8], expanded: bool) -> Result<FlowSample> {
+    seq!(FlowSample {
+        sequence_number: be_u32,
+        source_id: |i: &mut &[u8]| parse_data_source(i, expanded),
+        sampling_rate: be_u32,
+        sample_pool: be_u32,
+        drops: be_u32,
+        input: |i: &mut &[u8]| parse_interface(i, expanded),
+        output: |i: &mut &[u8]| parse_interface(i, expanded),
+        records: |i: &mut &[u8]| parse_array(i, parse_flow_record),
+    })
+    .parse_next(input)
 }
 
-#[derive(Debug, Clone, Serialize, TryFromPrimitive)]
-#[repr(u32)]
-pub enum AsPathSegmentType {
-    AsSet = 1,
-    AsSequence = 2,
+fn parse_counters_sample(input: &mut &[u8], expanded: bool) -> Result<CountersSample> {
+    seq!(CountersSample {
+        sequence_number: be_u32,
+        source_id: |i: &mut &[u8]| parse_data_source(i, expanded),
+        records: |i: &mut &[u8]| parse_array(i, parse_counter_record),
+    })
+    .parse_next(input)
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub enum AsPathType {
-    AsSet(HashSet<u32>),
-    AsSequence(Vec<u32>),
+fn parse_discarded_packet(input: &mut &[u8]) -> Result<DiscardedPacket> {
+    seq!(DiscardedPacket {
+        sequence_number: be_u32,
+        source_id: |i: &mut &[u8]| parse_data_source(i, true),
+        drops: be_u32,
+        input_if_index: be_u32,
+        output_if_index: be_u32,
+        reason: be_u32.map(DropReason::from),
+        records: |i: &mut &[u8]| parse_array(i, parse_flow_record),
+    })
+    .parse_next(input)
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct ExtendedGateway {
-    pub nexthop: Option<IpAddr>,
-    pub r#as: u32,
-    pub src_as: u32,
-    pub src_peer_as: u32,
-    pub dst_as_path: Vec<AsPathType>,
-    pub communities: Vec<u32>,
-    pub localpref: u32,
-}
+// Flow records.
 
-fn parse_as_path_segment(input: &[u8]) -> IResult<&[u8], AsPathType> {
-    let (input, segment_type) = map_res(be_u32, AsPathSegmentType::try_from).parse(input)?;
-    let (input, length) = be_u32(input)?;
-    let (input, ases) = count(be_u32, length.to_usize()).parse(input)?;
-
-    let segment = match segment_type {
-        AsPathSegmentType::AsSet => AsPathType::AsSet(ases.into_iter().collect()),
-        AsPathSegmentType::AsSequence => AsPathType::AsSequence(ases),
+fn parse_flow_record(input: &mut &[u8]) -> Result<FlowRecord> {
+    let (format, data) = parse_formatted(input)?;
+    let record = match (format.enterprise, format.format) {
+        (0, SAMPLED_HEADER) => {
+            parse_whole(data, parse_sampled_header).map(FlowRecord::SampledHeader)
+        }
+        (0, SAMPLED_ETHERNET) => {
+            parse_whole(data, parse_sampled_ethernet).map(FlowRecord::SampledEthernet)
+        }
+        (0, SAMPLED_IPV4) => parse_whole(data, parse_sampled_ipv4).map(FlowRecord::SampledIpv4),
+        (0, SAMPLED_IPV6) => parse_whole(data, parse_sampled_ipv6).map(FlowRecord::SampledIpv6),
+        (0, EXTENDED_SWITCH) => {
+            parse_whole(data, parse_extended_switch).map(FlowRecord::ExtendedSwitch)
+        }
+        (0, EXTENDED_ROUTER) => {
+            parse_whole(data, parse_extended_router).map(FlowRecord::ExtendedRouter)
+        }
+        (0, EXTENDED_GATEWAY) => {
+            parse_whole(data, parse_extended_gateway).map(FlowRecord::ExtendedGateway)
+        }
+        (0, EXTENDED_USER) => parse_whole(data, parse_extended_user).map(FlowRecord::ExtendedUser),
+        (0, EXTENDED_URL) => parse_whole(data, parse_extended_url).map(FlowRecord::ExtendedUrl),
+        (0, EXTENDED_EGRESS_QUEUE) => {
+            parse_whole(data, parse_extended_egress_queue).map(FlowRecord::ExtendedEgressQueue)
+        }
+        (0, EXTENDED_ACL) => parse_whole(data, parse_extended_acl).map(FlowRecord::ExtendedAcl),
+        (0, EXTENDED_FUNCTION) => {
+            parse_whole(data, parse_extended_function).map(FlowRecord::ExtendedFunction)
+        }
+        _ => None,
     };
 
-    Ok((input, segment))
+    Ok(record.unwrap_or_else(|| FlowRecord::Unknown {
+        format,
+        data: data.to_vec(),
+    }))
 }
 
-fn parse_extended_gateway(input: &[u8]) -> IResult<&[u8], ExtendedGateway> {
-    let (input, nexthop) = parse_address(input)?;
-    let (input, as_) = be_u32(input)?;
-    let (input, src_as) = be_u32(input)?;
-    let (input, src_peer_as) = be_u32(input)?;
-
-    let (input, dst_as_path_length) = be_u32(input)?;
-    let (input, dst_as_path) =
-        count(parse_as_path_segment, dst_as_path_length.to_usize()).parse(input)?;
-
-    let (input, communities_length) = be_u32(input)?;
-    let (input, communities) = count(be_u32, communities_length.to_usize()).parse(input)?;
-
-    let (input, localpref) = be_u32(input)?;
-
-    Ok((
-        input,
-        ExtendedGateway {
-            nexthop,
-            r#as: as_,
-            src_as,
-            src_peer_as,
-            dst_as_path,
-            communities,
-            localpref,
-        },
-    ))
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ExtendedUser {
-    pub src_charset: u32,
-    pub src_user: String,
-    pub dst_charset: u32,
-    pub dst_user: String,
-}
-
-fn parse_extended_user(input: &[u8]) -> IResult<&[u8], ExtendedUser> {
-    let (input, src_charset) = be_u32(input)?;
-    let (input, src_user) = parse_xdr_string(input)?;
-    let (input, dst_charset) = be_u32(input)?;
-    let (input, dst_user) = parse_xdr_string(input)?;
-
-    Ok((
-        input,
-        ExtendedUser {
-            src_charset,
-            src_user,
-            dst_charset,
-            dst_user,
-        },
-    ))
-}
-
-#[derive(Debug, Clone, Serialize, TryFromPrimitive)]
-#[repr(u32)]
-pub enum UrlDirection {
-    Src = 1,
-    Dst = 2,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ExtendedUrl {
-    pub direction: UrlDirection,
-    pub url: String,
-}
-
-fn parse_extended_url(input: &[u8]) -> IResult<&[u8], ExtendedUrl> {
-    let (input, direction) = map_res(be_u32, |v| v.try_into()).parse(input)?;
-    let (input, url) = parse_xdr_string(input)?;
-
-    Ok((input, ExtendedUrl { direction, url }))
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ExtendedEgressQueue {
-    pub queue: u32,
-}
-
-fn parse_extended_egress_queue(input: &[u8]) -> IResult<&[u8], ExtendedEgressQueue> {
-    let (input, queue) = be_u32(input)?;
-
-    Ok((input, ExtendedEgressQueue { queue }))
-}
-
-#[derive(Debug, Clone, Serialize, TryFromPrimitive)]
-#[repr(u32)]
-pub enum Direction {
-    Unknown = 0,
-    Ingress = 1,
-    Egress = 2,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ExtendedAcl {
-    pub number: u32,
-    pub name: String,
-    pub direction: Direction,
-}
-
-fn parse_extended_acl(input: &[u8]) -> IResult<&[u8], ExtendedAcl> {
-    let (input, number) = be_u32(input)?;
-    let (input, name) = parse_xdr_string(input)?;
-    let (input, direction) = map_res(be_u32, |v| v.try_into()).parse(input)?;
-
-    Ok((
-        input,
-        ExtendedAcl {
-            number,
-            name,
-            direction,
-        },
-    ))
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ExtendedFunction {
-    pub symbol: String,
-}
-
-fn parse_extended_function(input: &[u8]) -> IResult<&[u8], ExtendedFunction> {
-    let (input, symbol) = parse_xdr_string(input)?;
-
-    Ok((input, ExtendedFunction { symbol }))
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub enum ExtendedDataType {
-    Switch(ExtendedSwitch),
-    Router(ExtendedRouter),
-    Gateway(ExtendedGateway),
-    User(ExtendedUser),
-    Url(ExtendedUrl),
-    EgressQueue(ExtendedEgressQueue),
-    Acl(ExtendedAcl),
-    Function(ExtendedFunction),
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct IfCounters {
-    pub if_index: u32,
-    pub if_type: u32,
-    pub if_speed: u64,
-    pub if_direction: u32,
-    pub if_status: u32,
-    pub if_in_octets: u64,
-    pub if_in_ucast_pkts: u32,
-    pub if_in_multicast_pkts: u32,
-    pub if_in_broadcast_pkts: u32,
-    pub if_in_discards: u32,
-    pub if_in_errors: u32,
-    pub if_in_unknown_protos: u32,
-    pub if_out_octets: u64,
-    pub if_out_ucast_pkts: u32,
-    pub if_out_multicast_pkts: u32,
-    pub if_out_broadcast_pkts: u32,
-    pub if_out_discards: u32,
-    pub if_out_errors: u32,
-    pub if_promiscuous_mode: u32,
-}
-
-fn parse_if_counters(input: &[u8]) -> IResult<&[u8], IfCounters> {
-    let (input, if_index) = be_u32(input)?;
-    let (input, if_type) = be_u32(input)?;
-    let (input, if_speed) = be_u64(input)?;
-    let (input, if_direction) = be_u32(input)?;
-    let (input, if_status) = be_u32(input)?;
-    let (input, if_in_octets) = be_u64(input)?;
-    let (input, if_in_ucast_pkts) = be_u32(input)?;
-    let (input, if_in_multicast_pkts) = be_u32(input)?;
-    let (input, if_in_broadcast_pkts) = be_u32(input)?;
-    let (input, if_in_discards) = be_u32(input)?;
-    let (input, if_in_errors) = be_u32(input)?;
-    let (input, if_in_unknown_protos) = be_u32(input)?;
-    let (input, if_out_octets) = be_u64(input)?;
-    let (input, if_out_ucast_pkts) = be_u32(input)?;
-    let (input, if_out_multicast_pkts) = be_u32(input)?;
-    let (input, if_out_broadcast_pkts) = be_u32(input)?;
-    let (input, if_out_discards) = be_u32(input)?;
-    let (input, if_out_errors) = be_u32(input)?;
-    let (input, if_promiscuous_mode) = be_u32(input)?;
-
-    Ok((
-        input,
-        IfCounters {
-            if_index,
-            if_type,
-            if_speed,
-            if_direction,
-            if_status,
-            if_in_octets,
-            if_in_ucast_pkts,
-            if_in_multicast_pkts,
-            if_in_broadcast_pkts,
-            if_in_discards,
-            if_in_errors,
-            if_in_unknown_protos,
-            if_out_octets,
-            if_out_ucast_pkts,
-            if_out_multicast_pkts,
-            if_out_broadcast_pkts,
-            if_out_discards,
-            if_out_errors,
-            if_promiscuous_mode,
-        },
-    ))
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct EthernetCounters {
-    pub dot3_stats_alignment_errors: u32,
-    pub dot3_stats_fcs_errors: u32,
-    pub dot3_stats_single_collision_frames: u32,
-    pub dot3_stats_multiple_collision_frames: u32,
-    pub dot3_stats_sqetest_errors: u32,
-    pub dot3_stats_deferred_transmissions: u32,
-    pub dot3_stats_late_collisions: u32,
-    pub dot3_stats_excessive_collisions: u32,
-    pub dot3_stats_internal_mac_transmit_errors: u32,
-    pub dot3_stats_carrier_sense_errors: u32,
-    pub dot3_stats_frame_too_longs: u32,
-    pub dot3_stats_internal_mac_receive_errors: u32,
-    pub dot3_stats_symbol_errors: u32,
-}
-
-fn parse_ethernet_counters(input: &[u8]) -> IResult<&[u8], EthernetCounters> {
-    let (input, dot3_stats_alignment_errors) = be_u32(input)?;
-    let (input, dot3_stats_fcs_errors) = be_u32(input)?;
-    let (input, dot3_stats_single_collision_frames) = be_u32(input)?;
-    let (input, dot3_stats_multiple_collision_frames) = be_u32(input)?;
-    let (input, dot3_stats_sqetest_errors) = be_u32(input)?;
-    let (input, dot3_stats_deferred_transmissions) = be_u32(input)?;
-    let (input, dot3_stats_late_collisions) = be_u32(input)?;
-    let (input, dot3_stats_excessive_collisions) = be_u32(input)?;
-    let (input, dot3_stats_internal_mac_transmit_errors) = be_u32(input)?;
-    let (input, dot3_stats_carrier_sense_errors) = be_u32(input)?;
-    let (input, dot3_stats_frame_too_longs) = be_u32(input)?;
-    let (input, dot3_stats_internal_mac_receive_errors) = be_u32(input)?;
-    let (input, dot3_stats_symbol_errors) = be_u32(input)?;
-
-    Ok((
-        input,
-        EthernetCounters {
-            dot3_stats_alignment_errors,
-            dot3_stats_fcs_errors,
-            dot3_stats_single_collision_frames,
-            dot3_stats_multiple_collision_frames,
-            dot3_stats_sqetest_errors,
-            dot3_stats_deferred_transmissions,
-            dot3_stats_late_collisions,
-            dot3_stats_excessive_collisions,
-            dot3_stats_internal_mac_transmit_errors,
-            dot3_stats_carrier_sense_errors,
-            dot3_stats_frame_too_longs,
-            dot3_stats_internal_mac_receive_errors,
-            dot3_stats_symbol_errors,
-        },
-    ))
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct TokenringCounters {
-    pub dot5_stats_line_errors: u32,
-    pub dot5_stats_burst_errors: u32,
-    pub dot5_stats_ac_errors: u32,
-    pub dot5_stats_abort_trans_errors: u32,
-    pub dot5_stats_internal_errors: u32,
-    pub dot5_stats_lost_frame_errors: u32,
-    pub dot5_stats_receive_congestions: u32,
-    pub dot5_stats_frame_copied_errors: u32,
-    pub dot5_stats_token_errors: u32,
-    pub dot5_stats_soft_errors: u32,
-    pub dot5_stats_hard_errors: u32,
-    pub dot5_stats_signal_loss: u32,
-    pub dot5_stats_transmit_beacons: u32,
-    pub dot5_stats_recoveries: u32,
-    pub dot5_stats_lobe_wires: u32,
-    pub dot5_stats_removes: u32,
-    pub dot5_stats_singles: u32,
-    pub dot5_stats_freq_errors: u32,
-}
-
-fn parse_tokenring_counters(input: &[u8]) -> IResult<&[u8], TokenringCounters> {
-    let (input, dot5_stats_line_errors) = be_u32(input)?;
-    let (input, dot5_stats_burst_errors) = be_u32(input)?;
-    let (input, dot5_stats_ac_errors) = be_u32(input)?;
-    let (input, dot5_stats_abort_trans_errors) = be_u32(input)?;
-    let (input, dot5_stats_internal_errors) = be_u32(input)?;
-    let (input, dot5_stats_lost_frame_errors) = be_u32(input)?;
-    let (input, dot5_stats_receive_congestions) = be_u32(input)?;
-    let (input, dot5_stats_frame_copied_errors) = be_u32(input)?;
-    let (input, dot5_stats_token_errors) = be_u32(input)?;
-    let (input, dot5_stats_soft_errors) = be_u32(input)?;
-    let (input, dot5_stats_hard_errors) = be_u32(input)?;
-    let (input, dot5_stats_signal_loss) = be_u32(input)?;
-    let (input, dot5_stats_transmit_beacons) = be_u32(input)?;
-    let (input, dot5_stats_recoveries) = be_u32(input)?;
-    let (input, dot5_stats_lobe_wires) = be_u32(input)?;
-    let (input, dot5_stats_removes) = be_u32(input)?;
-    let (input, dot5_stats_singles) = be_u32(input)?;
-    let (input, dot5_stats_freq_errors) = be_u32(input)?;
-
-    Ok((
-        input,
-        TokenringCounters {
-            dot5_stats_line_errors,
-            dot5_stats_burst_errors,
-            dot5_stats_ac_errors,
-            dot5_stats_abort_trans_errors,
-            dot5_stats_internal_errors,
-            dot5_stats_lost_frame_errors,
-            dot5_stats_receive_congestions,
-            dot5_stats_frame_copied_errors,
-            dot5_stats_token_errors,
-            dot5_stats_soft_errors,
-            dot5_stats_hard_errors,
-            dot5_stats_signal_loss,
-            dot5_stats_transmit_beacons,
-            dot5_stats_recoveries,
-            dot5_stats_lobe_wires,
-            dot5_stats_removes,
-            dot5_stats_singles,
-            dot5_stats_freq_errors,
-        },
-    ))
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct VgCounters {
-    pub dot12_in_high_priority_frames: u32,
-    pub dot12_in_high_priority_octets: u64,
-    pub dot12_in_norm_priority_frames: u32,
-    pub dot12_in_norm_priority_octets: u64,
-    pub dot12_in_ipm_errors: u32,
-    pub dot12_in_oversize_frame_errors: u32,
-    pub dot12_in_data_errors: u32,
-    pub dot12_in_null_addressed_frames: u32,
-    pub dot12_out_high_priority_frames: u32,
-    pub dot12_out_high_priority_octets: u64,
-    pub dot12_transition_into_training: u32,
-    pub dot12_hc_in_high_priority_octets: u64,
-    pub dot12_hc_in_norm_priority_octets: u64,
-    pub dot12_hc_out_high_priority_octets: u64,
-}
-
-fn parse_vg_counters(input: &[u8]) -> IResult<&[u8], VgCounters> {
-    let (input, dot12_in_high_priority_frames) = be_u32(input)?;
-    let (input, dot12_in_high_priority_octets) = be_u64(input)?;
-    let (input, dot12_in_norm_priority_frames) = be_u32(input)?;
-    let (input, dot12_in_norm_priority_octets) = be_u64(input)?;
-    let (input, dot12_in_ipm_errors) = be_u32(input)?;
-    let (input, dot12_in_oversize_frame_errors) = be_u32(input)?;
-    let (input, dot12_in_data_errors) = be_u32(input)?;
-    let (input, dot12_in_null_addressed_frames) = be_u32(input)?;
-    let (input, dot12_out_high_priority_frames) = be_u32(input)?;
-    let (input, dot12_out_high_priority_octets) = be_u64(input)?;
-    let (input, dot12_transition_into_training) = be_u32(input)?;
-    let (input, dot12_hc_in_high_priority_octets) = be_u64(input)?;
-    let (input, dot12_hc_in_norm_priority_octets) = be_u64(input)?;
-    let (input, dot12_hc_out_high_priority_octets) = be_u64(input)?;
-
-    Ok((
-        input,
-        VgCounters {
-            dot12_in_high_priority_frames,
-            dot12_in_high_priority_octets,
-            dot12_in_norm_priority_frames,
-            dot12_in_norm_priority_octets,
-            dot12_in_ipm_errors,
-            dot12_in_oversize_frame_errors,
-            dot12_in_data_errors,
-            dot12_in_null_addressed_frames,
-            dot12_out_high_priority_frames,
-            dot12_out_high_priority_octets,
-            dot12_transition_into_training,
-            dot12_hc_in_high_priority_octets,
-            dot12_hc_in_norm_priority_octets,
-            dot12_hc_out_high_priority_octets,
-        },
-    ))
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct VlanCounters {
-    pub vlan_id: u32,
-    pub octets: u64,
-    pub ucast_pkts: u32,
-    pub multicast_pkts: u32,
-    pub broadcast_pkts: u32,
-    pub discards: u32,
-}
-
-fn parse_vlan_counters(input: &[u8]) -> IResult<&[u8], VlanCounters> {
-    let (input, vlan_id) = be_u32(input)?;
-    let (input, octets) = be_u64(input)?;
-    let (input, ucast_pkts) = be_u32(input)?;
-    let (input, multicast_pkts) = be_u32(input)?;
-    let (input, broadcast_pkts) = be_u32(input)?;
-    let (input, discards) = be_u32(input)?;
-
-    Ok((
-        input,
-        VlanCounters {
-            vlan_id,
-            octets,
-            ucast_pkts,
-            multicast_pkts,
-            broadcast_pkts,
-            discards,
-        },
-    ))
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Processor {
-    pub avg_5s_cpu: i32,
-    pub avg_1m_cpu: i32,
-    pub avg_5m_cpu: i32,
-    pub total_memory: u64,
-    pub free_memory: u64,
-}
-
-fn parse_processor(input: &[u8]) -> IResult<&[u8], Processor> {
-    let (input, avg_5s_cpu) = be_i32(input)?;
-    let (input, avg_1m_cpu) = be_i32(input)?;
-    let (input, avg_5m_cpu) = be_i32(input)?;
-    let (input, total_memory) = be_u64(input)?;
-    let (input, free_memory) = be_u64(input)?;
-
-    Ok((
-        input,
-        Processor {
-            avg_5s_cpu,
-            avg_1m_cpu,
-            avg_5m_cpu,
-            total_memory,
-            free_memory,
-        },
-    ))
-}
-
-fn parse_xdr_string(input: &[u8]) -> IResult<&[u8], String> {
-    let (input, length) = be_u32(input)?;
-    let (input, string) = map(take(length as usize), |v| {
-        String::from_utf8_lossy(v).to_string()
+fn parse_sampled_header(input: &mut &[u8]) -> Result<SampledHeader> {
+    seq!(SampledHeader {
+        protocol: be_u32.map(HeaderProtocol::from),
+        frame_length: be_u32,
+        stripped: be_u32,
+        header: parse_opaque.map(<[u8]>::to_vec),
     })
-    .parse(input)?;
-
-    let padding = (4 - (length as usize) % 4) % 4;
-    let (input, _) = take(padding)(input)?;
-
-    Ok((input, string))
+    .parse_next(input)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+fn parse_sampled_ethernet(input: &mut &[u8]) -> Result<SampledEthernet> {
+    seq!(SampledEthernet {
+        length: be_u32,
+        src_mac: parse_mac,
+        dst_mac: parse_mac,
+        r#type: be_u32,
+    })
+    .parse_next(input)
+}
 
-    fn words(values: &[u32]) -> Vec<u8> {
-        values.iter().flat_map(|v| v.to_be_bytes()).collect()
+fn parse_sampled_ipv4(input: &mut &[u8]) -> Result<SampledIpv4> {
+    seq!(SampledIpv4 {
+        length: be_u32,
+        protocol: be_u32,
+        src_ip: parse_ipv4,
+        dst_ip: parse_ipv4,
+        src_port: be_u32,
+        dst_port: be_u32,
+        tcp_flags: be_u32,
+        tos: be_u32,
+    })
+    .parse_next(input)
+}
+
+fn parse_sampled_ipv6(input: &mut &[u8]) -> Result<SampledIpv6> {
+    seq!(SampledIpv6 {
+        length: be_u32,
+        protocol: be_u32,
+        src_ip: parse_ipv6,
+        dst_ip: parse_ipv6,
+        src_port: be_u32,
+        dst_port: be_u32,
+        tcp_flags: be_u32,
+        priority: be_u32,
+    })
+    .parse_next(input)
+}
+
+fn parse_extended_switch(input: &mut &[u8]) -> Result<ExtendedSwitch> {
+    seq!(ExtendedSwitch {
+        src_vlan: be_u32,
+        src_priority: be_u32,
+        dst_vlan: be_u32,
+        dst_priority: be_u32,
+    })
+    .parse_next(input)
+}
+
+fn parse_extended_router(input: &mut &[u8]) -> Result<ExtendedRouter> {
+    seq!(ExtendedRouter {
+        nexthop: parse_address,
+        src_mask_len: be_u32,
+        dst_mask_len: be_u32,
+    })
+    .parse_next(input)
+}
+
+fn parse_extended_gateway(input: &mut &[u8]) -> Result<ExtendedGateway> {
+    seq!(ExtendedGateway {
+        nexthop: parse_address,
+        r#as: be_u32,
+        src_as: be_u32,
+        src_peer_as: be_u32,
+        dst_as_path: |i: &mut &[u8]| parse_array(i, parse_as_path_segment),
+        communities: parse_u32s,
+        localpref: be_u32,
+    })
+    .parse_next(input)
+}
+
+fn parse_as_path_segment(input: &mut &[u8]) -> Result<AsPathSegment> {
+    match be_u32.parse_next(input)? {
+        AS_SET => Ok(AsPathSegment::AsSet(parse_u32s(input)?)),
+        AS_SEQUENCE => Ok(AsPathSegment::AsSequence(parse_u32s(input)?)),
+        _ => fail
+            .context(StrContext::Label("AS path segment type"))
+            .parse_next(input),
     }
+}
 
-    /// A format word, a length word and the data.
-    fn opaque(format: u32, data: &[u8]) -> Vec<u8> {
-        [words(&[format, data.len() as u32]), data.to_vec()].concat()
-    }
+fn parse_extended_user(input: &mut &[u8]) -> Result<ExtendedUser> {
+    seq!(ExtendedUser {
+        src_charset: be_u32,
+        src_user: parse_opaque.map(<[u8]>::to_vec),
+        dst_charset: be_u32,
+        dst_user: parse_opaque.map(<[u8]>::to_vec),
+    })
+    .parse_next(input)
+}
 
-    fn datagram(samples: &[Vec<u8>]) -> Vec<u8> {
-        // Version, IPv4 agent 192.0.2.1, sub-agent, sequence, uptime.
-        let header = words(&[5, 1, 0xc000_0201, 0, 1, 1000, samples.len() as u32]);
-        [header, samples.concat()].concat()
-    }
+fn parse_extended_url(input: &mut &[u8]) -> Result<ExtendedUrl> {
+    seq!(ExtendedUrl {
+        direction: be_u32.map(UrlDirection::from),
+        url: parse_string,
+        host: parse_string,
+    })
+    .parse_next(input)
+}
 
-    /// A flow sample stating `count` records, followed by `trailing` bytes.
-    fn flow_sample(count: u32, records: &[Vec<u8>], trailing: &[u8]) -> Vec<u8> {
-        // Sequence, source ID, sampling rate, pool, drops, input, output.
-        let fields = words(&[1, 3, 100, 100, 0, 3, 4, count]);
-        opaque(1, &[fields, records.concat(), trailing.to_vec()].concat())
-    }
+fn parse_extended_egress_queue(input: &mut &[u8]) -> Result<ExtendedEgressQueue> {
+    seq!(ExtendedEgressQueue { queue: be_u32 }).parse_next(input)
+}
 
-    fn sampled_header(protocol: u32) -> Vec<u8> {
-        // Protocol, frame length, stripped, header length, header.
-        opaque(1, &words(&[protocol, 64, 4, 4, 0]))
-    }
+fn parse_extended_acl(input: &mut &[u8]) -> Result<ExtendedAcl> {
+    seq!(ExtendedAcl {
+        number: be_u32,
+        name: parse_string,
+        direction: be_u32.map(AclDirection::from),
+    })
+    .parse_next(input)
+}
 
-    fn counter_sample() -> Vec<u8> {
-        // Sequence, source ID, no records.
-        opaque(2, &words(&[1, 3, 0]))
-    }
+fn parse_extended_function(input: &mut &[u8]) -> Result<ExtendedFunction> {
+    seq!(ExtendedFunction {
+        symbol: parse_string,
+    })
+    .parse_next(input)
+}
 
-    fn parse(samples: &[Vec<u8>]) -> Vec<Sample> {
-        let (_, packet) = parse_sflow_v5(&datagram(samples)).unwrap();
-        packet.samples
-    }
+// Counter records.
 
-    #[test]
-    fn a_record_that_does_not_parse_is_kept_as_bytes() {
-        // Header protocol 15 (802.11) is not one this parser knows.
-        let samples = parse(&[flow_sample(1, &[sampled_header(15)], &[]), counter_sample()]);
-        let [Sample::Flow(flow), Sample::Counter(_)] = samples.as_slice() else {
-            panic!("expected a flow and a counter sample, got {samples:?}");
-        };
-        assert!(matches!(flow.records[0].data, FlowRecordType::Unknown(_)));
-        assert_eq!(flow.input, 3);
-    }
+fn parse_counter_record(input: &mut &[u8]) -> Result<CounterRecord> {
+    let (format, data) = parse_formatted(input)?;
+    let record = match (format.enterprise, format.format) {
+        (0, IF_COUNTERS) => parse_whole(data, parse_if_counters).map(CounterRecord::IfCounters),
+        (0, ETHERNET_COUNTERS) => {
+            parse_whole(data, parse_ethernet_counters).map(CounterRecord::EthernetCounters)
+        }
+        (0, TOKENRING_COUNTERS) => {
+            parse_whole(data, parse_tokenring_counters).map(CounterRecord::TokenringCounters)
+        }
+        (0, VG_COUNTERS) => parse_whole(data, parse_vg_counters).map(CounterRecord::VgCounters),
+        (0, VLAN_COUNTERS) => {
+            parse_whole(data, parse_vlan_counters).map(CounterRecord::VlanCounters)
+        }
+        (0, PROCESSOR) => parse_whole(data, parse_processor).map(CounterRecord::Processor),
+        _ => None,
+    };
 
-    #[test]
-    fn bytes_past_a_sample_records_are_skipped() {
-        let samples = parse(&[
-            flow_sample(1, &[sampled_header(1)], &[0; 8]),
-            counter_sample(),
-        ]);
-        let [Sample::Flow(flow), Sample::Counter(_)] = samples.as_slice() else {
-            panic!("expected a flow and a counter sample, got {samples:?}");
-        };
-        assert!(matches!(
-            flow.records[0].data,
-            FlowRecordType::SampledHeader(_)
-        ));
-    }
+    Ok(record.unwrap_or_else(|| CounterRecord::Unknown {
+        format,
+        data: data.to_vec(),
+    }))
+}
 
-    #[test]
-    fn unknown_addresses_are_unset_and_keep_their_record() {
-        // An UNKNOWN agent address, and an extended router record with an
-        // UNKNOWN next hop and masks 24 and 16.
-        let router = opaque(1002, &words(&[0, 24, 16]));
-        let sample = flow_sample(1, &[router], &[]);
-        let header = words(&[5, 0, 0, 1, 1000, 1]);
-        let (_, packet) = parse_sflow_v5(&[header, sample].concat()).unwrap();
+fn parse_if_counters(input: &mut &[u8]) -> Result<IfCounters> {
+    seq!(IfCounters {
+        if_index: be_u32,
+        if_type: be_u32,
+        if_speed: be_u64,
+        if_direction: be_u32,
+        if_status: be_u32,
+        if_in_octets: be_u64,
+        if_in_ucast_pkts: be_u32,
+        if_in_multicast_pkts: be_u32,
+        if_in_broadcast_pkts: be_u32,
+        if_in_discards: be_u32,
+        if_in_errors: be_u32,
+        if_in_unknown_protos: be_u32,
+        if_out_octets: be_u64,
+        if_out_ucast_pkts: be_u32,
+        if_out_multicast_pkts: be_u32,
+        if_out_broadcast_pkts: be_u32,
+        if_out_discards: be_u32,
+        if_out_errors: be_u32,
+        if_promiscuous_mode: be_u32,
+    })
+    .parse_next(input)
+}
 
-        assert_eq!(packet.agent_address, None);
-        let [Sample::Flow(flow)] = packet.samples.as_slice() else {
-            panic!("expected one flow sample, got {:?}", packet.samples);
-        };
-        let FlowRecordType::ExtendedRouter(router) = &flow.records[0].data else {
-            panic!(
-                "expected an extended router, got {:?}",
-                flow.records[0].data
-            );
-        };
-        assert_eq!(router.nexthop, None);
-        assert_eq!((router.src_mask, router.dst_mask), (24, 16));
-    }
+fn parse_ethernet_counters(input: &mut &[u8]) -> Result<EthernetCounters> {
+    seq!(EthernetCounters {
+        dot3_stats_alignment_errors: be_u32,
+        dot3_stats_fcs_errors: be_u32,
+        dot3_stats_single_collision_frames: be_u32,
+        dot3_stats_multiple_collision_frames: be_u32,
+        dot3_stats_sqe_test_errors: be_u32,
+        dot3_stats_deferred_transmissions: be_u32,
+        dot3_stats_late_collisions: be_u32,
+        dot3_stats_excessive_collisions: be_u32,
+        dot3_stats_internal_mac_transmit_errors: be_u32,
+        dot3_stats_carrier_sense_errors: be_u32,
+        dot3_stats_frame_too_longs: be_u32,
+        dot3_stats_internal_mac_receive_errors: be_u32,
+        dot3_stats_symbol_errors: be_u32,
+    })
+    .parse_next(input)
+}
 
-    #[test]
-    fn a_sample_that_does_not_parse_is_kept_as_bytes() {
-        // Two records stated, one present.
-        let samples = parse(&[flow_sample(2, &[sampled_header(1)], &[]), counter_sample()]);
-        assert!(
-            matches!(samples.as_slice(), [Sample::Unknown(_), Sample::Counter(_)]),
-            "{samples:?}"
-        );
-    }
+fn parse_tokenring_counters(input: &mut &[u8]) -> Result<TokenringCounters> {
+    seq!(TokenringCounters {
+        dot5_stats_line_errors: be_u32,
+        dot5_stats_burst_errors: be_u32,
+        dot5_stats_ac_errors: be_u32,
+        dot5_stats_abort_trans_errors: be_u32,
+        dot5_stats_internal_errors: be_u32,
+        dot5_stats_lost_frame_errors: be_u32,
+        dot5_stats_receive_congestions: be_u32,
+        dot5_stats_frame_copied_errors: be_u32,
+        dot5_stats_token_errors: be_u32,
+        dot5_stats_soft_errors: be_u32,
+        dot5_stats_hard_errors: be_u32,
+        dot5_stats_signal_loss: be_u32,
+        dot5_stats_transmit_beacons: be_u32,
+        dot5_stats_recoverys: be_u32,
+        dot5_stats_lobe_wires: be_u32,
+        dot5_stats_removes: be_u32,
+        dot5_stats_singles: be_u32,
+        dot5_stats_freq_errors: be_u32,
+    })
+    .parse_next(input)
+}
+
+fn parse_vg_counters(input: &mut &[u8]) -> Result<VgCounters> {
+    seq!(VgCounters {
+        dot12_in_high_priority_frames: be_u32,
+        dot12_in_high_priority_octets: be_u64,
+        dot12_in_norm_priority_frames: be_u32,
+        dot12_in_norm_priority_octets: be_u64,
+        dot12_in_ipm_errors: be_u32,
+        dot12_in_oversize_frame_errors: be_u32,
+        dot12_in_data_errors: be_u32,
+        dot12_in_null_addressed_frames: be_u32,
+        dot12_out_high_priority_frames: be_u32,
+        dot12_out_high_priority_octets: be_u64,
+        dot12_transition_into_trainings: be_u32,
+        dot12_hc_in_high_priority_octets: be_u64,
+        dot12_hc_in_norm_priority_octets: be_u64,
+        dot12_hc_out_high_priority_octets: be_u64,
+    })
+    .parse_next(input)
+}
+
+fn parse_vlan_counters(input: &mut &[u8]) -> Result<VlanCounters> {
+    seq!(VlanCounters {
+        vlan_id: be_u32,
+        octets: be_u64,
+        ucast_pkts: be_u32,
+        multicast_pkts: be_u32,
+        broadcast_pkts: be_u32,
+        discards: be_u32,
+    })
+    .parse_next(input)
+}
+
+fn parse_processor(input: &mut &[u8]) -> Result<Processor> {
+    seq!(Processor {
+        cpu_5s: be_i32,
+        cpu_1m: be_i32,
+        cpu_5m: be_i32,
+        total_memory: be_u64,
+        free_memory: be_u64,
+    })
+    .parse_next(input)
 }

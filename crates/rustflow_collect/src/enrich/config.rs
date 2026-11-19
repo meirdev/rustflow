@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
 
-use rustflow_core::common::common_flow::CommonFlow;
+use rustflow_core::common_flow::CommonFlow;
 use rustflow_core::for_each_flow_field;
 
 use crate::enrich::{Error, Key, KeyType, ReloadPolicy, Result};
@@ -171,7 +171,7 @@ macro_rules! lookup_fields {
     ($( $name:ident : $kind:ident $presence:ident ),* $(,)?) => {
         lookup_fields!(@fields [] $( $name : $kind $presence, )*);
     };
-    (@fields [$($acc:tt)*] $name:ident : FlowType $presence:ident, $($rest:tt)*) => {
+    (@fields [$($acc:tt)*] $name:ident : Protocol $presence:ident, $($rest:tt)*) => {
         lookup_fields!(@fields [$($acc)*] $($rest)*);
     };
     (@fields [$($acc:tt)*] $name:ident : Timestamp $presence:ident, $($rest:tt)*) => {
@@ -179,6 +179,13 @@ macro_rules! lookup_fields {
     };
     (@fields [$($acc:tt)*] $name:ident : Mac $presence:ident, $($rest:tt)*) => {
         lookup_fields!(@fields [$($acc)*] $($rest)*);
+    };
+    (@fields [$($acc:tt)*] $name:ident : Ip required, $($rest:tt)*) => {
+        lookup_fields!(@fields [$($acc)* LookupKey {
+            name: stringify!($name),
+            key_type: KeyType::Ip,
+            extract: |flow| Some(Key::Ip(flow.$name)),
+        },] $($rest)*);
     };
     (@fields [$($acc:tt)*] $name:ident : Ip optional, $($rest:tt)*) => {
         lookup_fields!(@fields [$($acc)* LookupKey {
@@ -346,6 +353,11 @@ fn parse_field_mappings(value: &str) -> Result<Vec<FieldMapping>> {
                         "Invalid field mapping, expected source:output: '{spec}'"
                     ))
                 })?;
+            if CommonFlow::FIELD_NAMES.contains(&output_field) {
+                return Err(Error::Config(format!(
+                    "Output field '{output_field}' is the name of a flow field"
+                )));
+            }
 
             mappings.push(FieldMapping {
                 keys: keys.clone(),
@@ -565,6 +577,20 @@ mod tests {
             )
             .contains("At most 4 lookup keys")
         );
+    }
+
+    #[test]
+    fn an_output_field_cannot_be_a_flow_field() {
+        for name in ["proto", "src_mac", "flow_type"] {
+            let error = parse_enrich_arg(&format!(
+                "type=exact,source=a.csv,key_column=k,fields=proto@name:{name}"
+            ))
+            .unwrap_err();
+            assert!(
+                error.to_string().contains("is the name of a flow field"),
+                "{error}"
+            );
+        }
     }
 
     #[test]

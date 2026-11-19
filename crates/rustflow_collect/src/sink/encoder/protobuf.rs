@@ -3,33 +3,55 @@ use std::io::{self, BufWriter, Write};
 use std::net::IpAddr;
 
 use prost::Message;
-use rustflow_core::common::common_flow::CommonFlow;
+use rustflow_core::common_flow::{self, CommonFlow};
 
 use super::{Encoder, WRITE_BUFFER_BYTES, Writer};
 use crate::enrich::Enriched;
 
-/// `rustflow.CommonFlow` of `proto/rustflow.proto`. Tags are the wire
-/// contract: new fields get tags from 40, 39 is the enrichment map.
+/// `rustflow.FlowType` of `proto/rustflow.proto`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum FlowType {
+    Unspecified = 0,
+    NetflowV5 = 1,
+    NetflowV9 = 2,
+    Ipfix = 3,
+    SflowV5 = 4,
+}
+
+impl From<common_flow::FlowType> for FlowType {
+    fn from(flow_type: common_flow::FlowType) -> Self {
+        match flow_type {
+            common_flow::FlowType::NetflowV5 => Self::NetflowV5,
+            common_flow::FlowType::NetflowV9 => Self::NetflowV9,
+            common_flow::FlowType::Ipfix => Self::Ipfix,
+            common_flow::FlowType::SflowV5 => Self::SflowV5,
+        }
+    }
+}
+
+/// `rustflow.CommonFlow` of `proto/rustflow.proto`: the fields of
+/// `CommonFlow`, tagged in its order, then the enrichment map.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct FlowMessage {
-    #[prost(string, tag = "1")]
-    pub flow_type: String,
-    #[prost(int64, optional, tag = "2")]
-    pub time_received_ns: Option<i64>,
-    #[prost(uint32, tag = "3")]
+    #[prost(enumeration = "FlowType", tag = "1")]
+    pub flow_type: i32,
+    #[prost(int64, tag = "2")]
+    pub time_received_ns: i64,
+    #[prost(bytes = "vec", tag = "3")]
+    pub sampler_address: Vec<u8>,
+    #[prost(uint32, tag = "4")]
     pub sequence_num: u32,
-    #[prost(uint32, optional, tag = "4")]
+    #[prost(uint32, optional, tag = "5")]
     pub sampling_rate: Option<u32>,
-    #[prost(bytes = "vec", optional, tag = "5")]
-    pub sampler_address: Option<Vec<u8>>,
     #[prost(int64, optional, tag = "6")]
     pub time_flow_start_ns: Option<i64>,
     #[prost(int64, optional, tag = "7")]
     pub time_flow_end_ns: Option<i64>,
-    #[prost(uint64, tag = "8")]
-    pub bytes: u64,
-    #[prost(uint64, tag = "9")]
-    pub packets: u64,
+    #[prost(uint64, optional, tag = "8")]
+    pub bytes: Option<u64>,
+    #[prost(uint64, optional, tag = "9")]
+    pub packets: Option<u64>,
     #[prost(bytes = "vec", optional, tag = "10")]
     pub src_addr: Option<Vec<u8>>,
     #[prost(bytes = "vec", optional, tag = "11")]
@@ -85,10 +107,8 @@ pub struct FlowMessage {
     #[prost(uint32, optional, tag = "36")]
     pub observation_domain_id: Option<u32>,
     #[prost(uint32, optional, tag = "37")]
-    pub template_id: Option<u32>,
-    #[prost(uint32, optional, tag = "38")]
     pub forwarding_status: Option<u32>,
-    #[prost(btree_map = "string, string", tag = "39")]
+    #[prost(btree_map = "string, string", tag = "38")]
     pub enriched: BTreeMap<String, String>,
 }
 
@@ -141,23 +161,22 @@ impl FlowMessage {
             src_vlan,
             dst_vlan,
             observation_domain_id,
-            template_id,
             forwarding_status,
         } = flow;
         Self {
-            flow_type: flow_type.to_string(),
+            flow_type: FlowType::from(*flow_type).into(),
             time_received_ns: *time_received_ns,
             sequence_num: *sequence_num,
             sampling_rate: *sampling_rate,
-            sampler_address: sampler_address.map(ip_bytes),
+            sampler_address: ip_bytes(*sampler_address),
             time_flow_start_ns: *time_flow_start_ns,
             time_flow_end_ns: *time_flow_end_ns,
             bytes: *bytes,
             packets: *packets,
             src_addr: src_addr.map(ip_bytes),
             dst_addr: dst_addr.map(ip_bytes),
-            src_mac: src_mac.map(|m| m.into_array().to_vec()),
-            dst_mac: dst_mac.map(|m| m.into_array().to_vec()),
+            src_mac: src_mac.map(|m| m.octets().to_vec()),
+            dst_mac: dst_mac.map(|m| m.octets().to_vec()),
             etype: etype.map(u32::from),
             proto: proto.map(u32::from),
             src_port: src_port.map(u32::from),
@@ -181,7 +200,6 @@ impl FlowMessage {
             src_vlan: src_vlan.map(u32::from),
             dst_vlan: dst_vlan.map(u32::from),
             observation_domain_id: *observation_domain_id,
-            template_id: template_id.map(u32::from),
             forwarding_status: *forwarding_status,
             enriched: names
                 .iter()

@@ -1,1655 +1,548 @@
-use std::fmt::{self, Display, Formatter};
-use std::net::{Ipv4Addr, Ipv6Addr};
-use std::ops::RangeInclusive;
-use std::sync::{Arc, LazyLock};
+use std::borrow::Cow;
+use std::sync::Arc;
+use std::time::Instant;
 
-use chrono::{DateTime, Utc};
-use log::{debug, warn};
-use macaddr::MacAddr6;
-use nom::bytes::complete::take;
-use nom::combinator::{cond, fail, map, map_parser};
-use nom::multi::{count, many0};
-use nom::number::complete::{
-    be_f32, be_f64, be_i8, be_i16, be_i24, be_i32, be_i64, be_u8, be_u16, be_u24, be_u32, be_u64,
-};
-use nom::{IResult, Parser, ToUsize};
-use num_enum::{FromPrimitive, IntoPrimitive};
-use primitive_types::U256;
-use serde::Serialize;
-use strum::EnumString;
+use num_enum::TryFromPrimitive;
+use winnow::binary::{be_u16, be_u32, u8};
+use winnow::combinator::{cond, repeat, seq};
+use winnow::error::{ContextError, StrContext, StrContextValue};
+use winnow::token::take;
+use winnow::{Parser as _, Result};
 
-use super::element_types::ElementTypes;
-use crate::common::ie_registry::{DataType, IEDefinition, IERegistry};
-use crate::common::parser::{
-    be_int, be_uint, boolean, ipv4_addr, ipv6_addr, macaddr6, string, timestamp_micros,
-    timestamp_millis, timestamp_nanos, timestamp_secs, vector, verify_version,
-};
-use crate::common::serializer::{serialize_as_hex, serialize_mac};
-use crate::common::template_cache::TemplateCache;
-use crate::common::{InformationElement, data_record};
+use super::*;
+use crate::information_element::{DataType, ElementId, InformationElement, ListSemantic, Registry};
+use crate::set::DataSet;
+use crate::template::{ResolvedTemplate, TemplateRef};
+use crate::timed_map::BoundedTimedMap;
+use crate::value::{BasicList, ListRecords, SubTemplateList, SubTemplateMultiList, Value};
 
-pub const IPFIX_VERSION: u16 = 10;
-pub const IPFIX_TEMPLATE_SET_ID: u16 = 2;
-pub const IPFIX_OPTIONS_TEMPLATE_SET_ID: u16 = 3;
-pub const IPFIX_VALID_TEMPLATE_ID: RangeInclusive<u16> = 256..=65535;
-pub const IPFIX_VARIABLE_LENGTH: u16 = 0xffff;
+type DomainId = u32;
+type TemplateId = u16;
 
-/// Set header size: 2 (set_id) + 2 (length)
-pub const SET_HEADER_SIZE: usize = 4;
-
-/// IPFIX header size: 2 (version) + 2 (length) + 4 (export_time) + 4
-/// (sequence_number) + 4 (observation_domain_id)
-pub const IPFIX_HEADER_SIZE: usize = 16;
-
-/// How deep lists (RFC 6313) may nest before the rest is kept undecoded.
-/// The sender controls the nesting, and each level costs stack.
-const MAX_LIST_DEPTH: usize = 8;
-
-type Templates = TemplateCache<ResolvedField>;
-
-pub struct IpfixParser {
-    ie_registry: IERegistry,
-    element_types: ElementTypes,
-    templates: Templates,
-    options_templates: Templates,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LearnedElement {
+    Element(InformationElement),
+    Conflicting,
 }
 
-impl IpfixParser {
-    pub fn new(ie_registry: IERegistry, timeout: std::time::Duration) -> Self {
+#[derive(Debug)]
+pub struct Parser {
+    registry: Registry,
+    learned: BoundedTimedMap<ElementId, LearnedElement>,
+    templates: BoundedTimedMap<(DomainId, TemplateId), ResolvedTemplate>,
+    now: Instant,
+}
+
+impl Parser {
+    pub fn new(
+        registry: Registry,
+        templates: BoundedTimedMap<(DomainId, TemplateId), ResolvedTemplate>,
+        learned: BoundedTimedMap<ElementId, LearnedElement>,
+    ) -> Self {
         Self {
-            ie_registry,
-            element_types: ElementTypes::default(),
-            templates: TemplateCache::new(timeout),
-            options_templates: TemplateCache::new(timeout),
+            registry,
+            learned,
+            templates,
+            now: Instant::now(),
         }
     }
 
-    pub fn parse<'a>(&mut self, input: &'a [u8]) -> IResult<&'a [u8], IpfixPacket> {
-        let (input, header) = parse_header(input)?;
-        let data_length = (header.length as usize).saturating_sub(IPFIX_HEADER_SIZE);
-        let (input, sets) = map_parser(take(data_length), |data| {
-            many0(|i| self.parse_set(i, header.observation_domain_id)).parse(data)
-        })
-        .parse(input)?;
-
-        Ok((input, IpfixPacket { header, sets }))
+    pub fn parse(&mut self, input: &[u8]) -> Result<Packet> {
+        self.parse_at(input, Instant::now())
     }
 
-    fn parse_templated_records<'a>(
-        &self,
-        input: &'a [u8],
-        observation_domain_id: u32,
-        template_id: u16,
-        depth: usize,
-    ) -> IResult<&'a [u8], Vec<Record>> {
-        let key = (observation_domain_id, template_id);
+    pub fn parse_at(&mut self, input: &[u8], now: Instant) -> Result<Packet> {
+        self.now = now;
 
-        type Wrap = fn(DataRecord) -> Record;
-        let (fields, wrap): (&Arc<[ResolvedField]>, Wrap) = if let Some(t) =
-            self.templates.get(&key)
-        {
-            (t, Record::Data)
-        } else if let Some(t) = self.options_templates.get(&key) {
-            (t, Record::OptionsData)
-        } else {
-            debug!(
-                "Unknown template for observation_domain_id: {observation_domain_id}, template_id: {template_id}"
-            );
-            return Ok((input, vec![]));
-        };
+        let mut input = input;
+        let header = parse_header(&mut input)?;
+        let mut body = take(header.length - HEADER_LENGTH)
+            .context(StrContext::Label("message body"))
+            .parse_next(&mut input)?;
 
-        // A record parser that consumes nothing makes `many0` fail, which
-        // would discard every remaining set in the message.
-        if fields.is_empty() {
-            return Ok((input, vec![]));
+        let mut sets = Vec::new();
+        while !body.is_empty() {
+            sets.push(self.parse_set(&mut body, header.observation_domain_id)?);
         }
 
-        let (input, records) =
-            many0(|i| self.parse_record_from_fields(i, observation_domain_id, fields, depth))
-                .parse(input)?;
-        if records.is_empty() && !input.is_empty() {
-            warn!(
-                "Malformed data record for observation_domain_id: {}, template_id: {}",
-                observation_domain_id, template_id
-            );
-        }
-        Ok((input, records.into_iter().map(wrap).collect()))
+        Ok(Packet { header, sets })
     }
 
-    /// Apply a Template Withdrawal (RFC 7011 section 8.1): a template record
-    /// with a field count of zero withdraws that template, and one carrying
-    /// the set ID itself (2 or 3) withdraws every template of that kind for
-    /// the observation domain.
-    fn withdraw_templates(
-        map: &mut Templates,
-        observation_domain_id: u32,
-        template_id: u16,
-        all_id: u16,
-    ) {
-        if template_id == all_id {
-            debug!(
-                "Withdrawing all templates for observation_domain_id: {}",
-                observation_domain_id
-            );
-            map.remove_domain(observation_domain_id);
-        } else {
-            debug!(
-                "Withdrawing template for observation_domain_id: {}, template_id: {}",
-                observation_domain_id, template_id
-            );
-            map.remove(&(observation_domain_id, template_id));
-        }
-    }
+    fn parse_set(&mut self, input: &mut &[u8], domain: DomainId) -> Result<Set> {
+        let set_id = be_u16.parse_next(input)?;
+        let length = be_u16
+            .verify(|&length| length >= SET_HEADER_LENGTH)
+            .context(StrContext::Label("set length"))
+            .context(StrContext::Expected(StrContextValue::Description(
+                "at least the 4-octet set header",
+            )))
+            .parse_next(input)?;
+        let mut body = take(length - SET_HEADER_LENGTH)
+            .context(StrContext::Label("set body"))
+            .parse_next(input)?;
 
-    fn parse_set<'a>(
-        &mut self,
-        input: &'a [u8],
-        observation_domain_id: u32,
-    ) -> IResult<&'a [u8], Set> {
-        let (input, id) = be_u16(input)?;
-        let (input, length) = be_u16(input)?;
-
-        // Without a sane length there is no telling where the next set starts.
-        let Some(value_length) = (length as usize).checked_sub(SET_HEADER_SIZE) else {
-            warn!(
-                "Set length {length} is shorter than its header. Discarding the rest of the message."
-            );
-            return fail().parse(input);
-        };
-        let (input, records) = map_parser(take(value_length), |data| {
-            self.parse_records(data, observation_domain_id, id)
-        })
-        .parse(input)?;
-
-        Ok((
-            input,
-            Set {
-                id,
-                length,
-                records,
-            },
-        ))
-    }
-
-    fn parse_records<'a>(
-        &mut self,
-        input: &'a [u8],
-        observation_domain_id: u32,
-        set_id: u16,
-    ) -> IResult<&'a [u8], Vec<Record>> {
-        match set_id {
-            IPFIX_TEMPLATE_SET_ID => {
-                let (input, templates) = many0(parse_template_record).parse(input)?;
-
-                for template in &templates {
-                    if template.fields.is_empty() {
-                        Self::withdraw_templates(
-                            &mut self.templates,
-                            observation_domain_id,
-                            template.template_id,
-                            IPFIX_TEMPLATE_SET_ID,
-                        );
-                    } else if IPFIX_VALID_TEMPLATE_ID.contains(&template.template_id) {
-                        let fields = resolve_fields(
-                            &self.ie_registry,
-                            &self.element_types,
-                            observation_domain_id,
-                            &template.fields,
-                        );
-                        self.templates
-                            .insert((observation_domain_id, template.template_id), fields);
-                    } else {
-                        warn!(
-                            "Template ID {} is reserved. Skipping.",
-                            template.template_id
-                        );
-                    }
+        let set = match set_id {
+            TEMPLATE_SET_ID => {
+                let templates = parse_records(&mut body, parse_template.map(Arc::new))?;
+                for template in templates.iter().filter(|t| !is_withdrawal(t)) {
+                    let template_ref = TemplateRef::Data(Arc::clone(template));
+                    self.insert(domain, template.template_id, template_ref);
                 }
-
-                Ok((input, templates.into_iter().map(Record::Template).collect()))
+                Set::Templates(templates)
             }
-            IPFIX_OPTIONS_TEMPLATE_SET_ID => {
-                let (input, options_templates) =
-                    many0(parse_options_template_record).parse(input)?;
-
-                for template in &options_templates {
-                    if template.fields.is_empty() {
-                        Self::withdraw_templates(
-                            &mut self.options_templates,
-                            observation_domain_id,
-                            template.template_id,
-                            IPFIX_OPTIONS_TEMPLATE_SET_ID,
-                        );
-                    } else if IPFIX_VALID_TEMPLATE_ID.contains(&template.template_id) {
-                        let fields = resolve_fields(
-                            &self.ie_registry,
-                            &self.element_types,
-                            observation_domain_id,
-                            &template.fields,
-                        );
-                        self.options_templates
-                            .insert((observation_domain_id, template.template_id), fields);
-                    } else {
-                        warn!(
-                            "Template ID {} is reserved. Skipping.",
-                            template.template_id
-                        );
-                    }
+            OPTIONS_TEMPLATE_SET_ID => {
+                let templates = parse_records(&mut body, parse_options_template.map(Arc::new))?;
+                for template in templates.iter().filter(|t| !is_options_withdrawal(t)) {
+                    let template_ref = TemplateRef::Options(Arc::clone(template));
+                    self.insert(domain, template.template_id, template_ref);
                 }
-
-                Ok((
-                    input,
-                    options_templates
-                        .into_iter()
-                        .map(Record::OptionsTemplate)
-                        .collect(),
-                ))
+                Set::OptionsTemplates(templates)
             }
-            template_id if IPFIX_VALID_TEMPLATE_ID.contains(&template_id) => {
-                let (input, records) =
-                    self.parse_templated_records(input, observation_domain_id, template_id, 0)?;
-                self.learn_element_types(observation_domain_id, &records);
-                Ok((input, records))
+            id if id >= MIN_TEMPLATE_ID => {
+                let set = self.decode_data_set(domain, id, body);
+                if let Set::OptionsData(data_set) = &set {
+                    self.learn_elements(data_set);
+                }
+                set
             }
-            _ => {
-                warn!("Invalid set ID: {}. Skipping.", set_id);
-
-                Ok((input, vec![]))
-            }
-        }
+            id => Set::Unknown(id),
+        };
+        Ok(set)
     }
 
-    /// Learns from the type records (RFC 5610) among `records`. What they
-    /// describe applies to the domain's templates from then on, those
-    /// already cached included.
-    fn learn_element_types(&mut self, observation_domain_id: u32, records: &[Record]) {
-        let mut changed = false;
-        for record in records {
-            if let Record::OptionsData(record) = record {
-                changed |=
-                    self.element_types
-                        .learn(observation_domain_id, record, &self.ie_registry);
-            }
-        }
-        if !changed {
+    fn learn_elements(&mut self, data_set: &DataSet<OptionsTemplate>) {
+        if !is_type_template(&data_set.template) {
             return;
         }
-        let (registry, element_types) = (&self.ie_registry, &self.element_types);
-        let resolve = |fields: &[ResolvedField]| {
-            let specs: Vec<_> = fields.iter().map(|field| field.spec).collect();
-            resolve_fields(registry, element_types, observation_domain_id, &specs)
-        };
-        self.templates
-            .refresh_domain(observation_domain_id, resolve);
-        self.options_templates
-            .refresh_domain(observation_domain_id, resolve);
-    }
-
-    fn parse_record_from_fields<'a>(
-        &self,
-        input: &'a [u8],
-        observation_domain_id: u32,
-        fields: &Arc<[ResolvedField]>,
-        depth: usize,
-    ) -> IResult<&'a [u8], DataRecord> {
-        let mut values = Vec::with_capacity(fields.len());
-        let mut remaining = input;
-
-        for field in fields.iter() {
-            let (input, field_length) = parse_field_length(remaining, field.spec.field_length)?;
-            let (input, value) = self.parse_field_value(
-                input,
-                observation_domain_id,
-                field.data_type,
-                field_length,
-                depth,
-            )?;
-            values.push(value);
-            remaining = input;
-        }
-
-        Ok((
-            remaining,
-            DataRecord::from_template(Arc::clone(fields), values),
-        ))
-    }
-
-    fn parse_field_value<'a>(
-        &self,
-        input: &'a [u8],
-        observation_domain_id: u32,
-        data_type: DataType,
-        length: usize,
-        depth: usize,
-    ) -> IResult<&'a [u8], FieldValue> {
-        match (data_type, length) {
-            (DataType::Boolean, 1) => {
-                map(boolean, |v| v.map_or(FieldValue::Null, FieldValue::Boolean)).parse(input)
-            }
-            (DataType::Unsigned, 1) => map(be_u8, FieldValue::Unsigned8).parse(input),
-            (DataType::Unsigned, 2) => map(be_u16, FieldValue::Unsigned16).parse(input),
-            (DataType::Unsigned, 4) => map(be_u32, FieldValue::Unsigned32).parse(input),
-            (DataType::Unsigned, 8) => map(be_u64, FieldValue::Unsigned64).parse(input),
-            // RFC 7011 section 6.2: reduced-size encoding
-            (DataType::Unsigned, 3) => map(be_u24, FieldValue::Unsigned32).parse(input),
-            (DataType::Unsigned, len @ 5..=7) => {
-                map(be_uint(len), FieldValue::Unsigned64).parse(input)
-            }
-            (DataType::Signed, 1) => map(be_i8, FieldValue::Signed8).parse(input),
-            (DataType::Signed, 2) => map(be_i16, FieldValue::Signed16).parse(input),
-            (DataType::Signed, 4) => map(be_i32, FieldValue::Signed32).parse(input),
-            (DataType::Signed, 8) => map(be_i64, FieldValue::Signed64).parse(input),
-            (DataType::Signed, 3) => map(be_i24, FieldValue::Signed32).parse(input),
-            (DataType::Signed, len @ 5..=7) => map(be_int(len), FieldValue::Signed64).parse(input),
-            (DataType::Float, 4) => map(be_f32, FieldValue::Float32).parse(input),
-            (DataType::Float, 8) => map(be_f64, FieldValue::Float64).parse(input),
-            (DataType::MacAddress, 6) => map(macaddr6, FieldValue::MacAddress).parse(input),
-            (DataType::Ipv4Address, 4) => map(ipv4_addr, FieldValue::Ipv4Address).parse(input),
-            (DataType::Ipv6Address, 16) => map(ipv6_addr, FieldValue::Ipv6Address).parse(input),
-            (DataType::String, len) => map(string(len), |v| {
-                v.map_or(FieldValue::Null, FieldValue::String)
-            })
-            .parse(input),
-            (DataType::DateTimeSeconds, 4) => {
-                map(timestamp_secs, FieldValue::DateTimeSeconds).parse(input)
-            }
-            (DataType::DateTimeMilliseconds, 8) => map(timestamp_millis, |v| {
-                v.map_or(FieldValue::Null, FieldValue::DateTimeMilliseconds)
-            })
-            .parse(input),
-            (DataType::DateTimeMicroseconds, 8) => {
-                map(timestamp_micros, FieldValue::DateTimeMicroseconds).parse(input)
-            }
-            (DataType::DateTimeNanoseconds, 8) => {
-                map(timestamp_nanos, FieldValue::DateTimeNanoseconds).parse(input)
-            }
-            (
-                DataType::BasicList | DataType::SubTemplateList | DataType::SubTemplateMultiList,
-                _,
-            ) if depth >= MAX_LIST_DEPTH => {
-                map(vector(length), FieldValue::OctetArray).parse(input)
-            }
-            (DataType::BasicList, len) => {
-                self.parse_basic_list(input, observation_domain_id, len, depth + 1)
-            }
-            (DataType::SubTemplateList, len) => {
-                self.parse_sub_template_list(input, observation_domain_id, len, depth + 1)
-            }
-            (DataType::SubTemplateMultiList, len) => {
-                self.parse_sub_template_multi_list(input, observation_domain_id, len, depth + 1)
-            }
-            _ => map(vector(length), FieldValue::OctetArray).parse(input),
-        }
-    }
-
-    fn parse_basic_list<'a>(
-        &self,
-        input: &'a [u8],
-        observation_domain_id: u32,
-        length: usize,
-        depth: usize,
-    ) -> IResult<&'a [u8], FieldValue> {
-        let (remaining, data) = take(length)(input)?;
-        let (data, semantic) = map(be_u8, Semantic::from).parse(data)?;
-        let (data, field) = parse_field_specifier(data)?;
-
-        let element_data_type = lookup(
-            &self.ie_registry,
-            &self.element_types,
-            observation_domain_id,
-            &field,
-        )
-        .map_or(DataType::OctetArray, |ie| ie.data_type);
-        let mut content = Vec::new();
-        let mut list_data = data;
-
-        while !list_data.is_empty() {
-            let (next_data, actual_length) = parse_field_length(list_data, field.field_length)?;
-            if field.field_length == 0 || next_data.len() < actual_length {
-                break;
-            }
-
-            let (next_data, value) = self.parse_field_value(
-                next_data,
-                observation_domain_id,
-                element_data_type,
-                actual_length,
-                depth,
-            )?;
-            content.push(value);
-            list_data = next_data;
-        }
-
-        Ok((
-            remaining,
-            FieldValue::BasicList(BasicList {
-                semantic,
-                field,
-                content,
-            }),
-        ))
-    }
-
-    fn parse_sub_template_list<'a>(
-        &self,
-        input: &'a [u8],
-        observation_domain_id: u32,
-        length: usize,
-        depth: usize,
-    ) -> IResult<&'a [u8], FieldValue> {
-        let (remaining, data) = take(length)(input)?;
-        let (data, semantic) = map(be_u8, Semantic::from).parse(data)?;
-        let (data, template_id) = be_u16(data)?;
-
-        let (_, records) =
-            self.parse_templated_records(data, observation_domain_id, template_id, depth)?;
-
-        if records.is_empty() && !data.is_empty() {
-            warn!(
-                "SubTemplateList references unknown template_id: {} for observation_domain_id: {}",
-                template_id, observation_domain_id
-            );
-        }
-
-        let data_records: Vec<DataRecord> = records
-            .into_iter()
-            .filter_map(|r| match r {
-                Record::Data(dr) | Record::OptionsData(dr) => Some(dr),
-                _ => None,
-            })
-            .collect();
-
-        Ok((
-            remaining,
-            FieldValue::SubTemplateList(SubTemplateList {
-                semantic,
-                template_id,
-                data: data_records,
-            }),
-        ))
-    }
-
-    fn parse_sub_template_multi_list<'a>(
-        &self,
-        input: &'a [u8],
-        observation_domain_id: u32,
-        length: usize,
-        depth: usize,
-    ) -> IResult<&'a [u8], FieldValue> {
-        let (remaining, data) = take(length)(input)?;
-        let (data, semantic) = map(be_u8, Semantic::from).parse(data)?;
-
-        let mut items = Vec::new();
-        let mut list_data = data;
-
-        while !list_data.is_empty() {
-            let (next_data, template_id) = be_u16(list_data)?;
-            let (next_data, item_length) = be_u16(next_data)?;
-            let content_length = (item_length as usize).saturating_sub(4);
-
-            if content_length == 0 {
-                list_data = next_data;
+        for record in &data_set.records {
+            let Some(element) = type_record_element(&data_set.template, record) else {
+                continue;
+            };
+            if self.registry.get(element.id).is_some() || element.check().is_err() {
                 continue;
             }
+            // Inserting again also refreshes the expiry, like a resent template.
+            let id = element.id;
+            let learned = match self.learned.get_at(&id, self.now) {
+                Some(LearnedElement::Element(known)) if *known != element => {
+                    LearnedElement::Conflicting
+                }
+                Some(LearnedElement::Conflicting) => LearnedElement::Conflicting,
+                _ => LearnedElement::Element(element),
+            };
+            self.learned.insert_at(id, learned, self.now);
+        }
+    }
 
-            let (next_data, item_data) = take(content_length)(next_data)?;
-            let (_, records) =
-                self.parse_templated_records(item_data, observation_domain_id, template_id, depth)?;
+    fn element(&self, id: ElementId) -> Option<&InformationElement> {
+        self.registry
+            .get(id)
+            .or_else(|| match self.learned.get_at(&id, self.now)? {
+                LearnedElement::Element(element) => Some(element),
+                LearnedElement::Conflicting => None,
+            })
+    }
 
-            if records.is_empty() && !item_data.is_empty() {
-                warn!(
-                    "SubTemplateMultiList item references unknown template_id: {} for observation_domain_id: {}",
-                    template_id, observation_domain_id
-                );
-            }
+    /// Keeps `template` with the data types the registry gives its fields;
+    /// the others are learned elements, looked up as each record is decoded
+    /// since what is learned changes.
+    fn insert(&mut self, domain: DomainId, template_id: TemplateId, template: TemplateRef) {
+        let data_types = template
+            .fields()
+            .map(|field| {
+                self.registry
+                    .get(field.element_id())
+                    .map(|element| element.data_type)
+            })
+            .collect();
+        let template = ResolvedTemplate {
+            template,
+            data_types,
+        };
+        self.templates
+            .insert_at((domain, template_id), template, self.now);
+    }
 
-            let data_records: Vec<DataRecord> = records
-                .into_iter()
-                .filter_map(|r| match r {
-                    Record::Data(dr) | Record::OptionsData(dr) => Some(dr),
-                    _ => None,
-                })
-                .collect();
+    fn template(&self, domain: DomainId, template_id: TemplateId) -> Option<&ResolvedTemplate> {
+        self.templates.get_at(&(domain, template_id), self.now)
+    }
 
-            items.push(SubTemplateMultiItem {
-                template_id,
-                length: item_length,
-                data: data_records,
-            });
-            list_data = next_data;
+    fn data_type(&self, field: &FieldSpecifier) -> DataType {
+        self.element(field.element_id())
+            .map_or(DataType::OctetArray, |element| element.data_type)
+    }
+
+    fn decode_data_set(&self, domain: DomainId, set_id: TemplateId, body: &[u8]) -> Set {
+        let undecoded = || Set::Undecoded {
+            set_id,
+            body: body.to_vec(),
+        };
+        let Some(resolved) = self.template(domain, set_id) else {
+            return undecoded();
+        };
+        let min_length = min_record_length(&resolved.template);
+        if min_length == 0 {
+            // Every record would be empty; there is nothing to decode.
+            return undecoded();
         }
 
-        Ok((
-            remaining,
-            FieldValue::SubTemplateMultiList(SubTemplateMultiList {
-                semantic,
-                data: items,
+        let mut input = body;
+        let mut records = Vec::new();
+        // Fewer octets than the smallest record are padding (RFC 7011 §3.3.1).
+        while input.len() >= min_length {
+            match self.parse_record(&mut input, domain, resolved, 0) {
+                Ok(record) => records.push(record),
+                Err(_) => return undecoded(),
+            }
+        }
+
+        match &resolved.template {
+            TemplateRef::Data(template) => Set::Data(DataSet {
+                template: Arc::clone(template),
+                records,
             }),
-        ))
-    }
-}
-
-impl Default for IpfixParser {
-    fn default() -> Self {
-        let ie_registry = IERegistry::default();
-        let timeout = std::time::Duration::from_mins(10);
-
-        Self {
-            ie_registry,
-            element_types: ElementTypes::default(),
-            templates: TemplateCache::new(timeout),
-            options_templates: TemplateCache::new(timeout),
+            TemplateRef::Options(template) => Set::OptionsData(DataSet {
+                template: Arc::clone(template),
+                records,
+            }),
         }
     }
-}
 
-#[derive(Debug, Clone, Serialize)]
-pub struct IpfixPacket {
-    #[serde(flatten)]
-    pub header: Header,
-    pub sets: Vec<Set>,
-}
-
-impl IpfixPacket {
-    pub fn new(
-        export_time: DateTime<Utc>,
-        sequence_number: u32,
-        observation_domain_id: u32,
-        sets: Vec<Set>,
-    ) -> Self {
-        Self {
-            header: Header::new(export_time, sequence_number, observation_domain_id),
-            sets,
+    fn parse_record(
+        &self,
+        input: &mut &[u8],
+        domain: DomainId,
+        template: &ResolvedTemplate,
+        depth: usize,
+    ) -> Result<Vec<Value>> {
+        let mut record = Vec::with_capacity(template.data_types.len());
+        for (field, data_type) in template.template.fields().zip(&template.data_types) {
+            let length = parse_field_length(input, field.field_length)?;
+            let bytes = take(length).parse_next(input)?;
+            let data_type = data_type.unwrap_or_else(|| self.data_type(field));
+            record.push(self.decode_field(domain, data_type, bytes, depth));
         }
+        Ok(record)
     }
-}
 
-#[derive(Debug, Clone, Serialize)]
-pub struct Header {
-    pub version: u16,
-    pub length: u16,
-    pub export_time: DateTime<Utc>,
-    pub sequence_number: u32,
-    pub observation_domain_id: u32,
-}
-
-impl Header {
-    pub fn new(
-        export_time: DateTime<Utc>,
-        sequence_number: u32,
-        observation_domain_id: u32,
-    ) -> Self {
-        Self {
-            version: IPFIX_VERSION,
-            length: 0,
-            export_time,
-            sequence_number,
-            observation_domain_id,
-        }
-    }
-}
-
-fn parse_header(input: &[u8]) -> IResult<&[u8], Header> {
-    let (input, version) = verify_version(input, IPFIX_VERSION)?;
-    let (input, length) = be_u16(input)?;
-    let (input, export_time) = timestamp_secs(input)?;
-    let (input, sequence_number) = be_u32(input)?;
-    let (input, observation_domain_id) = be_u32(input)?;
-
-    Ok((
-        input,
-        Header {
-            version,
-            length,
-            export_time,
-            sequence_number,
-            observation_domain_id,
-        },
-    ))
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Set {
-    pub id: u16,
-    pub length: u16,
-    pub records: Vec<Record>,
-}
-
-impl Set {
-    pub fn new(id: u16, records: Vec<Record>) -> Self {
-        Self {
-            id,
-            length: 0,
-            records,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct SetHeader {
-    pub set_id: u16,
-    pub length: u16,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(untagged)]
-pub enum Record {
-    Template(TemplateRecord),
-    OptionsTemplate(OptionsTemplateRecord),
-    Data(DataRecord),
-    OptionsData(DataRecord),
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct TemplateRecord {
-    pub template_id: u16,
-    pub field_count: u16,
-    pub fields: Vec<FieldSpecifier>,
-}
-
-impl TemplateRecord {
-    pub fn new(template_id: u16, fields: Vec<FieldSpecifier>) -> Self {
-        let field_count = fields.len() as u16;
-        Self {
-            template_id,
-            field_count,
-            fields,
-        }
-    }
-}
-
-pub type ResolvedField = data_record::ResolvedField<FieldSpecifier>;
-
-/// The registry's definition of an element, or else the one the exporter's
-/// type records gave for the domain.
-fn lookup<'a>(
-    registry: &'a IERegistry,
-    element_types: &'a ElementTypes,
-    observation_domain_id: u32,
-    spec: &FieldSpecifier,
-) -> Option<&'a IEDefinition> {
-    let (id, enterprise_number) = (spec.information_element_identifier, spec.enterprise_number);
-    registry
-        .lookup(id, enterprise_number)
-        .or_else(|| element_types.lookup(observation_domain_id, id, enterprise_number))
-}
-
-/// RFC 7011 section 3.4.2.1: scope fields are ordinary Information
-/// Elements, so every field resolves through the registry the same way.
-fn resolve_fields(
-    registry: &IERegistry,
-    element_types: &ElementTypes,
-    observation_domain_id: u32,
-    fields: &[FieldSpecifier],
-) -> Arc<[ResolvedField]> {
-    fields
-        .iter()
-        .map(|spec| {
-            let (data_type, name) = lookup(registry, element_types, observation_domain_id, spec)
-                .map_or_else(
-                    || {
-                        let (id, enterprise_number) =
-                            (spec.information_element_identifier, spec.enterprise_number);
-                        (
-                            DataType::OctetArray,
-                            Arc::from(unknown_element_name(id, enterprise_number)),
-                        )
-                    },
-                    |ie| (ie.data_type, ie.name.clone()),
-                );
-            ResolvedField {
-                spec: *spec,
-                data_type,
-                name,
+    fn decode_field(
+        &self,
+        domain: DomainId,
+        data_type: DataType,
+        bytes: &[u8],
+        depth: usize,
+    ) -> Value {
+        let list = match data_type {
+            DataType::BasicList | DataType::SubTemplateList | DataType::SubTemplateMultiList
+                if depth < MAX_LIST_DEPTH =>
+            {
+                self.decode_list(domain, data_type, bytes, depth)
             }
+            _ => None,
+        };
+        list.unwrap_or_else(|| data_type.decode_or_octets(bytes))
+    }
+
+    fn decode_list(
+        &self,
+        domain: DomainId,
+        data_type: DataType,
+        bytes: &[u8],
+        depth: usize,
+    ) -> Option<Value> {
+        let mut input = bytes;
+        let value = match data_type {
+            DataType::BasicList => Value::BasicList(Box::new(
+                self.parse_basic_list(&mut input, domain, depth).ok()?,
+            )),
+            DataType::SubTemplateList => Value::SubTemplateList(Box::new(
+                self.parse_sub_template_list(&mut input, domain, depth)
+                    .ok()?,
+            )),
+            DataType::SubTemplateMultiList => Value::SubTemplateMultiList(Box::new(
+                self.parse_sub_template_multi_list(&mut input, domain, depth)
+                    .ok()?,
+            )),
+            _ => return None,
+        };
+        Some(value)
+    }
+
+    fn parse_basic_list(
+        &self,
+        input: &mut &[u8],
+        domain: DomainId,
+        depth: usize,
+    ) -> Result<BasicList> {
+        let semantic = parse_list_semantic(input)?;
+        let field = parse_field_specifier(input)?;
+        let data_type = self.data_type(&field);
+        let values = parse_all(input, |input| {
+            let length = parse_field_length(input, field.field_length)?;
+            let bytes = take(length).parse_next(input)?;
+            Ok(self.decode_field(domain, data_type, bytes, depth + 1))
+        })?;
+
+        Ok(BasicList {
+            semantic,
+            field,
+            values,
         })
-        .collect()
-}
+    }
 
-pub(super) fn unknown_element_name(id: u16, enterprise_number: Option<u32>) -> String {
-    match enterprise_number {
-        Some(enterprise) => format!("{enterprise}.{id}"),
-        None => id.to_string(),
+    fn parse_sub_template_list(
+        &self,
+        input: &mut &[u8],
+        domain: DomainId,
+        depth: usize,
+    ) -> Result<SubTemplateList> {
+        let semantic = parse_list_semantic(input)?;
+        let template_id = be_u16.parse_next(input)?;
+        let records = self.parse_list_records(input, domain, template_id, depth)?;
+
+        Ok(SubTemplateList { semantic, records })
+    }
+
+    fn parse_sub_template_multi_list(
+        &self,
+        input: &mut &[u8],
+        domain: DomainId,
+        depth: usize,
+    ) -> Result<SubTemplateMultiList> {
+        let semantic = parse_list_semantic(input)?;
+        let groups = parse_all(input, |input| {
+            let template_id = be_u16.parse_next(input)?;
+            // RFC 6313 gives an empty group's length as both 4 and 0; a
+            // length between them is shorter than the group's own header.
+            let length = be_u16
+                .map(usize::from)
+                .verify(|&length: &usize| !(1..LIST_GROUP_HEADER_SIZE).contains(&length))
+                .context(StrContext::Label("list group length"))
+                .parse_next(input)?;
+            let mut records = take(length.saturating_sub(LIST_GROUP_HEADER_SIZE))
+                .context(StrContext::Label("list group records"))
+                .parse_next(input)?;
+            self.parse_list_records(&mut records, domain, template_id, depth)
+        })?;
+
+        Ok(SubTemplateMultiList { semantic, groups })
+    }
+
+    fn parse_list_records(
+        &self,
+        input: &mut &[u8],
+        domain: DomainId,
+        template_id: TemplateId,
+        depth: usize,
+    ) -> Result<ListRecords> {
+        Ok(match self.template(domain, template_id) {
+            Some(template) => ListRecords::Decoded {
+                template: template.template.clone(),
+                records: parse_all(input, |input| {
+                    self.parse_record(input, domain, template, depth + 1)
+                })?,
+            },
+            None => ListRecords::Undecoded {
+                template_id,
+                data: std::mem::take(input).to_vec(),
+            },
+        })
     }
 }
 
-/// Template ID and field count of a (Options) Template Record. A field count
-/// of zero is a Template Withdrawal (RFC 7011 section 8.1), which may also
-/// carry the set ID itself (`all_id`) to withdraw every template of that kind.
-fn parse_template_record(input: &[u8]) -> IResult<&[u8], TemplateRecord> {
-    let (input, template_id) = be_u16(input)?;
-    let (input, field_count) = be_u16(input)?;
-    let (input, fields) = count(parse_field_specifier, field_count.to_usize()).parse(input)?;
-
-    Ok((
-        input,
-        TemplateRecord {
-            template_id,
-            field_count,
-            fields,
-        },
-    ))
+fn is_type_template(template: &OptionsTemplate) -> bool {
+    let has_scope = |id| template.scope_fields.iter().any(|f| f.element_id() == id);
+    has_scope(ElementId::INFORMATION_ELEMENT_ID) && has_scope(ElementId::PRIVATE_ENTERPRISE_NUMBER)
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct OptionsTemplateRecord {
-    pub template_id: u16,
-    pub field_count: u16,
-    pub scope_field_count: u16,
-    pub fields: Vec<FieldSpecifier>,
-}
+fn type_record_element(template: &OptionsTemplate, record: &[Value]) -> Option<InformationElement> {
+    let (mut id, mut enterprise, mut data_type) = (None, None, None);
+    let (mut semantic, mut unit, mut name, mut description) = (None, None, None, None);
+    let (mut range_begin, mut range_end) = (None, None);
 
-impl OptionsTemplateRecord {
-    pub fn new(template_id: u16, scope_field_count: u16, fields: Vec<FieldSpecifier>) -> Self {
-        let field_count = fields.len() as u16;
-        Self {
-            template_id,
-            field_count,
-            scope_field_count,
-            fields,
-        }
-    }
-}
-
-fn parse_options_template_record(input: &[u8]) -> IResult<&[u8], OptionsTemplateRecord> {
-    let (input, template_id) = be_u16(input)?;
-    let (input, field_count) = be_u16(input)?;
-    // RFC 7011 section 8.1: a withdrawal record is only template ID + field
-    // count; the scope field count is not present.
-    let (input, scope_field_count) = if field_count == 0 {
-        (input, 0)
-    } else {
-        be_u16(input)?
-    };
-    let (input, fields) = count(parse_field_specifier, field_count.to_usize()).parse(input)?;
-
-    Ok((
-        input,
-        OptionsTemplateRecord {
-            template_id,
-            field_count,
-            scope_field_count,
-            fields,
-        },
-    ))
-}
-
-#[derive(Debug, Clone, Copy, Serialize)]
-pub struct FieldSpecifier {
-    pub enterprise_bit: bool,
-    pub information_element_identifier: u16,
-    pub field_length: u16,
-    pub enterprise_number: Option<u32>,
-}
-
-impl FieldSpecifier {
-    /// A field specifier for an IANA-registered Information Element
-    pub fn iana(information_element_identifier: u16, field_length: u16) -> Self {
-        Self {
-            enterprise_bit: false,
-            information_element_identifier,
-            field_length,
-            enterprise_number: None,
-        }
-    }
-
-    /// A field specifier for a known IANA [`InformationElement`].
-    pub fn from_ie(information_element: InformationElement, field_length: u16) -> Self {
-        Self::iana(information_element.into(), field_length)
-    }
-
-    /// A field specifier for an enterprise-specific Information Element
-    pub fn enterprise(
-        information_element_identifier: u16,
-        field_length: u16,
-        enterprise_number: u32,
-    ) -> Self {
-        Self {
-            enterprise_bit: true,
-            information_element_identifier,
-            field_length,
-            enterprise_number: Some(enterprise_number),
-        }
-    }
-}
-
-fn parse_field_specifier(input: &[u8]) -> IResult<&[u8], FieldSpecifier> {
-    let (input, enterprise_bit_and_information_element_identifier) = be_u16(input)?;
-
-    let enterprise_bit = enterprise_bit_and_information_element_identifier & 0x8000 != 0;
-    let information_element_identifier = enterprise_bit_and_information_element_identifier & 0x7fff;
-
-    let (input, field_length) = be_u16(input)?;
-    let (input, enterprise_number) = cond(enterprise_bit, be_u32).parse(input)?;
-
-    Ok((
-        input,
-        FieldSpecifier {
-            enterprise_bit,
-            information_element_identifier,
-            field_length,
-            enterprise_number,
-        },
-    ))
-}
-
-pub type DataRecord = data_record::DataRecord<FieldSpecifier, FieldValue>;
-
-static EMPTY_NAME: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from(""));
-
-impl DataRecord {
-    /// A record with placeholder field specifiers, for building packets to
-    /// send; the encoder writes each value at its natural width.
-    pub fn new(values: Vec<FieldValue>) -> Self {
-        let fields = values
-            .iter()
-            .map(|_| ResolvedField {
-                spec: FieldSpecifier::iana(0, 0),
-                data_type: DataType::OctetArray,
-                name: EMPTY_NAME.clone(),
-            })
-            .collect();
-        Self::from_template(fields, values)
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(untagged)]
-pub enum FieldValue {
-    Unsigned8(u8),
-    Unsigned16(u16),
-    Unsigned32(u32),
-    Unsigned64(u64),
-    Unsigned256(U256),
-    Signed8(i8),
-    Signed16(i16),
-    Signed32(i32),
-    Signed64(i64),
-    Float32(f32),
-    Float64(f64),
-    Boolean(bool),
-    MacAddress(#[serde(serialize_with = "serialize_mac")] MacAddr6),
-    #[serde(serialize_with = "serialize_as_hex")]
-    OctetArray(Vec<u8>),
-    String(String),
-    DateTimeSeconds(DateTime<Utc>),
-    DateTimeMilliseconds(DateTime<Utc>),
-    DateTimeMicroseconds(DateTime<Utc>),
-    DateTimeNanoseconds(DateTime<Utc>),
-    Ipv4Address(Ipv4Addr),
-    Ipv6Address(Ipv6Addr),
-    BasicList(BasicList),
-    SubTemplateList(SubTemplateList),
-    SubTemplateMultiList(SubTemplateMultiList),
-    /// A value the collector ignores: ill-formed UTF-8, a boolean that is
-    /// neither 1 nor 2 (RFC 7011 section 6.1).
-    Null,
-}
-
-impl Display for FieldValue {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        match self {
-            // According to RFC 7373
-            FieldValue::Unsigned8(v) => write!(f, "{}", v),
-            FieldValue::Unsigned16(v) => write!(f, "{}", v),
-            FieldValue::Unsigned32(v) => write!(f, "{}", v),
-            FieldValue::Unsigned64(v) => write!(f, "{}", v),
-            FieldValue::Unsigned256(v) => write!(f, "{}", v),
-            FieldValue::Signed8(v) => write!(f, "{}", v),
-            FieldValue::Signed16(v) => write!(f, "{}", v),
-            FieldValue::Signed32(v) => write!(f, "{}", v),
-            FieldValue::Signed64(v) => write!(f, "{}", v),
-            FieldValue::Float32(v) => write!(f, "{}", v),
-            FieldValue::Float64(v) => write!(f, "{}", v),
-            FieldValue::Boolean(v) => write!(f, "{}", v),
-            FieldValue::MacAddress(v) => write!(f, "{}", v),
-            FieldValue::OctetArray(v) => write!(f, "{}", hex::encode(v)),
-            FieldValue::String(v) => write!(f, "{}", v),
-            FieldValue::DateTimeSeconds(v) => write!(f, "{}", v.format("%Y-%m-%dT%H:%M:%S")),
-            FieldValue::DateTimeMilliseconds(v) => {
-                write!(f, "{}", v.format("%Y-%m-%dT%H:%M:%S.%3f"))
+    let fields = template.scope_fields.iter().chain(&template.option_fields);
+    for (field, value) in fields.zip(record) {
+        let number = value.as_u64();
+        match field.element_id() {
+            ElementId::INFORMATION_ELEMENT_ID => id = number.and_then(|n| u16::try_from(n).ok()),
+            ElementId::PRIVATE_ENTERPRISE_NUMBER => {
+                enterprise = number.and_then(|n| u32::try_from(n).ok());
             }
-            FieldValue::DateTimeMicroseconds(v) => {
-                write!(f, "{}", v.format("%Y-%m-%dT%H:%M:%S.%6f"))
-            }
-            FieldValue::DateTimeNanoseconds(v) => {
-                write!(f, "{}", v.format("%Y-%m-%dT%H:%M:%S.%9f"))
-            }
-            FieldValue::Ipv4Address(v) => write!(f, "{}", v),
-            FieldValue::Ipv6Address(v) => write!(f, "{}", v),
-            // There is no RFC for these
-            FieldValue::BasicList(v) => write!(f, "{:?}", v),
-            FieldValue::SubTemplateList(v) => write!(f, "{:?}", v),
-            FieldValue::SubTemplateMultiList(v) => write!(f, "{:?}", v),
-            FieldValue::Null => Ok(()),
+            ElementId::INFORMATION_ELEMENT_DATA_TYPE => data_type = number.and_then(enum_value),
+            ElementId::INFORMATION_ELEMENT_SEMANTICS => semantic = number.and_then(enum_value),
+            ElementId::INFORMATION_ELEMENT_UNITS => unit = number.and_then(enum_value),
+            ElementId::INFORMATION_ELEMENT_RANGE_BEGIN => range_begin = number,
+            ElementId::INFORMATION_ELEMENT_RANGE_END => range_end = number,
+            ElementId::INFORMATION_ELEMENT_NAME => name = text(value),
+            ElementId::INFORMATION_ELEMENT_DESCRIPTION => description = text(value),
+            _ => {}
         }
+    }
+
+    let enterprise = enterprise?;
+    let id = ElementId::new((enterprise != 0).then_some(enterprise), id?).ok()?;
+    Some(InformationElement {
+        id,
+        name: name.unwrap_or_else(|| Cow::Owned(id.to_string())),
+        data_type: data_type?,
+        semantic,
+        unit,
+        range: range_begin.zip(range_end).map(|(begin, end)| begin..=end),
+        description,
+    })
+}
+
+fn enum_value<T: TryFromPrimitive>(number: u64) -> Option<T>
+where
+    T::Primitive: TryFrom<u64>,
+{
+    T::try_from_primitive(T::Primitive::try_from(number).ok()?).ok()
+}
+
+fn text(value: &Value) -> Option<Cow<'static, str>> {
+    match value {
+        Value::String(text) => Some(Cow::Owned(text.clone())),
+        _ => None,
     }
 }
 
-#[derive(Debug, Clone, Serialize, EnumString, FromPrimitive, IntoPrimitive)]
-#[strum(serialize_all = "camelCase")]
-#[repr(u8)]
-pub enum Semantic {
-    NoneOf = 0x00,
-    ExactlyOneOf = 0x01,
-    OneOrMoreOf = 0x02,
-    AllOf = 0x03,
-    Ordered = 0x04,
-    #[num_enum(default)]
-    Undefined = 0xff,
+fn parse_list_semantic(input: &mut &[u8]) -> Result<ListSemantic> {
+    u8.map(|byte| ListSemantic::try_from(byte).unwrap_or_default())
+        .parse_next(input)
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct BasicList {
-    pub semantic: Semantic,
-    pub field: FieldSpecifier,
-    pub content: Vec<FieldValue>,
+fn parse_all<'i, T>(
+    input: &mut &'i [u8],
+    mut item: impl FnMut(&mut &'i [u8]) -> Result<T>,
+) -> Result<Vec<T>> {
+    let mut items = Vec::new();
+    while !input.is_empty() {
+        let before = input.len();
+        items.push(item(input)?);
+        if input.len() == before {
+            return Err(ContextError::new());
+        }
+    }
+    Ok(items)
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct SubTemplateList {
-    pub semantic: Semantic,
-    pub template_id: u16,
-    pub data: Vec<DataRecord>,
+fn min_record_length(template: &TemplateRef) -> usize {
+    template
+        .fields()
+        .map(|field| match field.field_length {
+            VARIABLE_LENGTH => 1,
+            length => usize::from(length),
+        })
+        .sum()
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct SubTemplateMultiList {
-    pub semantic: Semantic,
-    pub data: Vec<SubTemplateMultiItem>,
+fn parse_records<'i, T>(
+    body: &mut &'i [u8],
+    mut record: impl winnow::Parser<&'i [u8], T, ContextError>,
+) -> Result<Vec<T>> {
+    let mut records = Vec::new();
+    while body.len() >= MIN_TEMPLATE_RECORD_LENGTH {
+        records.push(record.parse_next(body)?);
+    }
+    Ok(records)
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct SubTemplateMultiItem {
-    pub template_id: u16,
-    pub length: u16,
-    pub data: Vec<DataRecord>,
+fn parse_header(input: &mut &[u8]) -> Result<Header> {
+    seq!(Header {
+        version: be_u16
+            .verify(|&version| version == VERSION)
+            .context(StrContext::Label("version"))
+            .context(StrContext::Expected(StrContextValue::Description("10"))),
+        length: be_u16
+            .verify(|&length| length >= HEADER_LENGTH)
+            .context(StrContext::Label("length"))
+            .context(StrContext::Expected(StrContextValue::Description(
+                "at least the 16-octet header"
+            ))),
+        export_time: be_u32,
+        sequence_number: be_u32,
+        observation_domain_id: be_u32,
+    })
+    .parse_next(input)
 }
 
-fn parse_field_length(input: &[u8], field_length: u16) -> IResult<&[u8], usize> {
-    if field_length != IPFIX_VARIABLE_LENGTH {
-        return Ok((input, field_length as usize));
+fn parse_field_specifier(input: &mut &[u8]) -> Result<FieldSpecifier> {
+    let (id, field_length) = (be_u16, be_u16).parse_next(input)?;
+    let enterprise_number = cond(id & ENTERPRISE_BIT != 0, be_u32).parse_next(input)?;
+
+    Ok(FieldSpecifier {
+        information_element_id: id & !ENTERPRISE_BIT,
+        field_length,
+        enterprise_number,
+    })
+}
+
+fn parse_field_length(input: &mut &[u8], field_length: u16) -> Result<usize> {
+    if field_length != VARIABLE_LENGTH {
+        return Ok(usize::from(field_length));
     }
-
-    let (input, first_byte) = be_u8(input)?;
-
-    if first_byte < 255 {
-        Ok((input, first_byte as usize))
-    } else {
-        map(be_u16, |l| l as usize).parse(input)
+    match u8.parse_next(input)? {
+        255 => be_u16.map(usize::from).parse_next(input),
+        length => Ok(usize::from(length)),
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+fn parse_template(input: &mut &[u8]) -> Result<Template> {
+    let (template_id, field_count) = (be_u16, be_u16)
+        .verify(|&(template_id, field_count)| {
+            is_valid_template_header(template_id, field_count, TEMPLATE_SET_ID)
+        })
+        .context(StrContext::Label("template ID"))
+        .context(StrContext::Expected(StrContextValue::Description(
+            "256 or above, or 2 to withdraw all templates",
+        )))
+        .parse_next(input)?;
+    let fields = repeat(usize::from(field_count), parse_field_specifier).parse_next(input)?;
 
-    fn message(sets: &[Vec<u8>]) -> Vec<u8> {
-        let length = IPFIX_HEADER_SIZE + sets.iter().map(Vec::len).sum::<usize>();
-        let mut buf = Vec::with_capacity(length);
-        buf.extend_from_slice(&IPFIX_VERSION.to_be_bytes());
-        buf.extend_from_slice(&(length as u16).to_be_bytes());
-        buf.extend_from_slice(&0u32.to_be_bytes()); // export_time
-        buf.extend_from_slice(&0u32.to_be_bytes()); // sequence_number
-        buf.extend_from_slice(&1u32.to_be_bytes()); // observation_domain_id
-        for set in sets {
-            buf.extend_from_slice(set);
-        }
-        buf
+    Ok(Template {
+        template_id,
+        fields,
+    })
+}
+
+fn parse_options_template(input: &mut &[u8]) -> Result<OptionsTemplate> {
+    let (template_id, field_count) = (be_u16, be_u16)
+        .verify(|&(template_id, field_count)| {
+            is_valid_template_header(template_id, field_count, OPTIONS_TEMPLATE_SET_ID)
+        })
+        .context(StrContext::Label("options template ID"))
+        .context(StrContext::Expected(StrContextValue::Description(
+            "256 or above, or 3 to withdraw all options templates",
+        )))
+        .parse_next(input)?;
+
+    // Withdrawal has no scope field count.
+    if field_count == 0 {
+        return Ok(OptionsTemplate {
+            template_id,
+            scope_fields: Vec::new(),
+            option_fields: Vec::new(),
+        });
     }
 
-    fn set(set_id: u16, payload: &[u8]) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(SET_HEADER_SIZE + payload.len());
-        buf.extend_from_slice(&set_id.to_be_bytes());
-        buf.extend_from_slice(&((SET_HEADER_SIZE + payload.len()) as u16).to_be_bytes());
-        buf.extend_from_slice(payload);
-        buf
-    }
-
-    fn field(id: u16, length: u16) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(4);
-        buf.extend_from_slice(&id.to_be_bytes());
-        buf.extend_from_slice(&length.to_be_bytes());
-        buf
-    }
-
-    #[test]
-    fn reduced_size_unsigned_and_signed() {
-        let mut registry = IERegistry::new();
-        registry.add_element(100, None, "testUnsigned", DataType::Unsigned);
-        registry.add_element(101, None, "testSigned", DataType::Signed);
-        let mut parser = IpfixParser::new(registry, std::time::Duration::from_mins(10));
-
-        let mut template = Vec::new();
-        template.extend_from_slice(&256u16.to_be_bytes());
-        template.extend_from_slice(&4u16.to_be_bytes());
-        template.extend_from_slice(&field(100, 3));
-        template.extend_from_slice(&field(100, 7));
-        template.extend_from_slice(&field(101, 3));
-        template.extend_from_slice(&field(101, 5));
-
-        let data = [
-            &[0x01, 0x02, 0x03][..],                     // 0x010203
-            &[0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00], // 256
-            &[0xff, 0xff, 0xff],                         // -1
-            &[0xff, 0xff, 0xff, 0xff, 0xfe],             // -2
-        ]
-        .concat();
-
-        let msg = message(&[set(IPFIX_TEMPLATE_SET_ID, &template), set(256, &data)]);
-        let (rest, packet) = parser.parse(&msg).unwrap();
-        assert!(rest.is_empty());
-
-        let Record::Data(record) = &packet.sets[1].records[0] else {
-            panic!("expected data record");
-        };
-        assert!(matches!(
-            record.values()[0],
-            FieldValue::Unsigned32(0x010203)
-        ));
-        assert!(matches!(record.values()[1], FieldValue::Unsigned64(256)));
-        assert!(matches!(record.values()[2], FieldValue::Signed32(-1)));
-        assert!(matches!(record.values()[3], FieldValue::Signed64(-2)));
-    }
-
-    #[test]
-    fn options_scope_fields_resolve_via_registry() {
-        let mut parser = IpfixParser::default();
-
-        let mut template = Vec::new();
-        template.extend_from_slice(&257u16.to_be_bytes());
-        template.extend_from_slice(&2u16.to_be_bytes()); // field_count
-        template.extend_from_slice(&1u16.to_be_bytes()); // scope_field_count
-        template.extend_from_slice(&field(302, 2)); // selectorId, reduced-size
-        template.extend_from_slice(&field(305, 4)); // samplingPacketInterval
-
-        let data = [
-            &7u16.to_be_bytes()[..],    // selectorId = 7
-            &1000u32.to_be_bytes()[..], // samplingPacketInterval = 1000
-        ]
-        .concat();
-
-        let msg = message(&[
-            set(IPFIX_OPTIONS_TEMPLATE_SET_ID, &template),
-            set(257, &data),
-        ]);
-        let (rest, packet) = parser.parse(&msg).unwrap();
-        assert!(rest.is_empty());
-
-        let Record::OptionsData(record) = &packet.sets[1].records[0] else {
-            panic!("expected options data record");
-        };
-        assert_eq!(&*record.fields()[0].name, "selectorId");
-        assert!(matches!(record.values()[0], FieldValue::Unsigned16(7)));
-        assert_eq!(&*record.fields()[1].name, "samplingPacketInterval");
-        assert!(matches!(record.values()[1], FieldValue::Unsigned32(1000)));
-    }
-
-    fn template(id: u16, fields: &[(u16, u16)]) -> Vec<u8> {
-        let mut buf = [id.to_be_bytes(), (fields.len() as u16).to_be_bytes()].concat();
-        for (ie, length) in fields {
-            buf.extend_from_slice(&field(*ie, *length));
-        }
-        buf
-    }
-
-    #[test]
-    fn withdrawal_removes_template_and_keeps_parsing_later_sets() {
-        let mut parser = IpfixParser::default();
-
-        // octetDeltaCount(1) as a 4-byte field, plus one data record.
-        let msg = message(&[
-            set(IPFIX_TEMPLATE_SET_ID, &template(256, &[(1, 4)])),
-            set(256, &7u32.to_be_bytes()),
-        ]);
-        parser.parse(&msg).unwrap();
-        assert!(parser.templates.contains_key(&(1, 256)));
-
-        // Withdraw 256, then a stale data set for it, then a new template
-        // and its data: the stale set must not take the rest down.
-        let msg = message(&[
-            set(IPFIX_TEMPLATE_SET_ID, &template(256, &[])),
-            set(256, &9u32.to_be_bytes()),
-            set(IPFIX_TEMPLATE_SET_ID, &template(257, &[(2, 4)])),
-            set(257, &5u32.to_be_bytes()),
-        ]);
-        let (rest, packet) = parser.parse(&msg).unwrap();
-        assert!(rest.is_empty());
-        assert_eq!(packet.sets.len(), 4);
-        assert!(!parser.templates.contains_key(&(1, 256)));
-
-        assert!(matches!(
-            &packet.sets[0].records[0],
-            Record::Template(t) if t.template_id == 256 && t.field_count == 0 && t.fields.is_empty()
-        ));
-        assert!(packet.sets[1].records.is_empty());
-        let Record::Data(record) = &packet.sets[3].records[0] else {
-            panic!("expected data record");
-        };
-        assert!(matches!(record.values()[0], FieldValue::Unsigned32(5)));
-    }
-
-    #[test]
-    fn all_templates_withdrawal_clears_the_observation_domain() {
-        let mut parser = IpfixParser::default();
-        let msg = message(&[set(
-            IPFIX_TEMPLATE_SET_ID,
-            &[template(256, &[(1, 4)]), template(257, &[(2, 4)])].concat(),
-        )]);
-        parser.parse(&msg).unwrap();
-        assert_eq!(parser.templates.len(), 2);
-
-        let msg = message(&[set(
-            IPFIX_TEMPLATE_SET_ID,
-            &template(IPFIX_TEMPLATE_SET_ID, &[]),
-        )]);
-        let (_, packet) = parser.parse(&msg).unwrap();
-        assert!(matches!(
-            &packet.sets[0].records[0],
-            Record::Template(t) if t.template_id == IPFIX_TEMPLATE_SET_ID
-        ));
-        assert!(parser.templates.is_empty());
-    }
-
-    #[test]
-    fn options_template_withdrawal_carries_no_scope_field_count() {
-        let mut parser = IpfixParser::default();
-
-        let options_template = |id: u16| {
-            [
-                &id.to_be_bytes()[..],
-                &1u16.to_be_bytes(), // field_count
-                &1u16.to_be_bytes(), // scope_field_count
-                &field(302, 2),
-            ]
-            .concat()
-        };
-        let msg = message(&[set(IPFIX_OPTIONS_TEMPLATE_SET_ID, &options_template(257))]);
-        parser.parse(&msg).unwrap();
-        assert!(parser.options_templates.contains_key(&(1, 257)));
-
-        // A 4-byte withdrawal record directly followed by a full record: if
-        // the parser read a scope count from the withdrawal, the second
-        // record would be misaligned.
-        let msg = message(&[set(
-            IPFIX_OPTIONS_TEMPLATE_SET_ID,
-            &[template(257, &[]), options_template(258)].concat(),
-        )]);
-        let (_, packet) = parser.parse(&msg).unwrap();
-        assert_eq!(packet.sets[0].records.len(), 2);
-        assert!(!parser.options_templates.contains_key(&(1, 257)));
-        let fields = parser
-            .options_templates
-            .get(&(1, 258))
-            .expect("258 installed");
-        assert_eq!(fields.len(), 1);
-        let Record::OptionsTemplate(t) = &packet.sets[0].records[1] else {
-            panic!("expected replacement options template");
-        };
-        assert_eq!(t.scope_field_count, 1);
-        assert_eq!(t.fields.len(), 1);
-    }
-
-    #[test]
-    fn unknown_elements_of_different_enterprises_get_distinct_names() {
-        let fields = [
-            FieldSpecifier::iana(12, 4),
-            FieldSpecifier::enterprise(12, 4, 9),
-            FieldSpecifier::enterprise(12, 4, 29305),
-        ];
-
-        let names: Vec<_> =
-            resolve_fields(&IERegistry::new(), &ElementTypes::default(), 0, &fields)
-                .iter()
-                .map(|field| field.name.to_string())
-                .collect();
-
-        assert_eq!(names, ["12", "9.12", "29305.12"]);
-    }
-
-    fn enterprise_field(id: u16, length: u16, enterprise_number: u32) -> Vec<u8> {
-        [
-            field(0x8000 | id, length),
-            enterprise_number.to_be_bytes().to_vec(),
-        ]
-        .concat()
-    }
-
-    /// An options template (ID 400) for RFC 5610 type records, and a set of
-    /// records: element ID, enterprise number, data type, semantics, name.
-    fn type_records(records: &[(u16, u32, u8, u8, &str)]) -> [Vec<u8>; 2] {
-        let template = [
-            &[400u16.to_be_bytes(), 5u16.to_be_bytes(), 2u16.to_be_bytes()].concat()[..],
-            &field(303, 2),
-            &field(346, 4),
-            &field(339, 1),
-            &field(344, 1),
-            &field(341, IPFIX_VARIABLE_LENGTH),
-        ]
-        .concat();
-        let data: Vec<u8> = records
-            .iter()
-            .flat_map(|&(id, enterprise_number, data_type, semantics, name)| {
-                [
-                    &id.to_be_bytes()[..],
-                    &enterprise_number.to_be_bytes(),
-                    &[data_type, semantics],
-                    &variable_length(name.as_bytes()),
-                ]
-                .concat()
-            })
-            .collect();
-        [
-            set(IPFIX_OPTIONS_TEMPLATE_SET_ID, &template),
-            set(400, &data),
-        ]
-    }
-
-    /// Template 256: the given fields, one data record of `data`.
-    fn template_and_data(fields: &[Vec<u8>], data: &[u8]) -> [Vec<u8>; 2] {
-        let header = [256u16.to_be_bytes(), (fields.len() as u16).to_be_bytes()].concat();
-        let template = [header, fields.concat()].concat();
-        [set(IPFIX_TEMPLATE_SET_ID, &template), set(256, data)]
-    }
-
-    fn data_fields(packet: &IpfixPacket, set: usize) -> Vec<(&str, &FieldValue)> {
-        let Record::Data(record) = &packet.sets[set].records[0] else {
-            panic!("expected a data record, got {:?}", packet.sets[set].records);
-        };
-        record
-            .iter()
-            .map(|(_, name, value)| (name, value))
-            .collect()
-    }
-
-    #[test]
-    fn type_records_describe_enterprise_elements_for_later_templates() {
-        let mut parser = IpfixParser::default();
-        let [options_template, types] = type_records(&[(100, 4242, 3, 3, "vendorCounter")]);
-        let [template, data] =
-            template_and_data(&[enterprise_field(100, 4, 4242)], &42u32.to_be_bytes());
-
-        let msg = message(&[options_template, types, template, data]);
-        let (_, packet) = parser.parse(&msg).unwrap();
-
-        let fields = data_fields(&packet, 3);
-        assert_eq!(fields[0].0, "vendorCounter");
-        assert!(matches!(fields[0].1, FieldValue::Unsigned32(42)));
-    }
-
-    #[test]
-    fn type_records_apply_to_templates_already_cached() {
-        let mut parser = IpfixParser::default();
-        let [template, data] =
-            template_and_data(&[enterprise_field(100, 4, 4242)], &42u32.to_be_bytes());
-        let (_, packet) = parser.parse(&message(&[template, data.clone()])).unwrap();
-        let fields = data_fields(&packet, 1);
-        assert_eq!(fields[0].0, "4242.100");
-        assert!(matches!(fields[0].1, FieldValue::OctetArray(_)));
-
-        let [options_template, types] = type_records(&[(100, 4242, 3, 3, "vendorCounter")]);
-        let msg = message(&[options_template, types, data]);
-        let (_, packet) = parser.parse(&msg).unwrap();
-        let fields = data_fields(&packet, 2);
-        assert_eq!(fields[0].0, "vendorCounter");
-        assert!(matches!(fields[0].1, FieldValue::Unsigned32(42)));
-    }
-
-    #[test]
-    fn type_records_never_redefine_known_disputed_or_ill_fitting_elements() {
-        let mut parser = IpfixParser::default();
-        let [options_template, types] = type_records(&[
-            // octetDeltaCount: the registry's definition stands.
-            (1, 0, 13, 0, "octets"),
-            // Two records that disagree leave the element unknown.
-            (100, 4242, 3, 3, "vendorCounter"),
-            (100, 4242, 13, 0, "vendorCounter"),
-            // A string cannot be a deltaCounter.
-            (101, 4242, 13, 3, "vendorString"),
-            // A name holding a null character is ignored, the type is not.
-            (102, 4242, 3, 0, "vendor\0counter"),
-        ]);
-        let [template, data] = template_and_data(
-            &[
-                field(1, 4),
-                enterprise_field(100, 4, 4242),
-                enterprise_field(101, 4, 4242),
-                enterprise_field(102, 4, 4242),
-            ],
-            &words32(&[1, 2, 3, 4]),
-        );
-
-        let msg = message(&[options_template, types, template, data]);
-        let (_, packet) = parser.parse(&msg).unwrap();
-
-        let fields = data_fields(&packet, 3);
-        let names: Vec<_> = fields.iter().map(|(name, _)| *name).collect();
-        assert_eq!(
-            names,
-            ["octetDeltaCount", "4242.100", "4242.101", "4242.102"]
-        );
-        assert!(matches!(fields[0].1, FieldValue::Unsigned32(1)));
-        assert!(matches!(fields[1].1, FieldValue::OctetArray(_)));
-        assert!(matches!(fields[2].1, FieldValue::OctetArray(_)));
-        assert!(matches!(fields[3].1, FieldValue::Unsigned32(4)));
-    }
-
-    fn words32(values: &[u32]) -> Vec<u8> {
-        values.iter().flat_map(|v| v.to_be_bytes()).collect()
-    }
-
-    #[test]
-    fn cached_enterprise_fields_survive_template_replacement() {
-        use crate::common::encoder::Encode;
-
-        let mut registry = IERegistry::new();
-        registry.add_element(100, Some(4242), "vendorCounter", DataType::Unsigned);
-        let mut parser = IpfixParser::new(registry, std::time::Duration::from_mins(10));
-        let spec = FieldSpecifier::enterprise(100, 3, 4242);
-        let mut template = Vec::new();
-        TemplateRecord::new(256, vec![spec]).encode(&mut template);
-        let msg = message(&[set(IPFIX_TEMPLATE_SET_ID, &template)]);
-        parser.parse(&msg).unwrap();
-
-        let data = [1, 2, 3];
-        let msg = message(&[set(256, &data)]);
-        let (_, packet) = parser.parse(&msg).unwrap();
-        let Record::Data(record) = &packet.sets[0].records[0] else {
-            panic!("expected data decoded using cached enterprise field");
-        };
-        let fields = parser.templates.get(&(1, 256)).unwrap();
-        assert!(std::ptr::eq(fields.as_ref(), record.fields()));
-        let (field, name, value) = record.iter().next().unwrap();
-        assert_eq!(field.enterprise_number, Some(4242));
-        assert!(field.enterprise_bit);
-        assert_eq!(field.information_element_identifier, 100);
-        assert_eq!(field.field_length, 3);
-        assert_eq!(name, "vendorCounter");
-        assert!(matches!(value, FieldValue::Unsigned32(0x010203)));
-
-        let mut replacement = Vec::new();
-        TemplateRecord::new(256, vec![FieldSpecifier::iana(100, 4)]).encode(&mut replacement);
-        let msg = message(&[set(IPFIX_TEMPLATE_SET_ID, &replacement)]);
-        parser.parse(&msg).unwrap();
-        let fields = parser.templates.get(&(1, 256)).unwrap();
-        assert!(!std::ptr::eq(fields.as_ref(), record.fields()));
-        assert_eq!(fields[0].spec.enterprise_number, None);
-        assert_eq!(record.fields()[0].name.as_ref(), "vendorCounter");
-
-        let mut encoded = Vec::new();
-        record.encode(&mut encoded);
-        assert_eq!(encoded, data);
-    }
-
-    #[test]
-    fn reduced_size_fields_round_trip_through_the_encoder() {
-        use crate::common::encoder::Encode;
-
-        let mut registry = IERegistry::new();
-        registry.add_element(100, None, "testUnsigned", DataType::Unsigned);
-        registry.add_element(101, None, "testSigned", DataType::Signed);
-        let mut parser = IpfixParser::new(registry, std::time::Duration::from_mins(10));
-
-        let template = template(256, &[(100, 3), (100, 7), (101, 3), (101, 5), (100, 2)]);
-        let data = [
-            &[0x01, 0x02, 0x03][..],
-            &[0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00],
-            &[0xff, 0xff, 0xff],
-            &[0xff, 0xff, 0xff, 0xff, 0xfe],
-            &[0x12, 0x34],
-        ]
-        .concat();
-
-        let msg = message(&[set(IPFIX_TEMPLATE_SET_ID, &template), set(256, &data)]);
-        let (_, packet) = parser.parse(&msg).unwrap();
-        let Record::Data(record) = &packet.sets[1].records[0] else {
-            panic!("expected data record");
-        };
-
-        let mut encoded = Vec::new();
-        record.encode(&mut encoded);
-        assert_eq!(encoded, data);
-    }
-
-    #[test]
-    fn fixed_length_strings_and_octet_arrays_fill_their_field() {
-        use crate::common::encoder::Encode;
-
-        // interfaceName(82) at a fixed 8 bytes, holding "eth0".
-        let mut parser = IpfixParser::default();
-        let template = template(256, &[(82, 8)]);
-        let data = b"eth0\0\0\0\0";
-        let msg = message(&[set(IPFIX_TEMPLATE_SET_ID, &template), set(256, data)]);
-        let (_, packet) = parser.parse(&msg).unwrap();
-        let Record::Data(record) = &packet.sets[1].records[0] else {
-            panic!("expected data record");
-        };
-        let mut encoded = Vec::new();
-        record.encode(&mut encoded);
-        assert_eq!(encoded, data);
-
-        let field = |length, data_type| ResolvedField {
-            spec: FieldSpecifier::iana(82, length),
-            data_type,
-            name: Arc::from(""),
-        };
-        let record = DataRecord::from_template(
-            [
-                field(4, DataType::String),
-                field(3, DataType::OctetArray),
-                field(3, DataType::OctetArray),
-            ]
-            .into(),
-            vec![
-                FieldValue::String("ethé".to_string()),
-                FieldValue::OctetArray(vec![1, 2, 3, 4, 5]),
-                FieldValue::OctetArray(vec![1]),
-            ],
-        );
-        let mut encoded = Vec::new();
-        record.encode(&mut encoded);
-        assert_eq!(encoded, b"eth\0\x01\x02\x03\x01\0\0");
-    }
-
-    #[test]
-    fn basic_list_elements_round_trip_at_the_declared_width() {
-        use crate::common::encoder::Encode;
-
-        // basicList(291) as a variable-length field whose elements are
-        // 3-byte octetDeltaCount(1) values.
-        let mut parser = IpfixParser::default();
-        let template = template(256, &[(291, IPFIX_VARIABLE_LENGTH)]);
-        let list = [
-            &[Semantic::AllOf as u8][..],
-            &field(1, 3),
-            &[0x01, 0x02, 0x03],
-            &[0x00, 0x00, 0x04],
-            &[0xff, 0xff, 0xff],
-        ]
-        .concat();
-        let data = [&[list.len() as u8][..], &list].concat();
-
-        let msg = message(&[set(IPFIX_TEMPLATE_SET_ID, &template), set(256, &data)]);
-        let (_, packet) = parser.parse(&msg).unwrap();
-        let Record::Data(record) = &packet.sets[1].records[0] else {
-            panic!("expected data record");
-        };
-        let FieldValue::BasicList(parsed) = &record.values()[0] else {
-            panic!("expected basicList, got {:?}", record.values()[0]);
-        };
-        assert_eq!(parsed.content.len(), 3);
-        assert!(matches!(
-            parsed.content[0],
-            FieldValue::Unsigned32(0x010203)
-        ));
-
-        let mut encoded = Vec::new();
-        record.encode(&mut encoded);
-        assert_eq!(encoded, data);
-    }
-
-    #[test]
-    fn basic_lists_keep_empty_variable_length_elements() {
-        use crate::common::encoder::Encode;
-
-        // basicList(291) of variable-length interfaceName(82) strings.
-        let mut parser = IpfixParser::default();
-        let template = template(256, &[(291, IPFIX_VARIABLE_LENGTH)]);
-        let list = [
-            &[Semantic::AllOf as u8][..],
-            &field(82, IPFIX_VARIABLE_LENGTH),
-            &variable_length(b"abc"),
-            &variable_length(b""),
-            &variable_length(b"def"),
-        ]
-        .concat();
-        let data = variable_length(&list);
-
-        let msg = message(&[set(IPFIX_TEMPLATE_SET_ID, &template), set(256, &data)]);
-        let (_, packet) = parser.parse(&msg).unwrap();
-        let Record::Data(record) = &packet.sets[1].records[0] else {
-            panic!("expected data record");
-        };
-        let FieldValue::BasicList(parsed) = &record.values()[0] else {
-            panic!("expected basicList, got {:?}", record.values()[0]);
-        };
-        let names: Vec<_> = parsed
-            .content
-            .iter()
-            .map(|value| match value {
-                FieldValue::String(name) => name.as_str(),
-                other => panic!("expected string, got {other:?}"),
-            })
-            .collect();
-        assert_eq!(names, ["abc", "", "def"]);
-
-        let mut encoded = Vec::new();
-        record.encode(&mut encoded);
-        assert_eq!(encoded, data);
-    }
-
-    fn variable_length(value: &[u8]) -> Vec<u8> {
-        let prefix = match u8::try_from(value.len()) {
-            Ok(length) if length < 255 => vec![length],
-            _ => [&[255][..], &(value.len() as u16).to_be_bytes()].concat(),
-        };
-        [prefix, value.to_vec()].concat()
-    }
-
-    #[test]
-    fn sub_template_lists_nested_past_the_cap_are_kept_undecoded() {
-        // Every level is a record of template 256, whose only field is a
-        // subTemplateList of template 256.
-        let mut parser = IpfixParser::default();
-        let template = template(256, &[(292, IPFIX_VARIABLE_LENGTH)]);
-        let header = [Semantic::AllOf as u8, 0x01, 0x00];
-        let mut list = header.to_vec();
-        for _ in 0..2000 {
-            list = [&header[..], &variable_length(&list)].concat();
-        }
-
-        let msg = message(&[
-            set(IPFIX_TEMPLATE_SET_ID, &template),
-            set(256, &variable_length(&list)),
-        ]);
-        let (_, packet) = parser.parse(&msg).unwrap();
-        let Record::Data(record) = &packet.sets[1].records[0] else {
-            panic!("expected data record");
-        };
-        let mut value = &record.values()[0];
-        for _ in 0..MAX_LIST_DEPTH {
-            let FieldValue::SubTemplateList(list) = value else {
-                panic!("expected subTemplateList, got {value:?}");
-            };
-            value = &list.data[0].values()[0];
-        }
-        assert!(matches!(value, FieldValue::OctetArray(_)));
-    }
-
-    #[test]
-    fn basic_lists_nested_past_the_cap_are_kept_undecoded() {
-        let mut parser = IpfixParser::default();
-        let template = template(256, &[(291, IPFIX_VARIABLE_LENGTH)]);
-        let header = [
-            &[Semantic::AllOf as u8][..],
-            &field(291, IPFIX_VARIABLE_LENGTH),
-        ]
-        .concat();
-        let mut list = header.clone();
-        for _ in 0..7000 {
-            list = [&header[..], &variable_length(&list)].concat();
-        }
-
-        let msg = message(&[
-            set(IPFIX_TEMPLATE_SET_ID, &template),
-            set(256, &variable_length(&list)),
-        ]);
-        let (_, packet) = parser.parse(&msg).unwrap();
-        let Record::Data(record) = &packet.sets[1].records[0] else {
-            panic!("expected data record");
-        };
-        let mut value = &record.values()[0];
-        for _ in 0..MAX_LIST_DEPTH {
-            let FieldValue::BasicList(list) = value else {
-                panic!("expected basicList, got {value:?}");
-            };
-            value = &list.content[0];
-        }
-        assert!(matches!(value, FieldValue::OctetArray(_)));
-    }
-
-    #[test]
-    fn unrepresentable_timestamps_become_null_and_keep_the_set() {
-        // flowStartMilliseconds and octetDeltaCount
-        let mut parser = IpfixParser::default();
-        let template = template(256, &[(152, 8), (1, 4)]);
-        let record =
-            |millis: u64, octets: u32| [&millis.to_be_bytes()[..], &octets.to_be_bytes()].concat();
-        let data = [
-            record(u64::MAX >> 1, 1),
-            record(1_700_000_000_000, 2),
-            record(1_700_000_000_000, 3),
-        ]
-        .concat();
-
-        let msg = message(&[set(IPFIX_TEMPLATE_SET_ID, &template), set(256, &data)]);
-        let (_, packet) = parser.parse(&msg).unwrap();
-        let records = &packet.sets[1].records;
-        assert_eq!(records.len(), 3);
-        let Record::Data(first) = &records[0] else {
-            panic!("expected data record");
-        };
-        assert!(matches!(
-            first.values(),
-            [FieldValue::Null, FieldValue::Unsigned32(1)]
-        ));
-        let Record::Data(second) = &records[1] else {
-            panic!("expected data record");
-        };
-        assert!(matches!(
-            second.values(),
-            [
-                FieldValue::DateTimeMilliseconds(_),
-                FieldValue::Unsigned32(2)
-            ]
-        ));
-    }
-
-    #[test]
-    fn records_built_without_a_template_encode_at_natural_width() {
-        use crate::common::encoder::Encode;
-
-        let record = DataRecord::new(vec![
-            FieldValue::Unsigned8(1),
-            FieldValue::Unsigned16(2),
-            FieldValue::Unsigned32(3),
-            FieldValue::Unsigned64(4),
-            FieldValue::Signed32(-1),
-        ]);
-        let mut encoded = Vec::new();
-        record.encode(&mut encoded);
-        assert_eq!(encoded.len(), 1 + 2 + 4 + 8 + 4);
-        assert_eq!(&encoded[..3], &[1, 0, 2]);
-        assert_eq!(&encoded[15..], &[0xff; 4]);
-    }
+    let scope_field_count = be_u16
+        .verify(|&count| count != 0 && count <= field_count)
+        .context(StrContext::Label("scope field count"))
+        .context(StrContext::Expected(StrContextValue::Description(
+            "between 1 and the field count",
+        )))
+        .parse_next(input)?;
+    let scope_fields =
+        repeat(usize::from(scope_field_count), parse_field_specifier).parse_next(input)?;
+    let option_fields = repeat(
+        usize::from(field_count - scope_field_count),
+        parse_field_specifier,
+    )
+    .parse_next(input)?;
+
+    Ok(OptionsTemplate {
+        template_id,
+        scope_fields,
+        option_fields,
+    })
 }

@@ -14,14 +14,14 @@ The common flow format provides a consistent schema across the supported flow pr
 | Field                   | Type      | Optional | Description                                                                                                                                            |
 | ----------------------- | --------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `flow_type`             | string    | No       | Source flow protocol/type                                                                                                                              |
-| `time_received_ns`      | timestamp | Yes      | Time the flow was received                                                                                                                             |
+| `time_received_ns`      | timestamp | No       | Time the flow was received                                                                                                                             |
+| `sampler_address`       | string    | No       | Address of the flow exporter/sampler                                                                                                                   |
 | `sequence_num`          | uint32    | No       | Export packet sequence number                                                                                                                          |
 | `sampling_rate`         | uint32    | Yes      | Sampling rate reported by the exporter                                                                                                                 |
-| `sampler_address`       | string    | Yes      | Address of the flow exporter/sampler                                                                                                                   |
 | `time_flow_start_ns`    | timestamp | Yes      | Flow start time                                                                                                                                        |
 | `time_flow_end_ns`      | timestamp | Yes      | Flow end time                                                                                                                                          |
-| `bytes`                 | uint64    | No       | Number of bytes in the flow                                                                                                                            |
-| `packets`               | uint64    | No       | Number of packets in the flow                                                                                                                          |
+| `bytes`                 | uint64    | Yes      | Number of bytes in the flow                                                                                                                            |
+| `packets`               | uint64    | Yes      | Number of packets in the flow                                                                                                                          |
 | `src_addr`              | string    | Yes      | Source IPv4 or IPv6 address                                                                                                                            |
 | `dst_addr`              | string    | Yes      | Destination IPv4 or IPv6 address                                                                                                                       |
 | `src_mac`               | string    | Yes      | Source MAC address                                                                                                                                     |
@@ -49,7 +49,6 @@ The common flow format provides a consistent schema across the supported flow pr
 | `src_vlan`              | uint16    | Yes      | Source VLAN ID                                                                                                                                         |
 | `dst_vlan`              | uint16    | Yes      | Destination VLAN ID                                                                                                                                    |
 | `observation_domain_id` | uint32    | Yes      | IPFIX observation domain ID                                                                                                                            |
-| `template_id`           | uint16    | Yes      | NetFlow v9 / IPFIX template ID                                                                                                                         |
 | `forwarding_status`     | uint32    | Yes      | NetFlow v9 / IPFIX forwarding status. In its low byte, the top two bits are forwarded (1), dropped (2) or consumed (3) and the low six bits the reason |
 
 Fields that are unavailable in the original flow record are left unset.
@@ -65,6 +64,8 @@ Optional fields that do not have a value are omitted.
 ```json
 {
   "flow_type": "IPFIX",
+  "time_received_ns": 1700000003000000000,
+  "sampler_address": "192.0.2.1",
   "sequence_num": 1234,
   "bytes": 1500,
   "packets": 10,
@@ -81,7 +82,7 @@ Optional fields that do not have a value are omitted.
 CSV output uses a fixed set of columns matching the common flow schema.
 
 ```text
-flow_type,time_received_ns,sequence_num,sampling_rate,sampler_address,...,forwarding_status
+flow_type,time_received_ns,sampler_address,sequence_num,sampling_rate,...,forwarding_status
 ```
 
 Fields without a value are represented as empty CSV values.
