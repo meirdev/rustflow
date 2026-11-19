@@ -57,8 +57,8 @@ pub struct NtpTimestamp {
 
 impl NtpTimestamp {
     pub fn to_timestamp(self) -> Timestamp {
-        // Using the RFC 4330 pivot: top bit of `seconds` set means era 0 (1968..2036),
-        // clear means era 1 (2036..2104).
+        // Using the RFC 4330 pivot: top bit of `seconds` set means era 0
+        // (1968..2036), clear means era 1 (2036..2104).
         let era = if self.seconds & 0x8000_0000 != 0 {
             0
         } else {

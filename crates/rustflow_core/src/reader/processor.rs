@@ -120,12 +120,22 @@ impl Processor for NetflowProcessor {
             [high, low, ..] => u16::from_be_bytes([high, low]),
             _ => return Err(ReadError::Truncated),
         };
-        Ok(match version {
-            5 => NetflowPacket::V5(netflow_v5::parse(payload)?),
-            9 => NetflowPacket::V9(self.exporter(from, now).netflow_v9.parse_at(payload, now)?),
-            10 => NetflowPacket::Ipfix(self.exporter(from, now).ipfix.parse_at(payload, now)?),
-            version => return Err(ReadError::UnknownVersion(version.into())),
-        })
+        let version = u32::from(version);
+        let packet = match version {
+            5 => netflow_v5::parse(payload).map(NetflowPacket::V5),
+            9 => self
+                .exporter(from, now)
+                .netflow_v9
+                .parse_at(payload, now)
+                .map(NetflowPacket::V9),
+            10 => self
+                .exporter(from, now)
+                .ipfix
+                .parse_at(payload, now)
+                .map(NetflowPacket::Ipfix),
+            version => return Err(ReadError::UnknownVersion(version)),
+        };
+        packet.map_err(|error| ReadError::Parse { version, error })
     }
 
     fn convert(
@@ -175,7 +185,9 @@ impl Processor for SflowProcessor {
             _ => return Err(ReadError::Truncated),
         };
         match version {
-            5 => Ok(SflowPacket::V5(sflow_v5::parse(payload)?)),
+            5 => sflow_v5::parse(payload)
+                .map(SflowPacket::V5)
+                .map_err(|error| ReadError::Parse { version, error }),
             version => Err(ReadError::UnknownVersion(version)),
         }
     }

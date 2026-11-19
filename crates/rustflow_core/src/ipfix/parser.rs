@@ -121,7 +121,8 @@ impl Parser {
             if self.registry.get(element.id).is_some() || element.check().is_err() {
                 continue;
             }
-            // Inserting again also refreshes the expiry, like a resent template.
+            // Inserting again also refreshes the expiry, like a resent
+            // template.
             let id = element.id;
             let learned = match self.learned.get_at(&id, self.now) {
                 Some(LearnedElement::Element(known)) if *known != element => {

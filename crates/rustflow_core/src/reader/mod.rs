@@ -66,7 +66,10 @@ pub enum ReadError {
     Truncated,
     /// A version the family does not have.
     UnknownVersion(u32),
-    Parse(ContextError),
+    Parse {
+        version: u32,
+        error: ContextError,
+    },
 }
 
 impl fmt::Display for ReadError {
@@ -74,13 +77,15 @@ impl fmt::Display for ReadError {
         match self {
             Self::Truncated => f.write_str("the datagram is too short to hold a version"),
             Self::UnknownVersion(version) => write!(f, "unknown version {version}"),
-            Self::Parse(error) => {
+            Self::Parse { version, error } => {
                 // winnow puts the label and the expectation on separate
                 // lines, and says nothing where no parser labelled it.
                 let context = error.to_string().replace('\n', "; ");
                 match context.as_str() {
-                    "" => f.write_str("the packet does not parse"),
-                    context => write!(f, "the packet does not parse: {context}"),
+                    "" => write!(f, "the version {version} packet does not parse"),
+                    context => {
+                        write!(f, "the version {version} packet does not parse: {context}")
+                    }
                 }
             }
         }
@@ -88,12 +93,6 @@ impl fmt::Display for ReadError {
 }
 
 impl std::error::Error for ReadError {}
-
-impl From<ContextError> for ReadError {
-    fn from(error: ContextError) -> Self {
-        Self::Parse(error)
-    }
-}
 
 #[derive(Debug)]
 pub enum Read<T> {
