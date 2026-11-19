@@ -353,6 +353,11 @@ fn parse_field_mappings(value: &str) -> Result<Vec<FieldMapping>> {
                         "Invalid field mapping, expected source:output: '{spec}'"
                     ))
                 })?;
+            if CommonFlow::FIELD_NAMES.contains(&output_field) {
+                return Err(Error::Config(format!(
+                    "Output field '{output_field}' is the name of a flow field"
+                )));
+            }
 
             mappings.push(FieldMapping {
                 keys: keys.clone(),
@@ -572,6 +577,20 @@ mod tests {
             )
             .contains("At most 4 lookup keys")
         );
+    }
+
+    #[test]
+    fn an_output_field_cannot_be_a_flow_field() {
+        for name in ["proto", "src_mac", "flow_type"] {
+            let error = parse_enrich_arg(&format!(
+                "type=exact,source=a.csv,key_column=k,fields=proto@name:{name}"
+            ))
+            .unwrap_err();
+            assert!(
+                error.to_string().contains("is the name of a flow field"),
+                "{error}"
+            );
+        }
     }
 
     #[test]

@@ -146,3 +146,14 @@ macro_rules! define_common_flow {
 }
 
 for_each_flow_field!(define_common_flow);
+
+macro_rules! define_field_names {
+    ($( $name:ident : $kind:ident $presence:ident ),* $(,)?) => {
+        impl CommonFlow {
+            /// The names of the fields, in order.
+            pub const FIELD_NAMES: &[&str] = &[$( stringify!($name), )*];
+        }
+    };
+}
+
+for_each_flow_field!(define_field_names);

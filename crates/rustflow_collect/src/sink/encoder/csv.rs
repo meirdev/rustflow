@@ -29,8 +29,6 @@ macro_rules! field {
 
 macro_rules! flow_fields {
     ($( $name:ident : $kind:ident $presence:ident ),* $(,)?) => {
-        const HEADERS: &[&str] = &[$( stringify!($name), )*];
-
         /// Writes the flow's fields, each followed by a comma.
         fn write_flow(record: &mut Vec<u8>, flow: &CommonFlow) {
             let CommonFlow { $( $name, )* } = flow;
@@ -62,7 +60,7 @@ impl Csv {
             out: BufWriter::with_capacity(WRITE_BUFFER_BYTES, out),
             record: Vec::with_capacity(1024),
         };
-        let names = HEADERS.iter().copied();
+        let names = CommonFlow::FIELD_NAMES.iter().copied();
         for name in names.chain(enriched_fields.iter().map(String::as_str)) {
             write_field(&mut csv.record, name);
         }

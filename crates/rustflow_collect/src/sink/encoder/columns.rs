@@ -108,7 +108,6 @@ macro_rules! flow_columns {
     ($( $name:ident : $kind:ident $presence:ident ),* $(,)?) => {
         struct FlowColumns {
             $( $name: builder!($kind), )*
-            /// Where a text column's value is written before it is appended.
             text: Vec<u8>,
         }
 

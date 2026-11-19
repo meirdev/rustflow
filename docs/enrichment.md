@@ -29,6 +29,8 @@ lookup groups. For example:
 fields=src_addr@asn:src_asn|org:src_org;dst_addr@asn:dst_asn
 ```
 
+An output name cannot be the name of a [common flow](output.md#common-flow) field.
+
 ## CSV
 
 ### Prefix lookup
