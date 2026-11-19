@@ -55,9 +55,6 @@ fn write_ipv4(ip: Ipv4Addr, out: &mut Vec<u8>) {
     }
 }
 
-/// As `Display` writes it: IPv4-mapped addresses in their dotted form, and
-/// otherwise the first of the longest runs of two or more zero segments
-/// compressed to `::`.
 fn write_ipv6(ip: Ipv6Addr, out: &mut Vec<u8>) {
     if let Some(ipv4) = ip.to_ipv4_mapped() {
         out.extend_from_slice(b"::ffff:");
