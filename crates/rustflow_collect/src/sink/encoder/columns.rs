@@ -1,4 +1,3 @@
-use std::fmt::Write as _;
 use std::io;
 use std::sync::Arc;
 
@@ -9,6 +8,7 @@ use arrow_schema::{DataType, Field, Schema, TimeUnit};
 use rustflow_core::common_flow::CommonFlow;
 use rustflow_core::for_each_flow_field;
 
+use super::text::Text;
 use crate::enrich::Enriched;
 
 /// Rows per record batch when nothing flushes earlier.
@@ -71,36 +71,35 @@ macro_rules! nullable {
 }
 
 macro_rules! append {
-    ($b:expr, Protocol required, $v:expr) => {
-        append_text($b, $v)
+    ($b:expr, $text:expr, Protocol required, $v:expr) => {
+        append_text($b, $text, $v)
     };
-    ($b:expr, Ip required, $v:expr) => {
-        append_text($b, $v)
+    ($b:expr, $text:expr, Ip required, $v:expr) => {
+        append_text($b, $text, $v)
     };
-    ($b:expr, Ip optional, $v:expr) => {
-        append_text_option($b, $v)
+    ($b:expr, $text:expr, Ip optional, $v:expr) => {
+        append_text_option($b, $text, $v)
     };
-    ($b:expr, Mac optional, $v:expr) => {
-        append_text_option($b, $v)
+    ($b:expr, $text:expr, Mac optional, $v:expr) => {
+        append_text_option($b, $text, $v)
     };
-    ($b:expr, $kind:ident optional, $v:expr) => {
+    ($b:expr, $text:expr, $kind:ident optional, $v:expr) => {
         $b.append_option($v)
     };
-    ($b:expr, $kind:ident required, $v:expr) => {
+    ($b:expr, $text:expr, $kind:ident required, $v:expr) => {
         $b.append_value($v)
     };
 }
 
-/// `StringBuilder` implements `fmt::Write`; the empty `append_value` closes
-/// the value written so far.
-fn append_text(b: &mut StringBuilder, v: impl std::fmt::Display) {
-    let _ = write!(b, "{v}");
-    b.append_value("");
+fn append_text(b: &mut StringBuilder, text: &mut Vec<u8>, v: impl Text) {
+    text.clear();
+    v.write_text(text);
+    b.append_value(std::str::from_utf8(text).expect("text is ASCII"));
 }
 
-fn append_text_option(b: &mut StringBuilder, v: Option<impl std::fmt::Display>) {
+fn append_text_option(b: &mut StringBuilder, text: &mut Vec<u8>, v: Option<impl Text>) {
     match v {
-        Some(v) => append_text(b, v),
+        Some(v) => append_text(b, text, v),
         None => b.append_null(),
     }
 }
@@ -109,11 +108,16 @@ macro_rules! flow_columns {
     ($( $name:ident : $kind:ident $presence:ident ),* $(,)?) => {
         struct FlowColumns {
             $( $name: builder!($kind), )*
+            /// Where a text column's value is written before it is appended.
+            text: Vec<u8>,
         }
 
         impl FlowColumns {
             fn new() -> Self {
-                Self { $( $name: new_builder!($kind), )* }
+                Self {
+                    $( $name: new_builder!($kind), )*
+                    text: Vec::new(),
+                }
             }
 
             fn fields() -> Vec<Field> {
@@ -122,7 +126,7 @@ macro_rules! flow_columns {
 
             fn append(&mut self, flow: &CommonFlow) {
                 let CommonFlow { $( $name, )* } = flow;
-                $( append!(&mut self.$name, $kind $presence, *$name); )*
+                $( append!(&mut self.$name, &mut self.text, $kind $presence, *$name); )*
             }
 
             fn finish(&mut self) -> Vec<ArrayRef> {
