@@ -15,9 +15,11 @@
 //!
 //! As an iterator, a reader yields every [`Read`]: the flows, and the
 //! timeouts and malformed datagrams between them. [`Reader::raw`] and
-//! [`Reader::packets`] are the same for the packets as they are. With the
-//! `tokio` feature, an [`AsyncReader`] awaits the datagrams of a socket
-//! instead of blocking on them.
+//! [`Reader::packets`] are the same for the packets as they are, and
+//! [`Reader::read_datagram`] gives the flows one datagram at a time, with
+//! its source, its size and what it held. With the `tokio` feature, an
+//! [`AsyncReader`] awaits the datagrams of a socket instead of blocking on
+//! them.
 
 #[cfg(feature = "tokio")]
 mod async_socket;
@@ -47,10 +49,10 @@ pub use self::async_socket::{
 #[cfg(feature = "pcap")]
 pub use self::pcap::PcapSource;
 pub use self::processor::{
-    NetflowPacket, NetflowProcessor, Processor, SflowPacket, SflowProcessor,
+    NetflowPacket, NetflowProcessor, Processor, SflowPacket, SflowProcessor, Summary,
 };
 pub use self::source::{Datagram, Recv, Source, StopHandle, UdpSource};
-use crate::common_flow::CommonFlow;
+use crate::common_flow::{CommonFlow, FlowType};
 
 pub type NetflowReader = Reader<UdpSource, NetflowProcessor>;
 pub type SflowReader = Reader<UdpSource, SflowProcessor>;
@@ -67,7 +69,7 @@ pub enum ReadError {
     /// A version the family does not have.
     UnknownVersion(u32),
     Parse {
-        version: u32,
+        flow_type: FlowType,
         error: ContextError,
     },
 }
@@ -77,15 +79,13 @@ impl fmt::Display for ReadError {
         match self {
             Self::Truncated => f.write_str("the datagram is too short to hold a version"),
             Self::UnknownVersion(version) => write!(f, "unknown version {version}"),
-            Self::Parse { version, error } => {
+            Self::Parse { flow_type, error } => {
                 // winnow puts the label and the expectation on separate
                 // lines, and says nothing where no parser labelled it.
                 let context = error.to_string().replace('\n', "; ");
                 match context.as_str() {
-                    "" => write!(f, "the version {version} packet does not parse"),
-                    context => {
-                        write!(f, "the version {version} packet does not parse: {context}")
-                    }
+                    "" => write!(f, "the {flow_type} packet does not parse"),
+                    context => write!(f, "the {flow_type} packet does not parse: {context}"),
                 }
             }
         }
@@ -112,6 +112,18 @@ pub struct Raw<T> {
     pub from: SocketAddr,
     pub received: Timestamp,
     pub packet: T,
+}
+
+/// The flows of one datagram, with where and when it was received.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct Batch {
+    pub from: SocketAddr,
+    pub received: Timestamp,
+    /// The length of the datagram's payload, in octets.
+    pub length: usize,
+    pub summary: Summary,
+    pub flows: Vec<CommonFlow>,
 }
 
 /// Reads the datagrams of `S` as the packets of `P`'s family.
@@ -171,6 +183,18 @@ impl<S: Source, P: Processor> Reader<S, P> {
 
     pub fn processor(&self) -> &P {
         &self.processor
+    }
+
+    pub fn processor_mut(&mut self) -> &mut P {
+        &mut self.processor
+    }
+
+    pub fn read_datagram(&mut self) -> io::Result<Option<Read<Batch>>> {
+        Ok(Some(match self.source.recv()? {
+            Recv::Datagram(datagram) => read_batch(&mut self.processor, datagram),
+            Recv::Timeout => Read::Timeout,
+            Recv::End => return Ok(None),
+        }))
     }
 
     pub fn read_raw(&mut self) -> io::Result<Option<Read<Raw<P::Packet>>>> {
@@ -291,20 +315,41 @@ fn read_packet<P: Processor>(processor: &mut P, datagram: Datagram<'_>) -> Read<
     }
 }
 
+fn read_batch<P: Processor>(processor: &mut P, datagram: Datagram<'_>) -> Read<Batch> {
+    let Datagram {
+        payload,
+        from,
+        received,
+        now,
+    } = datagram;
+    let mut flows = Vec::new();
+    match processor.process(from.ip(), payload, received, now, &mut flows) {
+        Ok(summary) => Read::Item(Batch {
+            from,
+            received,
+            length: payload.len(),
+            summary,
+            flows,
+        }),
+        Err(error) => Read::Malformed { from, error },
+    }
+}
+
 fn queue_flows<P: Processor>(
     processor: &mut P,
     datagram: Datagram<'_>,
     pending: &mut VecDeque<CommonFlow>,
 ) -> Option<Read<CommonFlow>> {
-    let from = datagram.from;
-    match processor.parse(from.ip(), datagram.payload, datagram.now) {
-        Ok(packet) => {
-            let received_ns = nanoseconds(datagram.received);
-            processor.convert(from.ip(), &packet, received_ns, datagram.now, pending);
-            None
-        }
-        Err(error) => Some(Read::Malformed { from, error }),
-    }
+    let Datagram {
+        payload,
+        from,
+        received,
+        now,
+    } = datagram;
+    processor
+        .process(from.ip(), payload, received, now, pending)
+        .err()
+        .map(|error| Read::Malformed { from, error })
 }
 
 fn nanoseconds(time: Timestamp) -> i64 {

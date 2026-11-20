@@ -10,6 +10,7 @@ use prometheus_client::metrics::family::Family;
 use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::registry::Registry;
 use rustc_hash::FxHashMap;
+use rustflow_core::reader::Summary;
 use tiny_http::{Response, Server};
 
 use crate::enrich::TableMetrics;
@@ -39,6 +40,9 @@ pub struct InputMetrics {
     pub flows_processed: Family<TypeSourceLabel, Counter>,
     /// Parse errors, by protocol version and source.
     pub parse_errors: Family<TypeSourceLabel, Counter>,
+    /// Data sets dropped for lack of a matching template, by protocol
+    /// version and source.
+    pub undecoded_sets: Family<TypeSourceLabel, Counter>,
     /// Datagrams of an unknown protocol version, by source.
     pub unknown_version: Family<SourceLabel, Counter>,
     /// Unix time of the last datagram, by protocol family and source.
@@ -66,6 +70,11 @@ impl InputMetrics {
             "parse_errors",
             "Total parse errors",
             self.parse_errors.clone(),
+        );
+        registry.register(
+            "undecoded_sets",
+            "Total data sets dropped for lack of a matching template",
+            self.undecoded_sets.clone(),
         );
         registry.register(
             "unknown_version",
@@ -129,6 +138,7 @@ struct ExporterCounters {
     bytes_received: Counter,
     flows_processed: Counter,
     parse_errors: Counter,
+    undecoded_sets: Counter,
 }
 
 pub struct ExporterMetrics {
@@ -189,21 +199,19 @@ impl ExporterMetrics {
                 bytes_received: input.bytes_received.get_or_create_owned(&by_source),
                 flows_processed: input.flows_processed.get_or_create_owned(&by_version),
                 parse_errors: input.parse_errors.get_or_create_owned(&by_version),
+                undecoded_sets: input.undecoded_sets.get_or_create_owned(&by_version),
             }
         })
     }
 
-    pub fn record_packet(
-        &mut self,
-        src: IpAddr,
-        version: &'static str,
-        bytes: usize,
-        flow_count: usize,
-    ) {
-        let counters = self.get_or_create(src, version);
+    pub fn record_packet(&mut self, src: IpAddr, bytes: usize, summary: &Summary) {
+        let counters = self.get_or_create(src, summary.flow_type.name());
         counters.packets_received.inc();
         counters.bytes_received.inc_by(bytes as u64);
-        counters.flows_processed.inc_by(flow_count as u64);
+        counters.flows_processed.inc_by(summary.flows as u64);
+        counters
+            .undecoded_sets
+            .inc_by(summary.undecoded_sets as u64);
     }
 
     pub fn record_parse_error(&mut self, src: IpAddr, version: &'static str, bytes: usize) {

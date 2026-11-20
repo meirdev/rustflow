@@ -15,13 +15,10 @@ pub use args::CollectArgs;
 use args::{FlowType, Input};
 use enrich::{EnrichmentConfig, EnrichmentEngine};
 use log::{error, info, warn};
-use rustflow_core::common_flow;
 use rustflow_core::information_element::Registry;
 use rustflow_core::reader::{
-    NetflowPacket, NetflowProcessor, PcapSource, Processor, Recv, SflowPacket, SflowProcessor,
-    Source, UdpSource,
+    NetflowProcessor, PcapSource, Processor, ReadError, Recv, SflowProcessor, Source, UdpSource,
 };
-use rustflow_core::sflow_v5::Sample;
 use serde::Serialize;
 use sink::OutputFormat;
 use sink::pipeline::{CHUNK_FLUSH_TIMEOUT, EncoderGone, Pipeline, Producer};
@@ -94,69 +91,6 @@ fn ingest(
     }
 }
 
-/// What the metrics count of a packet.
-trait Counted {
-    /// The protocol version, as metric labels name it.
-    fn version(&self) -> &'static str;
-
-    /// The flows it carries: data records, or flow samples.
-    fn flow_count(&self) -> usize;
-}
-
-impl Counted for NetflowPacket {
-    fn version(&self) -> &'static str {
-        self.flow_type().name()
-    }
-
-    fn flow_count(&self) -> usize {
-        match self {
-            Self::V5(packet) => packet.flow_records.len(),
-            Self::V9(packet) => packet
-                .flow_sets
-                .iter()
-                .filter_map(|set| set.as_data())
-                .map(|set| set.records.len())
-                .sum(),
-            Self::Ipfix(packet) => packet
-                .sets
-                .iter()
-                .filter_map(|set| set.as_data())
-                .map(|set| set.records.len())
-                .sum(),
-        }
-    }
-}
-
-impl Counted for SflowPacket {
-    fn version(&self) -> &'static str {
-        self.flow_type().name()
-    }
-
-    fn flow_count(&self) -> usize {
-        match self {
-            Self::V5(packet) => packet
-                .samples
-                .iter()
-                .filter(|sample| matches!(sample, Sample::Flow(_) | Sample::ExpandedFlow(_)))
-                .count(),
-        }
-    }
-}
-
-fn version_of(family: FlowType, payload: &[u8]) -> Option<&'static str> {
-    let version = match family {
-        FlowType::Netflow => match payload.get(..2)? {
-            [0, 5] => common_flow::FlowType::NetflowV5,
-            [0, 9] => common_flow::FlowType::NetflowV9,
-            [0, 10] => common_flow::FlowType::Ipfix,
-            _ => return None,
-        },
-        FlowType::Sflow if payload.get(..4)? == [0, 0, 0, 5] => common_flow::FlowType::SflowV5,
-        FlowType::Sflow => return None,
-    };
-    Some(version.name())
-}
-
 fn collect<P: Processor>(
     feed: &mut Feed,
     processor: &mut P,
@@ -166,7 +100,7 @@ fn collect<P: Processor>(
     shutdown: &Shutdown,
 ) -> Result<(), EncoderGone>
 where
-    P::Packet: Counted + Serialize,
+    P::Packet: Serialize,
 {
     let mut exporters = metrics::ExporterMetrics::new(metrics, feed.flow_type.name());
 
@@ -191,24 +125,26 @@ where
         let received_ns = i64::try_from(datagram.received.as_nanosecond()).unwrap_or(i64::MAX);
         exporters.heard_from(src, Some(received_ns));
 
-        let packet = match processor.parse(src, payload, datagram.now) {
-            Ok(packet) => packet,
-            Err(_) => {
-                match version_of(feed.flow_type, payload) {
-                    Some(version) => exporters.record_parse_error(src, version, payload.len()),
-                    None => exporters.record_unknown_version(src, payload.len()),
+        let processed = match format {
+            OutputFormat::Raw => match processor.parse(src, payload, datagram.now) {
+                Ok(packet) => {
+                    let summary = P::summary(&packet);
+                    output.push_raw(&packet, summary.flows)?;
+                    Ok(summary)
                 }
-                continue;
-            }
+                Err(error) => Err(error),
+            },
+            OutputFormat::Common => output.push(|flows| {
+                processor.process(src, payload, datagram.received, datagram.now, flows)
+            })?,
         };
 
-        let flow_count = packet.flow_count();
-        exporters.record_packet(src, packet.version(), payload.len(), flow_count);
-
-        match format {
-            OutputFormat::Raw => output.push_raw(&packet, flow_count)?,
-            OutputFormat::Common => output
-                .push(|flows| processor.convert(src, &packet, received_ns, datagram.now, flows))?,
+        match processed {
+            Ok(summary) => exporters.record_packet(src, payload.len(), &summary),
+            Err(ReadError::Parse { flow_type, .. }) => {
+                exporters.record_parse_error(src, flow_type.name(), payload.len());
+            }
+            Err(_) => exporters.record_unknown_version(src, payload.len()),
         }
     }
     Ok(())
