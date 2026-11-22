@@ -56,9 +56,7 @@ pub(super) fn learn_options<S: Scope>(
 ) {
     for data_set in sets.iter().filter_map(Set::as_options_data) {
         let template = &data_set.template;
-        if template.scope_fields.iter().any(Scope::is_partial) {
-            continue;
-        }
+        let partial = template.scope_fields.iter().any(Scope::is_partial);
         let scope = template.scope_fields.iter().map(Scope::element_id);
         let option = template
             .option_fields
@@ -70,7 +68,7 @@ pub(super) fn learn_options<S: Scope>(
                 .clone()
                 .zip(record)
                 .filter_map(|(id, value)| Some((id?, value)));
-            options.learn(domain, fields, now);
+            options.learn(domain, partial, fields, now);
         }
     }
 }
