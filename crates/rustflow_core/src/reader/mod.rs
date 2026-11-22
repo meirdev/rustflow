@@ -100,6 +100,7 @@ pub enum Read<T> {
     /// A datagram that could not be read; the reader goes on past it.
     Malformed {
         from: SocketAddr,
+        length: usize,
         error: ReadError,
     },
     /// No datagram before the socket's read timeout.
@@ -311,7 +312,11 @@ fn read_packet<P: Processor>(processor: &mut P, datagram: Datagram<'_>) -> Read<
             received: datagram.received,
             packet,
         }),
-        Err(error) => Read::Malformed { from, error },
+        Err(error) => Read::Malformed {
+            from,
+            length: datagram.payload.len(),
+            error,
+        },
     }
 }
 
@@ -331,7 +336,11 @@ fn read_batch<P: Processor>(processor: &mut P, datagram: Datagram<'_>) -> Read<B
             summary,
             flows,
         }),
-        Err(error) => Read::Malformed { from, error },
+        Err(error) => Read::Malformed {
+            from,
+            length: payload.len(),
+            error,
+        },
     }
 }
 
@@ -349,7 +358,11 @@ fn queue_flows<P: Processor>(
     processor
         .process(from.ip(), payload, received, now, pending)
         .err()
-        .map(|error| Read::Malformed { from, error })
+        .map(|error| Read::Malformed {
+            from,
+            length: payload.len(),
+            error,
+        })
 }
 
 fn nanoseconds(time: Timestamp) -> i64 {

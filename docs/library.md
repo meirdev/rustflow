@@ -42,7 +42,7 @@ A datagram usually carries many flows, which are buffered and returned one by on
 
 `read` gives you control over the waiting. It returns a `Read`: `Item` with the next flow,
 `Timeout` when none arrived before the read timeout, or `Malformed` for a datagram that
-could not be decoded, with its sender and the error. It returns `None` only at the end of
+could not be decoded, with its sender, its length and the error. It returns `None` only at the end of
 the input, which a socket never reaches:
 
 ```rust
@@ -57,7 +57,9 @@ fn main() -> std::io::Result<()> {
     while let Some(read) = reader.read()? {
         match read {
             Read::Item(flow) => println!("{flow:?}"),
-            Read::Malformed { from, error } => eprintln!("undecodable datagram from {from}: {error}"),
+            Read::Malformed { from, error, .. } => {
+                eprintln!("undecodable datagram from {from}: {error}")
+            }
             Read::Timeout => {
                 // No flow within the timeout: flush metrics, check for
                 // shutdown, then keep reading.
@@ -97,7 +99,9 @@ fn main() -> std::io::Result<()> {
                     summary.undecoded_sets,
                 );
             }
-            Read::Malformed { from, error } => eprintln!("undecodable datagram from {from}: {error}"),
+            Read::Malformed { from, error, .. } => {
+                eprintln!("undecodable datagram from {from}: {error}")
+            }
             Read::Timeout => {}
         }
     }
