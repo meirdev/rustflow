@@ -112,6 +112,41 @@ pub enum ListSemantic {
 }
 
 #[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, num_enum::TryFromPrimitive, num_enum::IntoPrimitive,
+)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[repr(u8)]
+#[non_exhaustive]
+pub enum FlowEndReason {
+    /// The Flow was considered to be idle.
+    IdleTimeout = 0x01,
+    /// The Flow was reported while still active, for example after its
+    /// maximum lifetime was reached.
+    ActiveTimeout = 0x02,
+    /// The Metering Process detected the end of the Flow, for example the
+    /// TCP FIN flag.
+    EndOfFlowDetected = 0x03,
+    /// An external event, for example a shutdown of the Metering Process.
+    ForcedEnd = 0x04,
+    /// The Metering Process or the Exporting Process ran out of resources.
+    LackOfResources = 0x05,
+}
+
+/// The top two bits of `forwardingStatus`'s low byte; the low six are the
+/// reason.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, num_enum::TryFromPrimitive, num_enum::IntoPrimitive,
+)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[repr(u8)]
+pub enum ForwardingStatus {
+    Unknown = 0b00,
+    Forwarded = 0b01,
+    Dropped = 0b10,
+    Consumed = 0b11,
+}
+
+#[derive(
     Debug,
     Clone,
     Copy,
