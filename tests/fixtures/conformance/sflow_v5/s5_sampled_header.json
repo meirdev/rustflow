@@ -1,0 +1,136 @@
+{
+  "reference": "sFlow Version 5 section 5, sampled_header (format 1) and header_protocol",
+  "description": "Sampled headers of 44, 45, 46 and 47 bytes, which XDR pads with 0, 3, 2 and 1 bytes: the header is its length, without the padding, and the record after it is read. Frame length and stripped bytes are reported as sent. Header protocols other than Ethernet: IPv4 (11), and a number the specification does not assign (99).",
+  "datagrams": 1,
+  "expected": [
+    {
+      "protocol": "sflow_v5",
+      "packet": {
+        "version": 5,
+        "sub_agent_id": 0,
+        "sequence_number": 1,
+        "uptime": 3600000,
+        "samples": [
+          {
+            "type": "flow",
+            "sequence_number": 1,
+            "source_id": {"source_id_type": 0, "source_id_index": 3},
+            "sampling_rate": 1000,
+            "sample_pool": 1000,
+            "drops": 0,
+            "input": {"format": 0, "value": 3},
+            "output": {"format": 0, "value": 4},
+            "records": [
+              {"type": "sampled_header", "protocol": "EthernetIso88023", "frame_length": 1518, "stripped": 4, "header": "02000000000202000000000108004500001e0000400040114e68c0000232c63364019c40c350000a3b697878"},
+              {"type": "extended_switch", "src_vlan": 1, "src_priority": 0, "dst_vlan": 2, "dst_priority": 0}
+            ]
+          },
+          {
+            "type": "flow",
+            "sequence_number": 2,
+            "source_id": {"source_id_type": 0, "source_id_index": 3},
+            "sampling_rate": 1000,
+            "sample_pool": 2000,
+            "drops": 0,
+            "input": {"format": 0, "value": 3},
+            "output": {"format": 0, "value": 4},
+            "records": [
+              {"type": "sampled_header", "protocol": "EthernetIso88023", "frame_length": 64, "stripped": 8, "header": "02000000000202000000000108004500001f0000400040114e67c0000232c63364019c40c350000bc366787878"},
+              {"type": "extended_switch", "src_vlan": 3, "src_priority": 0, "dst_vlan": 4, "dst_priority": 0}
+            ]
+          },
+          {
+            "type": "flow",
+            "sequence_number": 3,
+            "source_id": {"source_id_type": 0, "source_id_index": 3},
+            "sampling_rate": 1000,
+            "sample_pool": 3000,
+            "drops": 0,
+            "input": {"format": 0, "value": 3},
+            "output": {"format": 0, "value": 4},
+            "records": [
+              {"type": "sampled_header", "protocol": "EthernetIso88023", "frame_length": 9018, "stripped": 4, "header": "0200000000020200000000010800450000200000400040114e66c0000232c63364019c40c350000cc2ec78787878"},
+              {"type": "extended_switch", "src_vlan": 5, "src_priority": 0, "dst_vlan": 6, "dst_priority": 0}
+            ]
+          },
+          {
+            "type": "flow",
+            "sequence_number": 4,
+            "source_id": {"source_id_type": 0, "source_id_index": 3},
+            "sampling_rate": 1000,
+            "sample_pool": 4000,
+            "drops": 0,
+            "input": {"format": 0, "value": 3},
+            "output": {"format": 0, "value": 4},
+            "records": [
+              {"type": "sampled_header", "protocol": "EthernetIso88023", "frame_length": 4294967295, "stripped": 4294967295, "header": "0200000000020200000000010800450000210000400040114e65c0000232c63364019c40c350000d4aea7878787878"},
+              {"type": "extended_switch", "src_vlan": 7, "src_priority": 0, "dst_vlan": 8, "dst_priority": 0}
+            ]
+          },
+          {
+            "type": "flow",
+            "sequence_number": 5,
+            "source_id": {"source_id_type": 0, "source_id_index": 3},
+            "sampling_rate": 1000,
+            "sample_pool": 5000,
+            "drops": 0,
+            "input": {"format": 0, "value": 3},
+            "output": {"format": 0, "value": 4},
+            "records": [
+              {"type": "sampled_header", "protocol": "Ipv4", "frame_length": 30, "stripped": 0, "header": "4500001e0000400040114e68c0000232c63364019c40c350000a3b697878"}
+            ]
+          },
+          {
+            "type": "flow",
+            "sequence_number": 6,
+            "source_id": {"source_id_type": 0, "source_id_index": 3},
+            "sampling_rate": 1000,
+            "sample_pool": 6000,
+            "drops": 0,
+            "input": {"format": 0, "value": 3},
+            "output": {"format": 0, "value": 4},
+            "records": [
+              {
+                "type": "sampled_header",
+                "protocol": {"Unassigned": 99},
+                "frame_length": 100,
+                "stripped": 0,
+                "header": "0102030405"
+              }
+            ]
+          },
+          {
+            "type": "flow",
+            "sequence_number": 7,
+            "source_id": {"source_id_type": 0, "source_id_index": 3},
+            "sampling_rate": 1000,
+            "sample_pool": 7000,
+            "drops": 0,
+            "input": {"format": 0, "value": 3},
+            "output": {"format": 0, "value": 4},
+            "records": [
+              {"type": "sampled_header", "protocol": "EthernetIso88023", "frame_length": 60, "stripped": 4, "header": ""}
+            ]
+          }
+        ],
+        "agent_address": "192.0.2.1"
+      }
+    }
+  ],
+  "flows": [
+    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 1000, "in_if": 3, "out_if": 4, "packets": 1, "bytes": 1518, "dst_mac": "02:00:00:00:00:02", "src_mac": "02:00:00:00:00:01", "etype": 2048, "src_addr": "192.0.2.50", "dst_addr": "198.51.100.1", "proto": 17, "ip_tos": 0, "ip_ttl": 64, "fragment_id": 0, "fragment_offset": 0, "src_port": 40000, "dst_port": 50000, "src_vlan": 1, "dst_vlan": 2},
+    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 1000, "in_if": 3, "out_if": 4, "packets": 1, "bytes": 64, "dst_mac": "02:00:00:00:00:02", "src_mac": "02:00:00:00:00:01", "etype": 2048, "src_addr": "192.0.2.50", "dst_addr": "198.51.100.1", "proto": 17, "ip_tos": 0, "ip_ttl": 64, "fragment_id": 0, "fragment_offset": 0, "src_port": 40000, "dst_port": 50000, "src_vlan": 3, "dst_vlan": 4},
+    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 1000, "in_if": 3, "out_if": 4, "packets": 1, "bytes": 9018, "dst_mac": "02:00:00:00:00:02", "src_mac": "02:00:00:00:00:01", "etype": 2048, "src_addr": "192.0.2.50", "dst_addr": "198.51.100.1", "proto": 17, "ip_tos": 0, "ip_ttl": 64, "fragment_id": 0, "fragment_offset": 0, "src_port": 40000, "dst_port": 50000, "src_vlan": 5, "dst_vlan": 6},
+    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 1000, "in_if": 3, "out_if": 4, "packets": 1, "bytes": 4294967295, "dst_mac": "02:00:00:00:00:02", "src_mac": "02:00:00:00:00:01", "etype": 2048, "src_addr": "192.0.2.50", "dst_addr": "198.51.100.1", "proto": 17, "ip_tos": 0, "ip_ttl": 64, "fragment_id": 0, "fragment_offset": 0, "src_port": 40000, "dst_port": 50000, "src_vlan": 7, "dst_vlan": 8},
+    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 1000, "in_if": 3, "out_if": 4, "packets": 1, "bytes": 30, "etype": 2048, "src_addr": "192.0.2.50", "dst_addr": "198.51.100.1", "proto": 17, "ip_tos": 0, "ip_ttl": 64, "fragment_id": 0, "fragment_offset": 0, "src_port": 40000, "dst_port": 50000},
+    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 1000, "in_if": 3, "out_if": 4, "packets": 1, "bytes": 100},
+    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 1000, "in_if": 3, "out_if": 4, "packets": 1, "bytes": 60}
+  ],
+  "tshark": {
+    "sflow_245.header_protocol": ["1", "1", "1", "1", "11", "99", "1"],
+    "sflow_245.header.frame_length": ["1518", "64", "9018", "4294967295", "30", "100", "60"],
+    "sflow_245.header.payload_stripped": ["4", "8", "4", "4294967295", "0", "0", "4"],
+    "sflow_245.header.sampled_header_length": ["44", "45", "46", "47", "30", "5", "0"],
+    "sflow_245.vlan.in": ["1", "3", "5", "7"]
+  }
+}

@@ -19,6 +19,21 @@ enum Scope {
     /// The domain's data records naming no sampler: the rate of every
     /// sampler, if they agree.
     AnySampler(u32),
+    /// The data records of a domain that has no rate of its own: the latest
+    /// rate of a record scoped to the whole exporter.
+    System,
+}
+
+/// What an options record speaks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Extent {
+    /// Part of the domain, such as an interface: only a rate naming a
+    /// sampler is learned from it.
+    Partial,
+    Domain,
+    /// The whole exporter, every domain included: NetFlow v9's System scope,
+    /// which some exporters send under a source id of its own.
+    System,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,12 +56,10 @@ impl ExporterOptions {
         }
     }
 
-    /// `partial` is a record scoped to part of the domain, such as an
-    /// interface: only a rate naming a sampler is learned from it.
     pub(super) fn learn<'v>(
         &mut self,
         domain: u32,
-        partial: bool,
+        extent: Extent,
         fields: impl IntoIterator<Item = (ElementId, &'v Value)>,
         now: Instant,
     ) {
@@ -54,19 +67,19 @@ impl ExporterOptions {
         for (id, value) in fields {
             params.observe(id, value);
             if id == ElementId::SYSTEM_INIT_TIME_MILLISECONDS
-                && !partial
+                && extent != Extent::Partial
                 && let Value::DateTimeMilliseconds(millis) = *value
             {
                 self.system_init_ms.insert_at(domain, millis, now);
             }
         }
-        self.learn_sampling_rate(domain, partial, &params, now);
+        self.learn_sampling_rate(domain, extent, &params, now);
     }
 
     fn learn_sampling_rate(
         &mut self,
         domain: u32,
-        partial: bool,
+        extent: Extent,
         params: &SamplingParams,
         now: Instant,
     ) {
@@ -74,8 +87,11 @@ impl ExporterOptions {
             return;
         };
         let rates = &mut self.sampling_rates;
+        if extent == Extent::System {
+            rates.insert_at(Scope::System, Rate::OneIn(rate), now);
+        }
         let Some(sampler) = params.sampler() else {
-            if !partial {
+            if extent != Extent::Partial {
                 rates.insert_at(Scope::Domain(domain), Rate::OneIn(rate), now);
             }
             return;
@@ -110,6 +126,7 @@ impl ExporterOptions {
             })
             .or_else(|| get(Scope::Domain(domain)))
             .or_else(|| get(Scope::AnySampler(domain)))
+            .or_else(|| get(Scope::System))
     }
 
     pub(super) fn system_init_ms(&self, domain: u32, now: Instant) -> Option<u64> {

@@ -1,0 +1,171 @@
+{
+  "reference": "RFC 3954 sections 7 and 9",
+  "description": "Template IDs are unique per exporter and per observation domain (source ID). Template 256 means one thing in source ID 1 of exporter 192.0.2.1, another in its source ID 2, and a third from exporter 192.0.2.2; data of each is read by its own definition. Source ID 3 never sent a template 256, so its data stays undecoded.",
+  "datagrams": 7,
+  "expected": [
+    {
+      "protocol": "netflow_v9",
+      "packet": {
+        "version": 9,
+        "count": 1,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "sequence_number": 0,
+        "source_id": 1,
+        "flow_sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [
+                  {"information_element_id": 8, "field_length": 4},
+                  {"information_element_id": 12, "field_length": 4},
+                  {"information_element_id": 2, "field_length": 4},
+                  {"information_element_id": 1, "field_length": 4}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "netflow_v9",
+      "packet": {
+        "version": 9,
+        "count": 1,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "sequence_number": 0,
+        "source_id": 2,
+        "flow_sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [
+                  {"information_element_id": 12, "field_length": 4},
+                  {"information_element_id": 8, "field_length": 4},
+                  {"information_element_id": 1, "field_length": 4},
+                  {"information_element_id": 2, "field_length": 4}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "netflow_v9",
+      "packet": {
+        "version": 9,
+        "count": 1,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "sequence_number": 0,
+        "source_id": 1,
+        "flow_sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [
+                  {"information_element_id": 4, "field_length": 1},
+                  {"information_element_id": 7, "field_length": 2},
+                  {"information_element_id": 11, "field_length": 2},
+                  {"information_element_id": 5, "field_length": 1},
+                  {"information_element_id": 10, "field_length": 2}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "netflow_v9",
+      "packet": {
+        "version": 9,
+        "count": 1,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "sequence_number": 1,
+        "source_id": 1,
+        "flow_sets": [
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"sourceIPv4Address": "192.0.2.10", "destinationIPv4Address": "198.51.100.10", "packetDeltaCount": 1, "octetDeltaCount": 2}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "netflow_v9",
+      "packet": {
+        "version": 9,
+        "count": 1,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "sequence_number": 1,
+        "source_id": 2,
+        "flow_sets": [
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"destinationIPv4Address": "198.51.100.20", "sourceIPv4Address": "192.0.2.20", "octetDeltaCount": 3, "packetDeltaCount": 4}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "netflow_v9",
+      "packet": {
+        "version": 9,
+        "count": 2,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "sequence_number": 1,
+        "source_id": 1,
+        "flow_sets": [
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"protocolIdentifier": 6, "sourceTransportPort": 1024, "destinationTransportPort": 443, "ipClassOfService": 0, "ingressInterface": 5},
+              {"protocolIdentifier": 17, "sourceTransportPort": 53, "destinationTransportPort": 5353, "ipClassOfService": 184, "ingressInterface": 6}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "netflow_v9",
+      "packet": {
+        "version": 9,
+        "count": 1,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "sequence_number": 0,
+        "source_id": 3,
+        "flow_sets": [
+          {"type": "undecoded", "set_id": 256, "body": "000102030405060708090a0b0c0d0e0f"}
+        ]
+      }
+    }
+  ],
+  "flows": [
+    {"flow_type": "NETFLOW_V9", "time_received_ns": 1700000003000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "observation_domain_id": 1, "src_addr": "192.0.2.10", "dst_addr": "198.51.100.10", "packets": 1, "bytes": 2, "etype": 2048},
+    {"flow_type": "NETFLOW_V9", "time_received_ns": 1700000004000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "observation_domain_id": 2, "dst_addr": "198.51.100.20", "src_addr": "192.0.2.20", "bytes": 3, "packets": 4, "etype": 2048},
+    {"flow_type": "NETFLOW_V9", "time_received_ns": 1700000005000000000, "sampler_address": "192.0.2.2", "sequence_num": 1, "observation_domain_id": 1, "proto": 6, "src_port": 1024, "dst_port": 443, "ip_tos": 0, "in_if": 5},
+    {"flow_type": "NETFLOW_V9", "time_received_ns": 1700000005000000000, "sampler_address": "192.0.2.2", "sequence_num": 1, "observation_domain_id": 1, "proto": 17, "src_port": 53, "dst_port": 5353, "ip_tos": 184, "in_if": 6}
+  ],
+  "clean": false
+}

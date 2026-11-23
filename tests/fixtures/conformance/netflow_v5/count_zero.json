@@ -1,0 +1,24 @@
+{
+  "reference": "Cisco NetFlow Export Datagram Format, \"Version 5 Header Format\", \"count\"",
+  "description": "A header announcing no records is a packet without flows. The format documents a count of 1 to 30, so Wireshark calls this one malformed.",
+  "datagrams": 1,
+  "expected": [
+    {
+      "protocol": "netflow_v5",
+      "packet": {
+        "version": 5,
+        "count": 0,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "unix_nsecs": 0,
+        "flow_sequence": 7,
+        "engine_type": 0,
+        "engine_id": 0,
+        "sampling_interval": {"mode": 0, "interval": 0},
+        "flow_records": []
+      }
+    }
+  ],
+  "flows": [],
+  "clean": false
+}

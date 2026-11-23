@@ -1,0 +1,75 @@
+{
+  "reference": "RFC 6313 section 4.5.3",
+  "description": "subTemplateMultiList: a semantic octet, then groups, each a Template ID, a length covering those four octets and the records, and records of that template. A list of two groups of different templates, and a list with no group. The fields before and after each list are read.",
+  "datagrams": 1,
+  "expected": [
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 105,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 300,
+                "fields": [
+                  {"information_element_id": 8, "field_length": 4},
+                  {"information_element_id": 7, "field_length": 2}
+                ]
+              },
+              {
+                "template_id": 301,
+                "fields": [
+                  {"information_element_id": 4, "field_length": 1}
+                ]
+              },
+              {
+                "template_id": 256,
+                "fields": [
+                  {"information_element_id": 10, "field_length": 4},
+                  {"information_element_id": 293, "field_length": 65535},
+                  {"information_element_id": 14, "field_length": 4}
+                ]
+              }
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {
+                "ingressInterface": 1,
+                "subTemplateMultiList": [
+                  {"sourceIPv4Address": "192.0.2.1", "sourceTransportPort": 1001},
+                  {"sourceIPv4Address": "192.0.2.2", "sourceTransportPort": 1002},
+                  {"protocolIdentifier": 6},
+                  {"protocolIdentifier": 17},
+                  {"protocolIdentifier": 1}
+                ],
+                "egressInterface": 11
+              },
+              {
+                "ingressInterface": 2,
+                "subTemplateMultiList": [],
+                "egressInterface": 12
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "flows": [
+    {"flow_type": "IPFIX", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "in_if": 1, "out_if": 11},
+    {"flow_type": "IPFIX", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "in_if": 2, "out_if": 12}
+  ],
+  "tshark": {
+    "cflow.inputint": ["1", "2"],
+    "cflow.outputint": ["11", "12"]
+  }
+}

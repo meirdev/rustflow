@@ -1,0 +1,35 @@
+{
+  "reference": "Cisco NetFlow Export Datagram Format, \"Version 5 Header Format\"; Cisco NetFlow Export Datagram Format, \"Version 5 Flow Record Format\"",
+  "description": "One record with every field at its highest value and one with every field zero: all integers are unsigned and none is truncated. The pad bytes of the first record are non-zero and must not leak into a field.",
+  "datagrams": 1,
+  "expected": [
+    {
+      "protocol": "netflow_v5",
+      "packet": {
+        "version": 5,
+        "count": 2,
+        "sys_uptime": 4294967295,
+        "unix_secs": 4294967295,
+        "unix_nsecs": 999999999,
+        "flow_sequence": 4294967295,
+        "engine_type": 255,
+        "engine_id": 255,
+        "sampling_interval": {"mode": 3, "interval": 16383},
+        "flow_records": [
+          {"srcaddr": "255.255.255.255", "dstaddr": "255.255.255.255", "nexthop": "255.255.255.255", "input": 65535, "output": 65535, "d_pkts": 4294967295, "d_octets": 4294967295, "first": 4294967295, "last": 4294967295, "srcport": 65535, "dstport": 65535, "tcp_flags": 255, "prot": 255, "tos": 255, "src_as": 65535, "dst_as": 65535, "src_mask": 255, "dst_mask": 255},
+          {"srcaddr": "0.0.0.0", "dstaddr": "0.0.0.0", "nexthop": "0.0.0.0", "input": 0, "output": 0, "d_pkts": 0, "d_octets": 0, "first": 0, "last": 0, "srcport": 0, "dstport": 0, "tcp_flags": 0, "prot": 0, "tos": 0, "src_as": 0, "dst_as": 0, "src_mask": 0, "dst_mask": 0}
+        ]
+      }
+    }
+  ],
+  "flows": [
+    {"flow_type": "NETFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 4294967295, "sampling_rate": 16383, "time_flow_start_ns": 4294967295999999999, "time_flow_end_ns": 4294967295999999999, "bytes": 4294967295, "packets": 4294967295, "src_addr": "255.255.255.255", "dst_addr": "255.255.255.255", "etype": 2048, "proto": 255, "src_port": 65535, "dst_port": 65535, "in_if": 65535, "out_if": 65535, "ip_tos": 255, "tcp_flags": 255, "src_as": 65535, "dst_as": 65535, "next_hop": "255.255.255.255", "src_net": 255, "dst_net": 255},
+    {"flow_type": "NETFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 4294967295, "sampling_rate": 16383, "time_flow_start_ns": 4290672328704999999, "time_flow_end_ns": 4290672328704999999, "bytes": 0, "packets": 0, "src_addr": "0.0.0.0", "dst_addr": "0.0.0.0", "etype": 2048, "proto": 0, "src_port": 0, "dst_port": 0, "in_if": 0, "out_if": 0, "ip_tos": 0, "tcp_flags": 0, "src_as": 0, "dst_as": 0, "next_hop": "0.0.0.0", "src_net": 0, "dst_net": 0}
+  ],
+  "tshark": {
+    "cflow.packets": ["4294967295", "0"],
+    "cflow.octets": ["4294967295", "0"],
+    "cflow.srcport": ["65535", "0"],
+    "cflow.srcas": ["65535", "0"]
+  }
+}

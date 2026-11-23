@@ -1,0 +1,91 @@
+{
+  "reference": "sFlow Version 5 section 5, data_format, sample_record, flow_record and counter_record",
+  "description": "Every sample and record names its format, an enterprise and a number, and carries its length, so that a receiver can step over those it does not know. A sample of an enterprise's own format, flow and counter records of an enterprise's and of unknown standard formats, and one of no bytes: each is kept as sent, under its enterprise and format, and what surrounds it is read. The highest enterprise (2^20 - 1) and format (4095) numbers.",
+  "datagrams": 1,
+  "expected": [
+    {
+      "protocol": "sflow_v5",
+      "packet": {
+        "version": 5,
+        "sub_agent_id": 0,
+        "sequence_number": 1,
+        "uptime": 3600000,
+        "samples": [
+          {
+            "type": "unknown",
+            "format": {"enterprise": 4413, "format": 1},
+            "data": "000102030405060708090a0b"
+          },
+          {
+            "type": "flow",
+            "sequence_number": 1,
+            "source_id": {"source_id_type": 0, "source_id_index": 3},
+            "sampling_rate": 1000,
+            "sample_pool": 1000,
+            "drops": 0,
+            "input": {"format": 0, "value": 3},
+            "output": {"format": 0, "value": 4},
+            "records": [
+              {
+                "type": "unknown",
+                "format": {"enterprise": 4413, "format": 7},
+                "data": "0102030405060708"
+              },
+              {"type": "extended_switch", "src_vlan": 1, "src_priority": 0, "dst_vlan": 2, "dst_priority": 0},
+              {
+                "type": "unknown",
+                "format": {"enterprise": 0, "format": 4000},
+                "data": "aabbcc"
+              }
+            ]
+          },
+          {
+            "type": "counters",
+            "sequence_number": 2,
+            "source_id": {"source_id_type": 0, "source_id_index": 3},
+            "records": [
+              {
+                "type": "unknown",
+                "format": {"enterprise": 1048575, "format": 4095},
+                "data": "ffffffffff"
+              },
+              {"type": "vlan_counters", "vlan_id": 1, "octets": 1099511627778, "ucast_pkts": 3, "multicast_pkts": 4, "broadcast_pkts": 5, "discards": 6},
+              {
+                "type": "unknown",
+                "format": {"enterprise": 0, "format": 3000},
+                "data": ""
+              }
+            ]
+          },
+          {
+            "type": "unknown",
+            "format": {"enterprise": 0, "format": 4000},
+            "data": "00000001"
+          },
+          {
+            "type": "flow",
+            "sequence_number": 3,
+            "source_id": {"source_id_type": 0, "source_id_index": 3},
+            "sampling_rate": 1000,
+            "sample_pool": 3000,
+            "drops": 0,
+            "input": {"format": 0, "value": 3},
+            "output": {"format": 0, "value": 4},
+            "records": [
+              {"type": "sampled_header", "protocol": "EthernetIso88023", "frame_length": 50, "stripped": 4, "header": "0200000000020200000000010800450000200000400040114e66c0000232c63364019c40c350000cadd703030303"}
+            ]
+          }
+        ],
+        "agent_address": "192.0.2.1"
+      }
+    }
+  ],
+  "flows": [
+    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 1000, "in_if": 3, "out_if": 4, "packets": 1, "src_vlan": 1, "dst_vlan": 2},
+    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 1000, "in_if": 3, "out_if": 4, "packets": 1, "bytes": 50, "dst_mac": "02:00:00:00:00:02", "src_mac": "02:00:00:00:00:01", "etype": 2048, "src_addr": "192.0.2.50", "dst_addr": "198.51.100.1", "proto": 17, "ip_tos": 0, "ip_ttl": 64, "fragment_id": 0, "fragment_offset": 0, "src_port": 40000, "dst_port": 50000}
+  ],
+  "tshark": {
+    "sflow_245.numsamples": ["5"]
+  },
+  "clean": false
+}

@@ -1,0 +1,74 @@
+{
+  "reference": "RFC 7011 section 7",
+  "description": "Variable-length elements (field length 65535), each value carrying its own length: in one octet when below 255, or in three (255, then two octets) for any length. Three variable-length fields between two fixed ones, with values of 0, 1, 254, 255, 256 and 1100 octets, the three-octet form used for short and for empty values as well, and records of different sizes following one another in a Set.",
+  "datagrams": 2,
+  "expected": [
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 911,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [
+                  {"information_element_id": 10, "field_length": 4},
+                  {"information_element_id": 82, "field_length": 65535},
+                  {"information_element_id": 83, "field_length": 65535},
+                  {"information_element_id": 95, "field_length": 65535},
+                  {"information_element_id": 14, "field_length": 4}
+                ]
+              }
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"ingressInterface": 1, "interfaceName": "", "interfaceDescription": "a", "applicationId": "", "egressInterface": 11},
+              {"ingressInterface": 2, "interfaceName": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "interfaceDescription": "ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "applicationId": "0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d", "egressInterface": 12},
+              {"ingressInterface": 3, "interfaceName": "", "interfaceDescription": "short, in the long form", "applicationId": "0102030405", "egressInterface": 13},
+              {"ingressInterface": 4, "interfaceName": "eth0", "interfaceDescription": "uplink", "applicationId": "0d000050", "egressInterface": 14}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 1150,
+        "export_time": 1700000000,
+        "sequence_number": 4,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"ingressInterface": 5, "interfaceName": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "interfaceDescription": "after a long one", "applicationId": "ff", "egressInterface": 15}
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "flows": [
+    {"flow_type": "IPFIX", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "in_if": 1, "out_if": 11},
+    {"flow_type": "IPFIX", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "in_if": 2, "out_if": 12},
+    {"flow_type": "IPFIX", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "in_if": 3, "out_if": 13},
+    {"flow_type": "IPFIX", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "in_if": 4, "out_if": 14},
+    {"flow_type": "IPFIX", "time_received_ns": 1700000001000000000, "sampler_address": "192.0.2.1", "sequence_num": 4, "observation_domain_id": 0, "in_if": 5, "out_if": 15}
+  ],
+  "tshark": {
+    "cflow.inputint": ["1", "2", "3", "4", "5"],
+    "cflow.outputint": ["11", "12", "13", "14", "15"]
+  }
+}

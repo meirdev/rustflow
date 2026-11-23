@@ -1,0 +1,44 @@
+{
+  "reference": "RFC 7011 section 9.1",
+  "description": "Messages with a nonsensical Set Length: a Set longer than its enclosing message, and Sets whose Length (0 and 3) is shorter than a Set header. Each message also holds a valid Template Set and Data Set before the broken Set; the RFC has the collector discard the message, not just the broken Set, so nothing of them is reported. The well-formed message after them is read.",
+  "datagrams": 4,
+  "expected": [
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 60,
+        "export_time": 1700000000,
+        "sequence_number": 9,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [
+                  {"information_element_id": 8, "field_length": 4},
+                  {"information_element_id": 12, "field_length": 4},
+                  {"information_element_id": 2, "field_length": 4},
+                  {"information_element_id": 1, "field_length": 4}
+                ]
+              }
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"sourceIPv4Address": "192.0.2.9", "destinationIPv4Address": "198.51.100.9", "packetDeltaCount": 9, "octetDeltaCount": 900}
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "flows": [
+    {"flow_type": "IPFIX", "time_received_ns": 1700000003000000000, "sampler_address": "192.0.2.1", "sequence_num": 9, "observation_domain_id": 0, "src_addr": "192.0.2.9", "dst_addr": "198.51.100.9", "packets": 9, "bytes": 900, "etype": 2048}
+  ],
+  "clean": false
+}

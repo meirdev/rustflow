@@ -1,0 +1,206 @@
+{
+  "reference": "RFC 7011 section 8",
+  "description": "Template IDs are unique per Transport Session and Observation Domain. Template 256 means one thing in domain 1 of exporter 192.0.2.1, another in its domain 2, a third from exporter 192.0.2.2 and a fourth from an exporter reached over IPv6; data of each is read by its own definition. Domain 3 never sent a template 256, so its data stays undecoded.",
+  "datagrams": 9,
+  "expected": [
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 40,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 1,
+        "sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [
+                  {"information_element_id": 8, "field_length": 4},
+                  {"information_element_id": 12, "field_length": 4},
+                  {"information_element_id": 2, "field_length": 4},
+                  {"information_element_id": 1, "field_length": 4}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 40,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 2,
+        "sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [
+                  {"information_element_id": 12, "field_length": 4},
+                  {"information_element_id": 8, "field_length": 4},
+                  {"information_element_id": 1, "field_length": 4},
+                  {"information_element_id": 2, "field_length": 4}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 36,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 1,
+        "sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [
+                  {"information_element_id": 4, "field_length": 1},
+                  {"information_element_id": 7, "field_length": 2},
+                  {"information_element_id": 11, "field_length": 2}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 32,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 1,
+        "sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [
+                  {"information_element_id": 27, "field_length": 16},
+                  {"information_element_id": 1, "field_length": 4}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 36,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 1,
+        "sets": [
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"sourceIPv4Address": "192.0.2.10", "destinationIPv4Address": "198.51.100.10", "packetDeltaCount": 1, "octetDeltaCount": 2}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 36,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 2,
+        "sets": [
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"destinationIPv4Address": "198.51.100.20", "sourceIPv4Address": "192.0.2.20", "octetDeltaCount": 3, "packetDeltaCount": 4}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 32,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 1,
+        "sets": [
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"protocolIdentifier": 6, "sourceTransportPort": 1024, "destinationTransportPort": 443},
+              {"protocolIdentifier": 17, "sourceTransportPort": 53, "destinationTransportPort": 5353}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 40,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 1,
+        "sets": [
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"sourceIPv6Address": "2001:db8:1::1", "octetDeltaCount": 600}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 36,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 3,
+        "sets": [
+          {"type": "undecoded", "set_id": 256, "body": "000102030405060708090a0b0c0d0e0f"}
+        ]
+      }
+    }
+  ],
+  "flows": [
+    {"flow_type": "IPFIX", "time_received_ns": 1700000004000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 1, "src_addr": "192.0.2.10", "dst_addr": "198.51.100.10", "packets": 1, "bytes": 2, "etype": 2048},
+    {"flow_type": "IPFIX", "time_received_ns": 1700000005000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 2, "dst_addr": "198.51.100.20", "src_addr": "192.0.2.20", "bytes": 3, "packets": 4, "etype": 2048},
+    {"flow_type": "IPFIX", "time_received_ns": 1700000006000000000, "sampler_address": "192.0.2.2", "sequence_num": 0, "observation_domain_id": 1, "proto": 6, "src_port": 1024, "dst_port": 443},
+    {"flow_type": "IPFIX", "time_received_ns": 1700000006000000000, "sampler_address": "192.0.2.2", "sequence_num": 0, "observation_domain_id": 1, "proto": 17, "src_port": 53, "dst_port": 5353},
+    {"flow_type": "IPFIX", "time_received_ns": 1700000007000000000, "sampler_address": "2001:db8::2", "sequence_num": 0, "observation_domain_id": 1, "src_addr": "2001:db8:1::1", "bytes": 600, "etype": 34525}
+  ],
+  "clean": false
+}

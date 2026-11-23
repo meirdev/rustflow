@@ -1,0 +1,119 @@
+{
+  "reference": "RFC 7011 section 3.1; RFC 3954 section 5.1",
+  "description": "One exporter sends NetFlow v5, NetFlow v9 and IPFIX to one port; the Version field tells them apart. Template 256 of observation domain 0 is defined once in NetFlow v9 and once, differently, in IPFIX: the two protocols keep separate templates, and data of each is read by its own.",
+  "datagrams": 5,
+  "expected": [
+    {
+      "protocol": "netflow_v9",
+      "packet": {
+        "version": 9,
+        "count": 1,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "sequence_number": 0,
+        "source_id": 0,
+        "flow_sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [
+                  {"information_element_id": 12, "field_length": 4},
+                  {"information_element_id": 8, "field_length": 4}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 40,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [
+                  {"information_element_id": 8, "field_length": 4},
+                  {"information_element_id": 12, "field_length": 4},
+                  {"information_element_id": 2, "field_length": 4},
+                  {"information_element_id": 1, "field_length": 4}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "netflow_v5",
+      "packet": {
+        "version": 5,
+        "count": 1,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "unix_nsecs": 0,
+        "flow_sequence": 1,
+        "engine_type": 0,
+        "engine_id": 0,
+        "sampling_interval": {"mode": 0, "interval": 0},
+        "flow_records": [
+          {"srcaddr": "192.0.2.5", "dstaddr": "198.51.100.5", "nexthop": "0.0.0.0", "input": 0, "output": 0, "d_pkts": 5, "d_octets": 500, "first": 0, "last": 0, "srcport": 0, "dstport": 0, "tcp_flags": 0, "prot": 6, "tos": 0, "src_as": 0, "dst_as": 0, "src_mask": 0, "dst_mask": 0}
+        ]
+      }
+    },
+    {
+      "protocol": "netflow_v9",
+      "packet": {
+        "version": 9,
+        "count": 1,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "sequence_number": 1,
+        "source_id": 0,
+        "flow_sets": [
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"destinationIPv4Address": "198.51.100.9", "sourceIPv4Address": "192.0.2.9"}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 36,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"sourceIPv4Address": "192.0.2.10", "destinationIPv4Address": "198.51.100.10", "packetDeltaCount": 10, "octetDeltaCount": 1000}
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "flows": [
+    {"flow_type": "NETFLOW_V5", "time_received_ns": 1700000002000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "time_flow_start_ns": 1699996400000000000, "time_flow_end_ns": 1699996400000000000, "bytes": 500, "packets": 5, "src_addr": "192.0.2.5", "dst_addr": "198.51.100.5", "etype": 2048, "proto": 6, "src_port": 0, "dst_port": 0, "in_if": 0, "out_if": 0, "ip_tos": 0, "tcp_flags": 0, "src_as": 0, "dst_as": 0, "next_hop": "0.0.0.0", "src_net": 0, "dst_net": 0},
+    {"flow_type": "NETFLOW_V9", "time_received_ns": 1700000003000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "observation_domain_id": 0, "dst_addr": "198.51.100.9", "src_addr": "192.0.2.9", "etype": 2048},
+    {"flow_type": "IPFIX", "time_received_ns": 1700000004000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "src_addr": "192.0.2.10", "dst_addr": "198.51.100.10", "packets": 10, "bytes": 1000, "etype": 2048}
+  ]
+}

@@ -1,0 +1,133 @@
+{
+  "reference": "RFC 7011 sections 8.1 and 8.4",
+  "description": "Over UDP an exporter reuses a Template ID by exporting a new template for it. Template 256 is sent with a new definition, and later as an options template: data that follows is read by the latest definition.",
+  "datagrams": 4,
+  "expected": [
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 60,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [
+                  {"information_element_id": 8, "field_length": 4},
+                  {"information_element_id": 12, "field_length": 4},
+                  {"information_element_id": 2, "field_length": 4},
+                  {"information_element_id": 1, "field_length": 4}
+                ]
+              }
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"sourceIPv4Address": "192.0.2.1", "destinationIPv4Address": "198.51.100.1", "packetDeltaCount": 1, "octetDeltaCount": 100}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 68,
+        "export_time": 1700000000,
+        "sequence_number": 1,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [
+                  {"information_element_id": 8, "field_length": 4},
+                  {"information_element_id": 12, "field_length": 4},
+                  {"information_element_id": 2, "field_length": 8},
+                  {"information_element_id": 1, "field_length": 8}
+                ]
+              }
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"sourceIPv4Address": "192.0.2.2", "destinationIPv4Address": "198.51.100.2", "packetDeltaCount": 4294967298, "octetDeltaCount": 1099511627976}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 44,
+        "export_time": 1700000000,
+        "sequence_number": 2,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"sourceIPv4Address": "192.0.2.3", "destinationIPv4Address": "198.51.100.3", "packetDeltaCount": 3, "octetDeltaCount": 300}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 46,
+        "export_time": 1700000000,
+        "sequence_number": 3,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "options_templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "scope_fields": [
+                  {"information_element_id": 141, "field_length": 4}
+                ],
+                "option_fields": [
+                  {"information_element_id": 41, "field_length": 4}
+                ]
+              }
+            ]
+          },
+          {
+            "type": "options_data",
+            "template_id": 256,
+            "records": [
+              {"lineCardId": 4, "exportedMessageTotalCount": 40}
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "flows": [
+    {"flow_type": "IPFIX", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "src_addr": "192.0.2.1", "dst_addr": "198.51.100.1", "packets": 1, "bytes": 100, "etype": 2048},
+    {"flow_type": "IPFIX", "time_received_ns": 1700000001000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "observation_domain_id": 0, "src_addr": "192.0.2.2", "dst_addr": "198.51.100.2", "packets": 4294967298, "bytes": 1099511627976, "etype": 2048},
+    {"flow_type": "IPFIX", "time_received_ns": 1700000002000000000, "sampler_address": "192.0.2.1", "sequence_num": 2, "observation_domain_id": 0, "src_addr": "192.0.2.3", "dst_addr": "198.51.100.3", "packets": 3, "bytes": 300, "etype": 2048}
+  ],
+  "tshark": {
+    "cflow.srcaddr": ["192.0.2.1", "192.0.2.2", "192.0.2.3"]
+  }
+}

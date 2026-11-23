@@ -1,0 +1,105 @@
+{
+  "reference": "RFC 5610 sections 3 and 3.9",
+  "description": "Type records: options records scoped by informationElementId and privateEnterpriseNumber that give an element's data type, semantics and name. Eight elements of enterprise 32473 are described, among them the types the IANA registry has no element of (signed8, signed16, signed64, float32); a ninth is not. Data of a template using all nine follows: the described elements are read by their described types, the ninth keeps its octets. The elements are printed under their numbers.",
+  "datagrams": 3,
+  "expected": [
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 48,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "options_templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "scope_fields": [
+                  {"information_element_id": 303, "field_length": 2},
+                  {"information_element_id": 346, "field_length": 4}
+                ],
+                "option_fields": [
+                  {"information_element_id": 339, "field_length": 1},
+                  {"information_element_id": 344, "field_length": 1},
+                  {"information_element_id": 341, "field_length": 65535}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 198,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "options_data",
+            "template_id": 256,
+            "records": [
+              {"informationElementId": 1, "privateEnterpriseNumber": 32473, "informationElementDataType": 3, "informationElementSemantics": 4, "informationElementName": "exampleId"},
+              {"informationElementId": 2, "privateEnterpriseNumber": 32473, "informationElementDataType": 5, "informationElementSemantics": 1, "informationElementName": "exampleSigned8"},
+              {"informationElementId": 3, "privateEnterpriseNumber": 32473, "informationElementDataType": 6, "informationElementSemantics": 1, "informationElementName": "exampleSigned16"},
+              {"informationElementId": 4, "privateEnterpriseNumber": 32473, "informationElementDataType": 8, "informationElementSemantics": 1, "informationElementName": "exampleSigned64"},
+              {"informationElementId": 5, "privateEnterpriseNumber": 32473, "informationElementDataType": 9, "informationElementSemantics": 1, "informationElementName": "exampleFloat32"},
+              {"informationElementId": 6, "privateEnterpriseNumber": 32473, "informationElementDataType": 13, "informationElementSemantics": 0, "informationElementName": "exampleString"},
+              {"informationElementId": 7, "privateEnterpriseNumber": 32473, "informationElementDataType": 15, "informationElementSemantics": 0, "informationElementName": "exampleTime"},
+              {"informationElementId": 8, "privateEnterpriseNumber": 32473, "informationElementDataType": 18, "informationElementSemantics": 0, "informationElementName": "exampleAddress"}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 178,
+        "export_time": 1700000000,
+        "sequence_number": 8,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 257,
+                "fields": [
+                  {"information_element_id": 1, "field_length": 4, "enterprise_number": 32473},
+                  {"information_element_id": 2, "field_length": 1, "enterprise_number": 32473},
+                  {"information_element_id": 3, "field_length": 2, "enterprise_number": 32473},
+                  {"information_element_id": 4, "field_length": 8, "enterprise_number": 32473},
+                  {"information_element_id": 5, "field_length": 4, "enterprise_number": 32473},
+                  {"information_element_id": 6, "field_length": 65535, "enterprise_number": 32473},
+                  {"information_element_id": 7, "field_length": 8, "enterprise_number": 32473},
+                  {"information_element_id": 8, "field_length": 4, "enterprise_number": 32473},
+                  {"information_element_id": 9, "field_length": 4, "enterprise_number": 32473}
+                ]
+              }
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 257,
+            "records": [
+              {"32473/1": 7, "32473/2": -128, "32473/3": -2, "32473/4": -9223372036854775808, "32473/5": 1.5, "32473/6": "first", "32473/7": "2012-11-05T18:31:01.135Z", "32473/8": "192.0.2.1", "32473/9": "00000001"},
+              {"32473/1": 4294967295, "32473/2": 127, "32473/3": 32767, "32473/4": 9223372036854775807, "32473/5": -0.5, "32473/6": "", "32473/7": "1970-01-01T00:00:00.000Z", "32473/8": "198.51.100.1", "32473/9": "ffffffff"}
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "flows": [
+    {"flow_type": "IPFIX", "time_received_ns": 1700000002000000000, "sampler_address": "192.0.2.1", "sequence_num": 8, "observation_domain_id": 0},
+    {"flow_type": "IPFIX", "time_received_ns": 1700000002000000000, "sampler_address": "192.0.2.1", "sequence_num": 8, "observation_domain_id": 0}
+  ]
+}
