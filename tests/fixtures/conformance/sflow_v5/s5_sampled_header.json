@@ -7,7 +7,6 @@
       "protocol": "sflow_v5",
       "packet": {
         "version": 5,
-        "agent_address": "192.0.2.1",
         "sub_agent_id": 0,
         "sequence_number": 1,
         "uptime": 3600000,
@@ -113,9 +112,19 @@
               {"type": "sampled_header", "protocol": "EthernetIso88023", "frame_length": 60, "stripped": 4, "header": ""}
             ]
           }
-        ]
+        ],
+        "agent_address": "192.0.2.1"
       }
     }
+  ],
+  "flows": [
+    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 1000, "in_if": 3, "out_if": 4, "packets": 1, "bytes": 1518, "dst_mac": "02:00:00:00:00:02", "src_mac": "02:00:00:00:00:01", "etype": 2048, "src_addr": "192.0.2.50", "dst_addr": "198.51.100.1", "proto": 17, "ip_tos": 0, "ip_ttl": 64, "fragment_id": 0, "fragment_offset": 0, "src_port": 40000, "dst_port": 50000, "src_vlan": 1, "dst_vlan": 2},
+    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 1000, "in_if": 3, "out_if": 4, "packets": 1, "bytes": 64, "dst_mac": "02:00:00:00:00:02", "src_mac": "02:00:00:00:00:01", "etype": 2048, "src_addr": "192.0.2.50", "dst_addr": "198.51.100.1", "proto": 17, "ip_tos": 0, "ip_ttl": 64, "fragment_id": 0, "fragment_offset": 0, "src_port": 40000, "dst_port": 50000, "src_vlan": 3, "dst_vlan": 4},
+    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 1000, "in_if": 3, "out_if": 4, "packets": 1, "bytes": 9018, "dst_mac": "02:00:00:00:00:02", "src_mac": "02:00:00:00:00:01", "etype": 2048, "src_addr": "192.0.2.50", "dst_addr": "198.51.100.1", "proto": 17, "ip_tos": 0, "ip_ttl": 64, "fragment_id": 0, "fragment_offset": 0, "src_port": 40000, "dst_port": 50000, "src_vlan": 5, "dst_vlan": 6},
+    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 1000, "in_if": 3, "out_if": 4, "packets": 1, "bytes": 4294967295, "dst_mac": "02:00:00:00:00:02", "src_mac": "02:00:00:00:00:01", "etype": 2048, "src_addr": "192.0.2.50", "dst_addr": "198.51.100.1", "proto": 17, "ip_tos": 0, "ip_ttl": 64, "fragment_id": 0, "fragment_offset": 0, "src_port": 40000, "dst_port": 50000, "src_vlan": 7, "dst_vlan": 8},
+    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 1000, "in_if": 3, "out_if": 4, "packets": 1, "bytes": 30, "etype": 2048, "src_addr": "192.0.2.50", "dst_addr": "198.51.100.1", "proto": 17, "ip_tos": 0, "ip_ttl": 64, "fragment_id": 0, "fragment_offset": 0, "src_port": 40000, "dst_port": 50000},
+    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 1000, "in_if": 3, "out_if": 4, "packets": 1, "bytes": 100},
+    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 1000, "in_if": 3, "out_if": 4, "packets": 1, "bytes": 60}
   ],
   "tshark": {
     "sflow_245.header_protocol": ["1", "1", "1", "1", "11", "99", "1"],

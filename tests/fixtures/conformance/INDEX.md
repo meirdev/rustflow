@@ -86,3 +86,9 @@ Written by `tests/conformance/generate.py`; do not edit.
 | `s5_several_samples_and_agents` | sFlow Version 5 section 5, sample_datagram_v5 | Datagrams of flow and counters samples together, compact and expanded, from two agents and two sub-agents of one, one agent reached over IPv6: each datagram is read on its own, its samples in order. |
 | `drops_discarded_packet` | sFlow Dropped Packet Notification Structures section 2, discarded_packet (format 5), extended_egress_queue (1036), extended_acl (1037) and extended_function (1038) | Dropped-packet notifications: a sample with an expanded source ID, drops, input and output ifIndex, a reason and the records describing the packet. Reasons from the ICMP unreachable codes (0), from the sFlow codes (257 TTL exceeded, 258 ACL), and one the specification does not assign (9999), which is reported by number. The records added for drops: egress queue, ACL and function. |
 | `truncated_and_other_versions` | sFlow Version 5 section 5 (robustness) | Datagrams a collector cannot read are discarded whole: cut inside the header, cut inside the second sample, announcing more samples than it holds, of another version (2, 4, 6), and with an agent address of a type the specification does not define (3). The whole datagram after them is read. |
+
+## Vendors and models
+
+| Case | Covers | What it checks |
+| --- | --- | --- |
+| `system_sampler_in_another_source_id` | RFC 3954 sections 6.1 and 8 | The data comes under source IDs 0x01000001 and 0x01000002, with no sampler field; the sampling rate only in a System-scoped options record under source ID 3, every few seconds, naming sampler 2 in a 4-byte samplerId (1 byte in the registry) and its interval in 2 bytes, with a NUL-padded samplerName and no FlowSet padding; each source ID numbers its packets on its own. A System scope covers the whole exporter, so the rate applies to every source ID that states none of its own, from the options record on. |

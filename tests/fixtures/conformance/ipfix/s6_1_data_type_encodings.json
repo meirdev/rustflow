@@ -18,22 +18,22 @@
               {
                 "template_id": 256,
                 "fields": [
-                  {"information_element_id": 4, "field_length": 1, "enterprise_number": null},
-                  {"information_element_id": 7, "field_length": 2, "enterprise_number": null},
-                  {"information_element_id": 10, "field_length": 4, "enterprise_number": null},
-                  {"information_element_id": 1, "field_length": 8, "enterprise_number": null},
-                  {"information_element_id": 434, "field_length": 4, "enterprise_number": null},
-                  {"information_element_id": 56, "field_length": 6, "enterprise_number": null},
-                  {"information_element_id": 8, "field_length": 4, "enterprise_number": null},
-                  {"information_element_id": 27, "field_length": 16, "enterprise_number": null},
-                  {"information_element_id": 311, "field_length": 8, "enterprise_number": null},
-                  {"information_element_id": 276, "field_length": 1, "enterprise_number": null},
-                  {"information_element_id": 82, "field_length": 4, "enterprise_number": null},
-                  {"information_element_id": 90, "field_length": 8, "enterprise_number": null},
-                  {"information_element_id": 150, "field_length": 4, "enterprise_number": null},
-                  {"information_element_id": 152, "field_length": 8, "enterprise_number": null},
-                  {"information_element_id": 154, "field_length": 8, "enterprise_number": null},
-                  {"information_element_id": 156, "field_length": 8, "enterprise_number": null}
+                  {"information_element_id": 4, "field_length": 1},
+                  {"information_element_id": 7, "field_length": 2},
+                  {"information_element_id": 10, "field_length": 4},
+                  {"information_element_id": 1, "field_length": 8},
+                  {"information_element_id": 434, "field_length": 4},
+                  {"information_element_id": 56, "field_length": 6},
+                  {"information_element_id": 8, "field_length": 4},
+                  {"information_element_id": 27, "field_length": 16},
+                  {"information_element_id": 311, "field_length": 8},
+                  {"information_element_id": 276, "field_length": 1},
+                  {"information_element_id": 82, "field_length": 4},
+                  {"information_element_id": 90, "field_length": 8},
+                  {"information_element_id": 150, "field_length": 4},
+                  {"information_element_id": 152, "field_length": 8},
+                  {"information_element_id": 154, "field_length": 8},
+                  {"information_element_id": 156, "field_length": 8}
                 ]
               }
             ]
@@ -50,6 +50,11 @@
         ]
       }
     }
+  ],
+  "flows": [
+    {"flow_type": "IPFIX", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "proto": 6, "src_port": 443, "in_if": 70000, "bytes": 1099511627781, "src_mac": "02:00:00:00:00:aa", "src_addr": "2001:db8::1", "time_flow_start_ns": 1700000000250000000, "etype": 34525},
+    {"flow_type": "IPFIX", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "proto": 255, "src_port": 65535, "in_if": 4294967295, "bytes": 18446744073709551615, "src_mac": "ff:ff:ff:ff:ff:ff", "src_addr": "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", "time_flow_start_ns": 1700000000000000000, "etype": 34525},
+    {"flow_type": "IPFIX", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "proto": 0, "src_port": 0, "in_if": 0, "bytes": 0, "src_mac": "00:00:00:00:00:00", "src_addr": "::", "time_flow_start_ns": 951782400125000000, "etype": 34525}
   ],
   "tshark": {
     "cflow.protocol": ["6", "255", "0"],

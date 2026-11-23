@@ -1,7 +1,8 @@
 # Protocol conformance captures
 
 Captures that check the NetFlow v5, NetFlow v9, IPFIX and sFlow v5 parsers
-against the specifications, one capture per section or structure.
+against the specifications, one capture per section or structure, and the
+conversion of what they read to common flows.
 
 ```
 conformance/                  the generator and the checker
@@ -10,6 +11,8 @@ fixtures/conformance/
   netflow_v5/<case>.pcap      the capture
   netflow_v5/<case>.json      what a collector must make of it
   netflow_v9/  ipfix/  sflow_v5/
+  vendors/<case>.pcap         how an exporter seen in the field departs from
+  vendors/<case>.json         the common reading, rebuilt (see below)
 ```
 
 `fixtures/conformance/INDEX.md` is the list of cases.
@@ -50,6 +53,18 @@ updating the helpers that build it (`packet`, `message`, `datagram`,
 `data` and the like in each module) and regenerating; the values and the
 captures stay as they are.
 
+## The flows
+
+Every case also lists `flows`: the common flows `rustflow collect --format
+common` must make of the capture, compared whole. They are not written by
+hand but derived from the case's expected packets by `flows.py`, a model of
+the conversion documented in [docs/output.md](../../docs/output.md):
+which element or record fills which field, the era of a timestamp, which
+sampling rate a record gets, and how a sampled packet header is read. The
+model is written apart from rustflow and imports nothing from it, so a
+disagreement is a bug in one of the two. A change to the conversion means
+changing the model to match, which shows in the regenerated flows.
+
 A case that rustflow is known not to satisfy carries a `deviation` note
 saying why; it is reported as an expected failure, and as an error once it
 starts passing.
@@ -62,10 +77,19 @@ python3 tests/conformance/check.py --captures   # Wireshark only
 cd tests && uv run pytest test_conformance.py   # the same, under pytest
 ```
 
+## Vendors and models
+
+`vendors.py` holds cases for exporters seen in the field that read the
+specification their own way, such as one that states its sampling rate
+under another source ID than its data. A case rebuilds the exporter's
+packets byte for byte where it matters, with documentation addresses and
+names, never a capture from a real network. It is checked like any other
+case; what such an exporter gets wrong mostly shows in its flows.
+
 ## Changing or adding a case
 
 Edit the protocol's module (`netflow_v5.py`, `netflow_v9.py`, `ipfix.py`,
-`sflow_v5.py`), then regenerate and check the captures:
+`sflow_v5.py`, or `vendors.py`), then regenerate and check the captures:
 
 ```sh
 python3 tests/conformance/generate.py

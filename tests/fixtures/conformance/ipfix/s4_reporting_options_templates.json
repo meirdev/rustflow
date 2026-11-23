@@ -18,48 +18,48 @@
               {
                 "template_id": 256,
                 "scope_fields": [
-                  {"information_element_id": 149, "field_length": 4, "enterprise_number": null},
-                  {"information_element_id": 143, "field_length": 4, "enterprise_number": null}
+                  {"information_element_id": 149, "field_length": 4},
+                  {"information_element_id": 143, "field_length": 4}
                 ],
                 "option_fields": [
-                  {"information_element_id": 41, "field_length": 8, "enterprise_number": null},
-                  {"information_element_id": 42, "field_length": 8, "enterprise_number": null},
-                  {"information_element_id": 40, "field_length": 8, "enterprise_number": null}
+                  {"information_element_id": 41, "field_length": 8},
+                  {"information_element_id": 42, "field_length": 8},
+                  {"information_element_id": 40, "field_length": 8}
                 ]
               },
               {
                 "template_id": 257,
                 "scope_fields": [
-                  {"information_element_id": 149, "field_length": 4, "enterprise_number": null},
-                  {"information_element_id": 143, "field_length": 4, "enterprise_number": null}
+                  {"information_element_id": 149, "field_length": 4},
+                  {"information_element_id": 143, "field_length": 4}
                 ],
                 "option_fields": [
-                  {"information_element_id": 164, "field_length": 8, "enterprise_number": null},
-                  {"information_element_id": 165, "field_length": 8, "enterprise_number": null},
-                  {"information_element_id": 322, "field_length": 4, "enterprise_number": null},
-                  {"information_element_id": 322, "field_length": 4, "enterprise_number": null}
+                  {"information_element_id": 164, "field_length": 8},
+                  {"information_element_id": 165, "field_length": 8},
+                  {"information_element_id": 322, "field_length": 4},
+                  {"information_element_id": 322, "field_length": 4}
                 ]
               },
               {
                 "template_id": 258,
                 "scope_fields": [
-                  {"information_element_id": 130, "field_length": 4, "enterprise_number": null}
+                  {"information_element_id": 130, "field_length": 4}
                 ],
                 "option_fields": [
-                  {"information_element_id": 166, "field_length": 8, "enterprise_number": null},
-                  {"information_element_id": 167, "field_length": 8, "enterprise_number": null},
-                  {"information_element_id": 168, "field_length": 8, "enterprise_number": null},
-                  {"information_element_id": 323, "field_length": 8, "enterprise_number": null},
-                  {"information_element_id": 323, "field_length": 8, "enterprise_number": null}
+                  {"information_element_id": 166, "field_length": 8},
+                  {"information_element_id": 167, "field_length": 8},
+                  {"information_element_id": 168, "field_length": 8},
+                  {"information_element_id": 323, "field_length": 8},
+                  {"information_element_id": 323, "field_length": 8}
                 ]
               },
               {
                 "template_id": 259,
                 "scope_fields": [
-                  {"information_element_id": 145, "field_length": 2, "enterprise_number": null}
+                  {"information_element_id": 145, "field_length": 2}
                 ],
                 "option_fields": [
-                  {"information_element_id": 173, "field_length": 8, "enterprise_number": null}
+                  {"information_element_id": 173, "field_length": 8}
                 ]
               }
             ]
@@ -120,6 +120,7 @@
       }
     }
   ],
+  "flows": [],
   "tshark": {
     "cflow.template_id": ["256", "257", "258", "259", "256"]
   }

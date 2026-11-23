@@ -11,7 +11,7 @@ Structures" (sflow.org, October 2020).
 import ipaddress
 import re
 
-from wire import Case, Datagram, Pair, frame, ip, mac, u32, u64
+from wire import Case, Datagram, Pair, case, frame, ip, mac, u32, u64
 
 SPEC = "sFlow Version 5 section 5"
 DROPS = "sFlow Dropped Packet Notification Structures section 2"
@@ -56,6 +56,7 @@ def tagged(variant: str, fields: dict) -> dict:
     """A sample or record as rustflow prints it: its kind, in snake case,
     as `type`, beside its fields."""
     kind = re.sub(r"(?<!^)(?=[A-Z])", "_", variant).lower()
+    assert "type" not in fields, variant
     return {"type": kind, **fields}
 
 
@@ -63,7 +64,8 @@ def structure(variant: str, number: int, fields: list[tuple[str, bytes, object]]
     """A standard record: its format, its length, its fields; printed as
     the variant holding the fields by name."""
     body = b"".join(wire for _, wire, _ in fields)
-    text = tagged(variant, {key: value for key, _, value in fields})
+    # A field without a value, such as an unknown address, is left out.
+    text = tagged(variant, {key: value for key, _, value in fields if value is not None})
     return Pair(data_format(0, number) + opaque(body), text)
 
 
@@ -135,7 +137,7 @@ def sampled_ethernet(length: int, src: str, dst: str, ether_type: int) -> Pair:
     return structure(
         "SampledEthernet",
         2,
-        [n32("length", length), mac_field("src_mac", src), mac_field("dst_mac", dst), n32("type", ether_type)],
+        [n32("length", length), mac_field("src_mac", src), mac_field("dst_mac", dst), n32("ether_type", ether_type)],
     )
 
 
@@ -376,13 +378,14 @@ def datagram(
         "protocol": "sflow_v5",
         "packet": {
             "version": 5,
-            "agent_address": agent_address.text,
             "sub_agent_id": sub_agent_id,
             "sequence_number": sequence_number,
             "uptime": uptime,
             "samples": [s.text for s in samples],
         },
     }
+    if agent_address.text is not None:
+        text["packet"]["agent_address"] = agent_address.text
     return Datagram(wire, src=src, dst_port=6343), text
 
 
@@ -390,15 +393,6 @@ def raw(payload: bytes) -> tuple[Datagram, None]:
     return Datagram(payload, dst_port=6343), None
 
 
-def case(name, reference, description, datagrams, **kwargs) -> Case:
-    return Case(
-        name,
-        reference,
-        description,
-        [d for d, _ in datagrams],
-        [text for _, text in datagrams if text is not None],
-        **kwargs,
-    )
 
 
 def sampled_frame(payload: bytes, src: str = "192.0.2.50") -> bytes:

@@ -1,0 +1,141 @@
+{
+  "reference": "RFC 3954 sections 6.1 and 8",
+  "description": "The data comes under source IDs 0x01000001 and 0x01000002, with no sampler field; the sampling rate only in a System-scoped options record under source ID 3, every few seconds, naming sampler 2 in a 4-byte samplerId (1 byte in the registry) and its interval in 2 bytes, with a NUL-padded samplerName and no FlowSet padding; each source ID numbers its packets on its own. A System scope covers the whole exporter, so the rate applies to every source ID that states none of its own, from the options record on.",
+  "datagrams": 4,
+  "expected": [
+    {
+      "protocol": "netflow_v9",
+      "packet": {
+        "version": 9,
+        "count": 3,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "sequence_number": 5146,
+        "source_id": 16777217,
+        "flow_sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [
+                  {"information_element_id": 8, "field_length": 4},
+                  {"information_element_id": 12, "field_length": 4},
+                  {"information_element_id": 1, "field_length": 8},
+                  {"information_element_id": 2, "field_length": 8},
+                  {"information_element_id": 4, "field_length": 1}
+                ]
+              }
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"sourceIPv4Address": "192.0.2.10", "destinationIPv4Address": "198.51.100.10", "octetDeltaCount": 1500, "packetDeltaCount": 1, "protocolIdentifier": 6},
+              {"sourceIPv4Address": "192.0.2.11", "destinationIPv4Address": "198.51.100.10", "octetDeltaCount": 1500, "packetDeltaCount": 1, "protocolIdentifier": 6}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "netflow_v9",
+      "packet": {
+        "version": 9,
+        "count": 2,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "sequence_number": 40402,
+        "source_id": 3,
+        "flow_sets": [
+          {
+            "type": "options_templates",
+            "templates": [
+              {
+                "template_id": 257,
+                "scope_fields": [
+                  {"field_type": "System", "length": 4}
+                ],
+                "option_fields": [
+                  {"information_element_id": 48, "field_length": 4},
+                  {"information_element_id": 84, "field_length": 40},
+                  {"information_element_id": 49, "field_length": 1},
+                  {"information_element_id": 50, "field_length": 2}
+                ]
+              }
+            ]
+          },
+          {
+            "type": "options_data",
+            "template_id": 257,
+            "records": [
+              {"system": 3221225985, "samplerId": 2, "samplerName": "NETFLOW_SAMPLER\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000", "samplerMode": 2, "samplerRandomInterval": 100}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "netflow_v9",
+      "packet": {
+        "version": 9,
+        "count": 2,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "sequence_number": 7299,
+        "source_id": 16777218,
+        "flow_sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [
+                  {"information_element_id": 8, "field_length": 4},
+                  {"information_element_id": 12, "field_length": 4},
+                  {"information_element_id": 1, "field_length": 8},
+                  {"information_element_id": 2, "field_length": 8},
+                  {"information_element_id": 4, "field_length": 1}
+                ]
+              }
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"sourceIPv4Address": "192.0.2.12", "destinationIPv4Address": "198.51.100.10", "octetDeltaCount": 1500, "packetDeltaCount": 1, "protocolIdentifier": 6}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "netflow_v9",
+      "packet": {
+        "version": 9,
+        "count": 1,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "sequence_number": 5147,
+        "source_id": 16777217,
+        "flow_sets": [
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {"sourceIPv4Address": "192.0.2.13", "destinationIPv4Address": "198.51.100.10", "octetDeltaCount": 1500, "packetDeltaCount": 1, "protocolIdentifier": 6}
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "flows": [
+    {"flow_type": "NETFLOW_V9", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 5146, "observation_domain_id": 16777217, "src_addr": "192.0.2.10", "dst_addr": "198.51.100.10", "bytes": 1500, "packets": 1, "proto": 6, "etype": 2048},
+    {"flow_type": "NETFLOW_V9", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 5146, "observation_domain_id": 16777217, "src_addr": "192.0.2.11", "dst_addr": "198.51.100.10", "bytes": 1500, "packets": 1, "proto": 6, "etype": 2048},
+    {"flow_type": "NETFLOW_V9", "time_received_ns": 1700000002000000000, "sampler_address": "192.0.2.1", "sequence_num": 7299, "observation_domain_id": 16777218, "src_addr": "192.0.2.12", "dst_addr": "198.51.100.10", "bytes": 1500, "packets": 1, "proto": 6, "sampling_rate": 100, "etype": 2048},
+    {"flow_type": "NETFLOW_V9", "time_received_ns": 1700000003000000000, "sampler_address": "192.0.2.1", "sequence_num": 5147, "observation_domain_id": 16777217, "src_addr": "192.0.2.13", "dst_addr": "198.51.100.10", "bytes": 1500, "packets": 1, "proto": 6, "sampling_rate": 100, "etype": 2048}
+  ]
+}

@@ -18,16 +18,16 @@
               {
                 "template_id": 300,
                 "fields": [
-                  {"information_element_id": 8, "field_length": 4, "enterprise_number": null},
-                  {"information_element_id": 7, "field_length": 2, "enterprise_number": null}
+                  {"information_element_id": 8, "field_length": 4},
+                  {"information_element_id": 7, "field_length": 2}
                 ]
               },
               {
                 "template_id": 256,
                 "fields": [
-                  {"information_element_id": 10, "field_length": 4, "enterprise_number": null},
-                  {"information_element_id": 292, "field_length": 65535, "enterprise_number": null},
-                  {"information_element_id": 14, "field_length": 4, "enterprise_number": null}
+                  {"information_element_id": 10, "field_length": 4},
+                  {"information_element_id": 292, "field_length": 65535},
+                  {"information_element_id": 14, "field_length": 4}
                 ]
               }
             ]
@@ -55,6 +55,11 @@
         ]
       }
     }
+  ],
+  "flows": [
+    {"flow_type": "IPFIX", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "in_if": 1, "out_if": 11},
+    {"flow_type": "IPFIX", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "in_if": 2, "out_if": 12},
+    {"flow_type": "IPFIX", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "in_if": 3, "out_if": 13}
   ],
   "tshark": {
     "cflow.inputint": ["1", "2", "3"],

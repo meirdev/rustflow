@@ -1,7 +1,7 @@
 """NetFlow v9 cases, by section of RFC 3954."""
 
 from values import HEX, IP, MAC, STR, U, record
-from wire import Case, Datagram, Pair, u16, u32
+from wire import Case, Datagram, Pair, case, u16, u32
 
 # Scope field types (section 6.1) and the element each is printed as.
 SYSTEM, INTERFACE, LINE_CARD, CACHE, TEMPLATE = 1, 2, 3, 4, 5
@@ -77,7 +77,7 @@ def fields_wire(fields: list[tuple[int, int]]) -> bytes:
 
 def fields_text(fields: list[tuple[int, int]]) -> list[dict]:
     return [
-        {"information_element_id": t, "field_length": length, "enterprise_number": None}
+        {"information_element_id": t, "field_length": length}
         for t, length in fields
     ]
 
@@ -181,15 +181,6 @@ def packet(
     return Datagram(wire, src=src), text
 
 
-def case(name, reference, description, packets, **kwargs) -> Case:
-    return Case(
-        name,
-        reference,
-        description,
-        [datagram for datagram, _ in packets],
-        [text for _, text in packets if text is not None],
-        **kwargs,
-    )
 
 
 V4 = [(8, 4), (12, 4), (2, 4), (1, 4)]

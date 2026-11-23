@@ -6,7 +6,7 @@ followed by `count` 48-byte flow records (table "Version 5 Flow Record
 Format").
 """
 
-from wire import Case, Datagram, ip, u8, u16, u32
+from wire import Case, Datagram, case, ip, u8, u16, u32
 
 HEADER = 'Cisco NetFlow Export Datagram Format, "Version 5 Header Format"'
 RECORD = 'Cisco NetFlow Export Datagram Format, "Version 5 Flow Record Format"'
@@ -167,14 +167,13 @@ def cases() -> list[Case]:
         [record(**DISTINCT)],
     )
     out.append(
-        Case(
+        case(
             "header_and_record_layout",
             f"{HEADER}; {RECORD}",
             "One datagram with one record. Every header and record field "
             "holds a different value, so each must be read from its own "
             "offset and width.",
-            [datagram],
-            [text],
+            [(datagram, text)],
             tshark={
                 "cflow.version": ["5"],
                 "cflow.count": ["1"],
@@ -221,12 +220,11 @@ def cases() -> list[Case]:
     ]
     datagram, text = packet(header(30, flow_sequence=1000), records)
     out.append(
-        Case(
+        case(
             "count_30_records",
             f'{HEADER}, "count" (1-30)',
             "The largest datagram the format allows: 30 records, 1464 bytes.",
-            [datagram],
-            [text],
+            [(datagram, text)],
             tshark={
                 "cflow.count": ["30"],
                 "cflow.srcaddr": [f"192.0.2.{i}" for i in range(1, 31)],
@@ -237,12 +235,11 @@ def cases() -> list[Case]:
 
     datagram, text = packet(header(0, flow_sequence=7), [])
     out.append(
-        Case(
+        case(
             "count_zero",
             f'{HEADER}, "count"',
             "A header announcing no records is a packet without flows. The format documents a count of 1 to 30, so Wireshark calls this one malformed.",
-            [datagram],
-            [text],
+            [(datagram, text)],
             clean=False,
         )
     )
@@ -283,15 +280,14 @@ def cases() -> list[Case]:
         [highest, record()],
     )
     out.append(
-        Case(
+        case(
             "field_ranges",
             f"{HEADER}; {RECORD}",
             "One record with every field at its highest value and one with "
             "every field zero: all integers are unsigned and none is "
             "truncated. The pad bytes of the first record are non-zero and "
             "must not leak into a field.",
-            [datagram],
-            [text],
+            [(datagram, text)],
             tshark={
                 "cflow.packets": [str(0xFFFF_FFFF), "0"],
                 "cflow.octets": [str(0xFFFF_FFFF), "0"],
@@ -310,14 +306,13 @@ def cases() -> list[Case]:
         datagrams.append(datagram)
         texts.append(text)
     out.append(
-        Case(
+        case(
             "sampling_interval",
             f'{HEADER}, "sampling_interval"',
             "The 16-bit sampling field: the first two bits are the mode, the "
             "remaining 14 the interval. Four datagrams: 0/0, 1/1, 2/1024 and "
             "3/16383.",
-            datagrams,
-            texts,
+            list(zip(datagrams, texts)),
             tshark={
                 "cflow.samplingmode": ["0", "1", "2", "3"],
                 "cflow.samplerate": ["0", "1", "1024", "16383"],
@@ -339,14 +334,13 @@ def cases() -> list[Case]:
         datagrams.append(Datagram(datagram.payload, src=src))
         texts.append(text)
     out.append(
-        Case(
+        case(
             "several_exporters",
             HEADER,
             "Datagrams from three exporters, one of them over IPv6, and two "
             "engines of one exporter: v5 is stateless, so each datagram is "
             "read on its own, in capture order.",
-            datagrams,
-            texts,
+            list(zip(datagrams, texts)),
             tshark={"cflow.engine_id": ["1", "1", "2", "3"]},
         )
     )
@@ -360,19 +354,18 @@ def cases() -> list[Case]:
         [record(srcaddr="192.0.2.2"), record(srcaddr="192.0.2.3")],
     )
     out.append(
-        Case(
+        case(
             "truncated",
             f"{HEADER}; {RECORD} (robustness)",
             "A datagram shorter than its header, one whose second record is "
             "cut short, and one of exactly 23 bytes are discarded; the "
             "whole datagram between them is read.",
             [
-                Datagram(whole.payload[:12]),
-                Datagram(cut.payload[:-1]),
-                whole,
-                Datagram(whole.payload[:23]),
+                (Datagram(whole.payload[:12]), None),
+                (Datagram(cut.payload[:-1]), None),
+                (whole, text),
+                (Datagram(whole.payload[:23]), None),
             ],
-            [text],
             clean=False,
         )
     )
@@ -386,14 +379,13 @@ def cases() -> list[Case]:
         for version in (0, 1, 4, 6, 7, 8, 11, 0x0500)
     ]
     out.append(
-        Case(
+        case(
             "other_versions",
             f'{HEADER}, "version"',
             "Datagrams laid out as v5 but announcing versions 0, 1, 4, 6, 7, "
             "8, 11 and 0x0500 are not v5 and are discarded; the v5 datagram "
             "after them is read.",
-            [*others, good],
-            [text],
+            [*((other, None) for other in others), (good, text)],
             clean=False,
         )
     )

@@ -7,7 +7,6 @@
       "protocol": "sflow_v5",
       "packet": {
         "version": 5,
-        "agent_address": "192.0.2.1",
         "sub_agent_id": 0,
         "sequence_number": 1,
         "uptime": 3600000,
@@ -48,10 +47,12 @@
               {"type": "if_counters", "if_index": 4294967295, "if_type": 4294967295, "if_speed": 18446744073709551615, "if_direction": 4294967295, "if_status": 4294967295, "if_in_octets": 18446744073709551615, "if_in_ucast_pkts": 4294967295, "if_in_multicast_pkts": 4294967295, "if_in_broadcast_pkts": 4294967295, "if_in_discards": 4294967295, "if_in_errors": 4294967295, "if_in_unknown_protos": 4294967295, "if_out_octets": 18446744073709551615, "if_out_ucast_pkts": 4294967295, "if_out_multicast_pkts": 4294967295, "if_out_broadcast_pkts": 4294967295, "if_out_discards": 4294967295, "if_out_errors": 4294967295, "if_promiscuous_mode": 4294967295}
             ]
           }
-        ]
+        ],
+        "agent_address": "192.0.2.1"
       }
     }
   ],
+  "flows": [],
   "tshark": {
     "sflow.counters_sample.sequence_number": ["16909060", "2", "3", "4"],
     "sflow_245.ifindex": ["100", "4294967295"],

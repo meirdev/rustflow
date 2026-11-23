@@ -4,7 +4,7 @@ and RFC 5610 (type information)."""
 import netflow_v5
 import netflow_v9
 from values import F32, F64, HEX, IP, MAC, STR, S, U, record
-from wire import Case, Datagram, Pair, u8, u16, u32
+from wire import Case, Datagram, Pair, case, u16, u32, u8
 
 VARIABLE = 65535
 # The private enterprise number reserved for documentation (RFC 5612).
@@ -96,11 +96,10 @@ def spec_wire(spec: Spec) -> bytes:
 
 
 def spec_text(spec: Spec) -> dict:
-    return {
-        "information_element_id": spec[0],
-        "field_length": spec[1],
-        "enterprise_number": spec[2] if len(spec) == 3 else None,
-    }
+    text = {"information_element_id": spec[0], "field_length": spec[1]}
+    if len(spec) == 3:
+        text["enterprise_number"] = spec[2]
+    return text
 
 
 def a_set(set_id: int, body: bytes, padding: bytes = b"") -> bytes:
@@ -215,15 +214,6 @@ def raw(payload: bytes) -> tuple[Datagram, None]:
     return Datagram(payload, dst_port=4739), None
 
 
-def case(name, reference, description, messages, **kwargs) -> Case:
-    return Case(
-        name,
-        reference,
-        description,
-        [datagram for datagram, _ in messages],
-        [text for _, text in messages if text is not None],
-        **kwargs,
-    )
 
 
 V4 = [(8, 4), (12, 4), (2, 4), (1, 4)]

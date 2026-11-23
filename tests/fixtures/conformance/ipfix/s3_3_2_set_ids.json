@@ -19,10 +19,10 @@
               {
                 "template_id": 256,
                 "fields": [
-                  {"information_element_id": 8, "field_length": 4, "enterprise_number": null},
-                  {"information_element_id": 12, "field_length": 4, "enterprise_number": null},
-                  {"information_element_id": 2, "field_length": 4, "enterprise_number": null},
-                  {"information_element_id": 1, "field_length": 4, "enterprise_number": null}
+                  {"information_element_id": 8, "field_length": 4},
+                  {"information_element_id": 12, "field_length": 4},
+                  {"information_element_id": 2, "field_length": 4},
+                  {"information_element_id": 1, "field_length": 4}
                 ]
               }
             ]
@@ -43,10 +43,10 @@
               {
                 "template_id": 257,
                 "scope_fields": [
-                  {"information_element_id": 141, "field_length": 4, "enterprise_number": null}
+                  {"information_element_id": 141, "field_length": 4}
                 ],
                 "option_fields": [
-                  {"information_element_id": 41, "field_length": 4, "enterprise_number": null}
+                  {"information_element_id": 41, "field_length": 4}
                 ]
               }
             ]
@@ -61,6 +61,9 @@
         ]
       }
     }
+  ],
+  "flows": [
+    {"flow_type": "IPFIX", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "src_addr": "192.0.2.1", "dst_addr": "198.51.100.1", "packets": 1, "bytes": 100, "etype": 2048}
   ],
   "clean": false
 }

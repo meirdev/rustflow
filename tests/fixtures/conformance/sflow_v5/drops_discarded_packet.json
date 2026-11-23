@@ -7,7 +7,6 @@
       "protocol": "sflow_v5",
       "packet": {
         "version": 5,
-        "agent_address": "192.0.2.1",
         "sub_agent_id": 0,
         "sequence_number": 1,
         "uptime": 3600000,
@@ -62,9 +61,11 @@
             "reason": {"Unassigned": 9999},
             "records": []
           }
-        ]
+        ],
+        "agent_address": "192.0.2.1"
       }
     }
   ],
+  "flows": [],
   "clean": false
 }

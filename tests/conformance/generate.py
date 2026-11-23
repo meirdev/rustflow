@@ -18,6 +18,7 @@ import ipfix  # noqa: E402
 import netflow_v5  # noqa: E402
 import netflow_v9  # noqa: E402
 import sflow_v5  # noqa: E402
+import vendors  # noqa: E402
 from wire import Case, write_pcap  # noqa: E402
 
 OUT_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "conformance"
@@ -27,6 +28,7 @@ PROTOCOLS = {
     "netflow_v9": ("NetFlow v9", netflow_v9),
     "ipfix": ("IPFIX", ipfix),
     "sflow_v5": ("sFlow v5", sflow_v5),
+    "vendors": ("Vendors and models", vendors),
 }
 
 
@@ -55,6 +57,7 @@ def write_case(directory: Path, case: Case) -> None:
         "description": case.description,
         "datagrams": len(case.datagrams),
         "expected": case.expected,
+        "flows": case.flows,
     }
     if case.tshark:
         document["tshark"] = case.tshark

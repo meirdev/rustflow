@@ -23,8 +23,8 @@
                   {"field_type": "Interface", "length": 2}
                 ],
                 "option_fields": [
-                  {"information_element_id": 41, "field_length": 4, "enterprise_number": null},
-                  {"information_element_id": 42, "field_length": 8, "enterprise_number": null}
+                  {"information_element_id": 41, "field_length": 4},
+                  {"information_element_id": 42, "field_length": 8}
                 ]
               },
               {
@@ -33,9 +33,9 @@
                   {"field_type": "System", "length": 4}
                 ],
                 "option_fields": [
-                  {"information_element_id": 36, "field_length": 2, "enterprise_number": null},
-                  {"information_element_id": 37, "field_length": 2, "enterprise_number": null},
-                  {"information_element_id": 34, "field_length": 2, "enterprise_number": null}
+                  {"information_element_id": 36, "field_length": 2},
+                  {"information_element_id": 37, "field_length": 2},
+                  {"information_element_id": 34, "field_length": 2}
                 ]
               }
             ]
@@ -72,5 +72,6 @@
         ]
       }
     }
-  ]
+  ],
+  "flows": []
 }

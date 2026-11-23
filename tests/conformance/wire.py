@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from flows import common_flows
+
 COLLECTOR_V4 = "198.51.100.1"
 COLLECTOR_V6 = "2001:db8:ffff::1"
 CAPTURE_START = 1_700_000_000
@@ -73,6 +75,8 @@ class Case:
     `tshark` maps Wireshark field names to every value the field takes in
     the capture, in order: a second, unrelated reading of the same bytes.
     `clean` says Wireshark must find nothing malformed in the capture.
+    `flows` is the common flows `rustflow collect --format common` prints,
+    which `case` derives from `expected` (see flows.py).
     `deviation` says why rustflow is known not to give `expected`.
     """
 
@@ -83,7 +87,27 @@ class Case:
     expected: list[dict]
     tshark: dict[str, list[str]] = field(default_factory=dict)
     clean: bool = True
+    flows: list[dict] = field(default_factory=list)
     deviation: str | None = None
+
+
+def case(name, reference, description, packets, **kwargs) -> Case:
+    """A case from its datagrams in capture order, each with the packet the
+    collector prints for it, or `None` for one it must discard."""
+    received = [
+        (CAPTURE_START + i, datagram.src, text)
+        for i, (datagram, text) in enumerate(packets)
+        if text is not None
+    ]
+    return Case(
+        name,
+        reference,
+        description,
+        [datagram for datagram, _ in packets],
+        [text for _, _, text in received],
+        flows=common_flows(received),
+        **kwargs,
+    )
 
 
 def _checksum(data: bytes) -> int:

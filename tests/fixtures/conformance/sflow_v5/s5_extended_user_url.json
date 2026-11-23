@@ -7,7 +7,6 @@
       "protocol": "sflow_v5",
       "packet": {
         "version": 5,
-        "agent_address": "192.0.2.1",
         "sub_agent_id": 0,
         "sequence_number": 1,
         "uptime": 3600000,
@@ -69,9 +68,16 @@
               {"type": "extended_switch", "src_vlan": 1, "src_priority": 2, "dst_vlan": 3, "dst_priority": 4}
             ]
           }
-        ]
+        ],
+        "agent_address": "192.0.2.1"
       }
     }
+  ],
+  "flows": [
+    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 1000, "in_if": 3, "out_if": 4, "packets": 1},
+    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 1000, "in_if": 3, "out_if": 4, "packets": 1},
+    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 1000, "in_if": 3, "out_if": 4, "packets": 1},
+    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 1000, "in_if": 3, "out_if": 4, "packets": 1, "src_vlan": 1, "dst_vlan": 3}
   ],
   "tshark": {
     "sflow_5.extended_user.source_character_set": ["106", "0", "3", "3"],

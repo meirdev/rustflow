@@ -7,7 +7,6 @@
       "protocol": "sflow_v5",
       "packet": {
         "version": 5,
-        "agent_address": "192.0.2.1",
         "sub_agent_id": 0,
         "sequence_number": 1,
         "uptime": 3600000,
@@ -22,7 +21,7 @@
             "input": {"format": 0, "value": 3},
             "output": {"format": 0, "value": 4},
             "records": [
-              {"type": 2048, "length": 1518, "src_mac": "02:00:00:00:00:aa", "dst_mac": "02:00:00:00:00:bb"},
+              {"type": "sampled_ethernet", "length": 1518, "src_mac": "02:00:00:00:00:aa", "dst_mac": "02:00:00:00:00:bb", "ether_type": 2048},
               {"type": "sampled_ipv4", "length": 1500, "protocol": 6, "src_ip": "192.0.2.1", "dst_ip": "198.51.100.1", "src_port": 51000, "dst_port": 443, "tcp_flags": 27, "tos": 184}
             ]
           },
@@ -36,7 +35,7 @@
             "input": {"format": 0, "value": 3},
             "output": {"format": 0, "value": 4},
             "records": [
-              {"type": 34525, "length": 86, "src_mac": "02:11:22:33:44:55", "dst_mac": "ff:ff:ff:ff:ff:ff"},
+              {"type": "sampled_ethernet", "length": 86, "src_mac": "02:11:22:33:44:55", "dst_mac": "ff:ff:ff:ff:ff:ff", "ether_type": 34525},
               {"type": "sampled_ipv6", "length": 72, "protocol": 17, "src_ip": "2001:db8:1::1", "dst_ip": "2001:db8:2::2", "src_port": 53, "dst_port": 5353, "tcp_flags": 0, "priority": 46}
             ]
           },
@@ -53,9 +52,15 @@
               {"type": "sampled_ipv4", "length": 4294967295, "protocol": 255, "src_ip": "255.255.255.255", "dst_ip": "0.0.0.0", "src_port": 65535, "dst_port": 0, "tcp_flags": 255, "tos": 255}
             ]
           }
-        ]
+        ],
+        "agent_address": "192.0.2.1"
       }
     }
+  ],
+  "flows": [
+    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 1000, "in_if": 3, "out_if": 4, "packets": 1, "bytes": 1518, "src_mac": "02:00:00:00:00:aa", "dst_mac": "02:00:00:00:00:bb", "etype": 2048, "src_addr": "192.0.2.1", "dst_addr": "198.51.100.1", "proto": 6, "src_port": 51000, "dst_port": 443, "tcp_flags": 27, "ip_tos": 184},
+    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 1000, "in_if": 3, "out_if": 4, "packets": 1, "bytes": 86, "src_mac": "02:11:22:33:44:55", "dst_mac": "ff:ff:ff:ff:ff:ff", "etype": 34525, "src_addr": "2001:db8:1::1", "dst_addr": "2001:db8:2::2", "proto": 17, "src_port": 53, "dst_port": 5353, "tcp_flags": 0},
+    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 1000, "in_if": 3, "out_if": 4, "packets": 1, "bytes": 4294967295, "etype": 2048, "src_addr": "255.255.255.255", "dst_addr": "0.0.0.0", "proto": 255, "src_port": 65535, "dst_port": 0, "tcp_flags": 255, "ip_tos": 255}
   ],
   "tshark": {
     "sflow_245.ethernet.length": ["1518", "86"],

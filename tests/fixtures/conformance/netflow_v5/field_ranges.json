@@ -22,6 +22,10 @@
       }
     }
   ],
+  "flows": [
+    {"flow_type": "NETFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 4294967295, "sampling_rate": 16383, "time_flow_start_ns": 4294967295999999999, "time_flow_end_ns": 4294967295999999999, "bytes": 4294967295, "packets": 4294967295, "src_addr": "255.255.255.255", "dst_addr": "255.255.255.255", "etype": 2048, "proto": 255, "src_port": 65535, "dst_port": 65535, "in_if": 65535, "out_if": 65535, "ip_tos": 255, "tcp_flags": 255, "src_as": 65535, "dst_as": 65535, "next_hop": "255.255.255.255", "src_net": 255, "dst_net": 255},
+    {"flow_type": "NETFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 4294967295, "sampling_rate": 16383, "time_flow_start_ns": 4290672328704999999, "time_flow_end_ns": 4290672328704999999, "bytes": 0, "packets": 0, "src_addr": "0.0.0.0", "dst_addr": "0.0.0.0", "etype": 2048, "proto": 0, "src_port": 0, "dst_port": 0, "in_if": 0, "out_if": 0, "ip_tos": 0, "tcp_flags": 0, "src_as": 0, "dst_as": 0, "next_hop": "0.0.0.0", "src_net": 0, "dst_net": 0}
+  ],
   "tshark": {
     "cflow.packets": ["4294967295", "0"],
     "cflow.octets": ["4294967295", "0"],

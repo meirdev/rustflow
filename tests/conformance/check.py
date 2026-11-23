@@ -23,6 +23,7 @@ INPUT = {
     "netflow_v9": "netflow",
     "ipfix": "netflow",
     "sflow_v5": "sflow",
+    "vendors": "netflow",
 }
 
 
@@ -46,17 +47,25 @@ def fixtures() -> list[Fixture]:
     ]
 
 
-def collected(rustflow_bin: Path, fixture: Fixture) -> list[dict]:
-    """The packets rustflow reads from the capture, as `--format raw` prints
-    them."""
+def collected(rustflow_bin: Path, fixture: Fixture, format: str = "raw") -> list[dict]:
+    """What rustflow reads from the capture, as `--format raw` (the packets)
+    or `--format common` (the flows) prints it."""
     url = f"{INPUT[fixture.protocol]}+pcap://{fixture.pcap}"
     result = subprocess.run(
-        [rustflow_bin, "collect", "--input", url, "--format", "raw"],
+        [rustflow_bin, "collect", "--input", url, "--format", format],
         capture_output=True,
         check=True,
         timeout=30,
     )
     return [json.loads(line) for line in result.stdout.splitlines()]
+
+
+def problems(rustflow_bin: Path, fixture: Fixture) -> list[str]:
+    """Where rustflow's reading of the capture differs from the expected
+    one: the packets, and the flows made of them."""
+    out = differences(fixture.document["expected"], collected(rustflow_bin, fixture))
+    flows = collected(rustflow_bin, fixture, "common")
+    return out + differences(fixture.document["flows"], flows, "flows")
 
 
 def differences(expected, actual, path: str = "$") -> list[str]:
@@ -166,23 +175,23 @@ def main() -> int:
 
     failed = deviations = 0
     for fixture in fixtures():
-        problems = differences(fixture.document["expected"], collected(rustflow_bin, fixture))
+        found = problems(rustflow_bin, fixture)
         deviation = fixture.document.get("deviation")
         capture = tshark_differences(fixture) if with_tshark else []
-        if deviation and problems:
+        if deviation and found:
             status, deviations = "DEVIATION", deviations + 1
         elif deviation:
             status, failed = "FIXED (drop the deviation note)", failed + 1
-        elif problems:
+        elif found:
             status, failed = "FAIL", failed + 1
         else:
             status = "ok"
         if capture:
             status, failed = f"{status} + BAD CAPTURE", failed + 1
         print(f"{status:10} {fixture.id}")
-        if deviation and problems:
+        if deviation and found:
             print(f"    known: {deviation}")
-        for line in (problems if status != "ok" else []) + capture:
+        for line in (found if status != "ok" else []) + capture:
             print(f"    {line}")
     print(f"{failed} failed, {deviations} known deviations")
     return 1 if failed else 0

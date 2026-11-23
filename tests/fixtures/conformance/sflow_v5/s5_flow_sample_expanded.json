@@ -7,7 +7,6 @@
       "protocol": "sflow_v5",
       "packet": {
         "version": 5,
-        "agent_address": "192.0.2.1",
         "sub_agent_id": 0,
         "sequence_number": 1,
         "uptime": 3600000,
@@ -49,9 +48,15 @@
             "output": {"format": 4294967295, "value": 4294967295},
             "records": []
           }
-        ]
+        ],
+        "agent_address": "192.0.2.1"
       }
     }
+  ],
+  "flows": [
+    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 2000, "in_if": 1073741824, "out_if": 1073741825, "packets": 1, "bytes": 50, "dst_mac": "02:00:00:00:00:02", "src_mac": "02:00:00:00:00:01", "etype": 2048, "src_addr": "192.0.2.50", "dst_addr": "198.51.100.1", "proto": 17, "ip_tos": 0, "ip_ttl": 64, "fragment_id": 0, "fragment_offset": 0, "src_port": 40000, "dst_port": 50000},
+    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 2000, "in_if": 9, "packets": 1, "src_vlan": 4094, "dst_vlan": 4094},
+    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 4294967295, "packets": 1}
   ],
   "tshark": {
     "sflow.flow_sample.sequence_number": ["1", "2", "4294967295"],

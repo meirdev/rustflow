@@ -26,7 +26,7 @@
                   {"field_type": "Template", "length": 2}
                 ],
                 "option_fields": [
-                  {"information_element_id": 34, "field_length": 4, "enterprise_number": null}
+                  {"information_element_id": 34, "field_length": 4}
                 ]
               }
             ]
@@ -40,8 +40,8 @@
                   {"field_type": "System", "length": 4}
                 ],
                 "option_fields": [
-                  {"information_element_id": 34, "field_length": 4, "enterprise_number": null},
-                  {"information_element_id": 35, "field_length": 1, "enterprise_number": null}
+                  {"information_element_id": 34, "field_length": 4},
+                  {"information_element_id": 35, "field_length": 1}
                 ]
               },
               {
@@ -50,8 +50,8 @@
                   {"field_type": "Interface", "length": 4}
                 ],
                 "option_fields": [
-                  {"information_element_id": 82, "field_length": 8, "enterprise_number": null},
-                  {"information_element_id": 83, "field_length": 16, "enterprise_number": null}
+                  {"information_element_id": 82, "field_length": 8},
+                  {"information_element_id": 83, "field_length": 16}
                 ]
               }
             ]
@@ -95,6 +95,7 @@
       }
     }
   ],
+  "flows": [],
   "tshark": {
     "cflow.template_id": ["300", "301", "302"],
     "cflow.if_name": ["Gi0/0/1", "Te0/1/10"]

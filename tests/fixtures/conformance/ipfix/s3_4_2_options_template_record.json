@@ -18,19 +18,19 @@
               {
                 "template_id": 300,
                 "scope_fields": [
-                  {"information_element_id": 141, "field_length": 4, "enterprise_number": null},
-                  {"information_element_id": 10, "field_length": 4, "enterprise_number": null}
+                  {"information_element_id": 141, "field_length": 4},
+                  {"information_element_id": 10, "field_length": 4}
                 ],
                 "option_fields": [
-                  {"information_element_id": 41, "field_length": 4, "enterprise_number": null},
-                  {"information_element_id": 42, "field_length": 4, "enterprise_number": null}
+                  {"information_element_id": 41, "field_length": 4},
+                  {"information_element_id": 42, "field_length": 4}
                 ]
               },
               {
                 "template_id": 301,
                 "scope_fields": [
-                  {"information_element_id": 145, "field_length": 2, "enterprise_number": null},
-                  {"information_element_id": 149, "field_length": 4, "enterprise_number": null}
+                  {"information_element_id": 145, "field_length": 2},
+                  {"information_element_id": 149, "field_length": 4}
                 ],
                 "option_fields": []
               }
@@ -45,7 +45,7 @@
                   {"information_element_id": 7, "field_length": 2, "enterprise_number": 32473}
                 ],
                 "option_fields": [
-                  {"information_element_id": 82, "field_length": 4, "enterprise_number": null}
+                  {"information_element_id": 82, "field_length": 4}
                 ]
               }
             ]
@@ -88,6 +88,7 @@
       }
     }
   ],
+  "flows": [],
   "tshark": {
     "cflow.template_id": ["300", "301", "302", "256"],
     "cflow.if_name": ["eth0"]
