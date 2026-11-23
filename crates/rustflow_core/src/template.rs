@@ -26,6 +26,7 @@ pub struct FieldSpecifier {
     pub field_length: u16,
     /// The private enterprise number of a vendor's element; `None` for an
     /// IANA element.
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub enterprise_number: Option<u32>,
 }
 

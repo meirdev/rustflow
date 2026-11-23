@@ -69,6 +69,7 @@ pub struct Packet {
 pub struct Header {
     pub version: u32,
     /// The IP address of the sFlow agent; `None` when it is unknown.
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub agent_address: Option<IpAddr>,
     /// Tells apart the datagram streams of sub-agents of one agent.
     pub sub_agent_id: u32,
@@ -279,6 +280,7 @@ pub struct SampledEthernet {
     pub src_mac: MacAddress,
     pub dst_mac: MacAddress,
     /// The Ethernet packet type.
+    #[cfg_attr(feature = "serde", serde(rename = "ether_type"))]
     pub r#type: u32,
 }
 
@@ -329,6 +331,7 @@ pub struct ExtendedSwitch {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ExtendedRouter {
     /// The IP address of the next hop router; `None` when it is unknown.
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub nexthop: Option<IpAddr>,
     /// The source address prefix mask, in bits.
     pub src_mask_len: u32,
@@ -340,6 +343,7 @@ pub struct ExtendedRouter {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ExtendedGateway {
     /// The IP address of the border router; `None` when it is unknown.
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub nexthop: Option<IpAddr>,
     /// The router's own AS.
     pub r#as: u32,
