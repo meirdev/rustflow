@@ -13,11 +13,7 @@
         "sequence_number": 0,
         "source_id": 0,
         "flow_sets": [
-          {
-            "type": "undecoded",
-            "set_id": 256,
-            "body": [192, 0, 2, 1, 198, 51, 100, 1, 0, 0, 0, 1, 0, 0, 0, 100]
-          }
+          {"type": "undecoded", "set_id": 256, "body": "c0000201c63364010000000100000064"}
         ]
       }
     },
@@ -31,11 +27,7 @@
         "sequence_number": 1,
         "source_id": 0,
         "flow_sets": [
-          {
-            "type": "undecoded",
-            "set_id": 257,
-            "body": [0, 0, 0, 1, 0, 0, 0, 100]
-          }
+          {"type": "undecoded", "set_id": 257, "body": "0000000100000064"}
         ]
       }
     },

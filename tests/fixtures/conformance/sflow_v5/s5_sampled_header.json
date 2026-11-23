@@ -13,163 +13,105 @@
         "uptime": 3600000,
         "samples": [
           {
-            "Flow": {
-              "sequence_number": 1,
-              "source_id": {"source_id_type": 0, "source_id_index": 3},
-              "sampling_rate": 1000,
-              "sample_pool": 1000,
-              "drops": 0,
-              "input": {"format": 0, "value": 3},
-              "output": {"format": 0, "value": 4},
-              "records": [
-                {
-                  "SampledHeader": {
-                    "protocol": "EthernetIso88023",
-                    "frame_length": 1518,
-                    "stripped": 4,
-                    "header": [2, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 1, 8, 0, 69, 0, 0, 30, 0, 0, 64, 0, 64, 17, 78, 104, 192, 0, 2, 50, 198, 51, 100, 1, 156, 64, 195, 80, 0, 10, 59, 105, 120, 120]
-                  }
-                },
-                {
-                  "ExtendedSwitch": {"src_vlan": 1, "src_priority": 0, "dst_vlan": 2, "dst_priority": 0}
-                }
-              ]
-            }
+            "type": "flow",
+            "sequence_number": 1,
+            "source_id": {"source_id_type": 0, "source_id_index": 3},
+            "sampling_rate": 1000,
+            "sample_pool": 1000,
+            "drops": 0,
+            "input": {"format": 0, "value": 3},
+            "output": {"format": 0, "value": 4},
+            "records": [
+              {"type": "sampled_header", "protocol": "EthernetIso88023", "frame_length": 1518, "stripped": 4, "header": "02000000000202000000000108004500001e0000400040114e68c0000232c63364019c40c350000a3b697878"},
+              {"type": "extended_switch", "src_vlan": 1, "src_priority": 0, "dst_vlan": 2, "dst_priority": 0}
+            ]
           },
           {
-            "Flow": {
-              "sequence_number": 2,
-              "source_id": {"source_id_type": 0, "source_id_index": 3},
-              "sampling_rate": 1000,
-              "sample_pool": 2000,
-              "drops": 0,
-              "input": {"format": 0, "value": 3},
-              "output": {"format": 0, "value": 4},
-              "records": [
-                {
-                  "SampledHeader": {
-                    "protocol": "EthernetIso88023",
-                    "frame_length": 64,
-                    "stripped": 8,
-                    "header": [2, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 1, 8, 0, 69, 0, 0, 31, 0, 0, 64, 0, 64, 17, 78, 103, 192, 0, 2, 50, 198, 51, 100, 1, 156, 64, 195, 80, 0, 11, 195, 102, 120, 120, 120]
-                  }
-                },
-                {
-                  "ExtendedSwitch": {"src_vlan": 3, "src_priority": 0, "dst_vlan": 4, "dst_priority": 0}
-                }
-              ]
-            }
+            "type": "flow",
+            "sequence_number": 2,
+            "source_id": {"source_id_type": 0, "source_id_index": 3},
+            "sampling_rate": 1000,
+            "sample_pool": 2000,
+            "drops": 0,
+            "input": {"format": 0, "value": 3},
+            "output": {"format": 0, "value": 4},
+            "records": [
+              {"type": "sampled_header", "protocol": "EthernetIso88023", "frame_length": 64, "stripped": 8, "header": "02000000000202000000000108004500001f0000400040114e67c0000232c63364019c40c350000bc366787878"},
+              {"type": "extended_switch", "src_vlan": 3, "src_priority": 0, "dst_vlan": 4, "dst_priority": 0}
+            ]
           },
           {
-            "Flow": {
-              "sequence_number": 3,
-              "source_id": {"source_id_type": 0, "source_id_index": 3},
-              "sampling_rate": 1000,
-              "sample_pool": 3000,
-              "drops": 0,
-              "input": {"format": 0, "value": 3},
-              "output": {"format": 0, "value": 4},
-              "records": [
-                {
-                  "SampledHeader": {
-                    "protocol": "EthernetIso88023",
-                    "frame_length": 9018,
-                    "stripped": 4,
-                    "header": [2, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 1, 8, 0, 69, 0, 0, 32, 0, 0, 64, 0, 64, 17, 78, 102, 192, 0, 2, 50, 198, 51, 100, 1, 156, 64, 195, 80, 0, 12, 194, 236, 120, 120, 120, 120]
-                  }
-                },
-                {
-                  "ExtendedSwitch": {"src_vlan": 5, "src_priority": 0, "dst_vlan": 6, "dst_priority": 0}
-                }
-              ]
-            }
+            "type": "flow",
+            "sequence_number": 3,
+            "source_id": {"source_id_type": 0, "source_id_index": 3},
+            "sampling_rate": 1000,
+            "sample_pool": 3000,
+            "drops": 0,
+            "input": {"format": 0, "value": 3},
+            "output": {"format": 0, "value": 4},
+            "records": [
+              {"type": "sampled_header", "protocol": "EthernetIso88023", "frame_length": 9018, "stripped": 4, "header": "0200000000020200000000010800450000200000400040114e66c0000232c63364019c40c350000cc2ec78787878"},
+              {"type": "extended_switch", "src_vlan": 5, "src_priority": 0, "dst_vlan": 6, "dst_priority": 0}
+            ]
           },
           {
-            "Flow": {
-              "sequence_number": 4,
-              "source_id": {"source_id_type": 0, "source_id_index": 3},
-              "sampling_rate": 1000,
-              "sample_pool": 4000,
-              "drops": 0,
-              "input": {"format": 0, "value": 3},
-              "output": {"format": 0, "value": 4},
-              "records": [
-                {
-                  "SampledHeader": {
-                    "protocol": "EthernetIso88023",
-                    "frame_length": 4294967295,
-                    "stripped": 4294967295,
-                    "header": [2, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 1, 8, 0, 69, 0, 0, 33, 0, 0, 64, 0, 64, 17, 78, 101, 192, 0, 2, 50, 198, 51, 100, 1, 156, 64, 195, 80, 0, 13, 74, 234, 120, 120, 120, 120, 120]
-                  }
-                },
-                {
-                  "ExtendedSwitch": {"src_vlan": 7, "src_priority": 0, "dst_vlan": 8, "dst_priority": 0}
-                }
-              ]
-            }
+            "type": "flow",
+            "sequence_number": 4,
+            "source_id": {"source_id_type": 0, "source_id_index": 3},
+            "sampling_rate": 1000,
+            "sample_pool": 4000,
+            "drops": 0,
+            "input": {"format": 0, "value": 3},
+            "output": {"format": 0, "value": 4},
+            "records": [
+              {"type": "sampled_header", "protocol": "EthernetIso88023", "frame_length": 4294967295, "stripped": 4294967295, "header": "0200000000020200000000010800450000210000400040114e65c0000232c63364019c40c350000d4aea7878787878"},
+              {"type": "extended_switch", "src_vlan": 7, "src_priority": 0, "dst_vlan": 8, "dst_priority": 0}
+            ]
           },
           {
-            "Flow": {
-              "sequence_number": 5,
-              "source_id": {"source_id_type": 0, "source_id_index": 3},
-              "sampling_rate": 1000,
-              "sample_pool": 5000,
-              "drops": 0,
-              "input": {"format": 0, "value": 3},
-              "output": {"format": 0, "value": 4},
-              "records": [
-                {
-                  "SampledHeader": {
-                    "protocol": "Ipv4",
-                    "frame_length": 30,
-                    "stripped": 0,
-                    "header": [69, 0, 0, 30, 0, 0, 64, 0, 64, 17, 78, 104, 192, 0, 2, 50, 198, 51, 100, 1, 156, 64, 195, 80, 0, 10, 59, 105, 120, 120]
-                  }
-                }
-              ]
-            }
+            "type": "flow",
+            "sequence_number": 5,
+            "source_id": {"source_id_type": 0, "source_id_index": 3},
+            "sampling_rate": 1000,
+            "sample_pool": 5000,
+            "drops": 0,
+            "input": {"format": 0, "value": 3},
+            "output": {"format": 0, "value": 4},
+            "records": [
+              {"type": "sampled_header", "protocol": "Ipv4", "frame_length": 30, "stripped": 0, "header": "4500001e0000400040114e68c0000232c63364019c40c350000a3b697878"}
+            ]
           },
           {
-            "Flow": {
-              "sequence_number": 6,
-              "source_id": {"source_id_type": 0, "source_id_index": 3},
-              "sampling_rate": 1000,
-              "sample_pool": 6000,
-              "drops": 0,
-              "input": {"format": 0, "value": 3},
-              "output": {"format": 0, "value": 4},
-              "records": [
-                {
-                  "SampledHeader": {
-                    "protocol": {"Unassigned": 99},
-                    "frame_length": 100,
-                    "stripped": 0,
-                    "header": [1, 2, 3, 4, 5]
-                  }
-                }
-              ]
-            }
+            "type": "flow",
+            "sequence_number": 6,
+            "source_id": {"source_id_type": 0, "source_id_index": 3},
+            "sampling_rate": 1000,
+            "sample_pool": 6000,
+            "drops": 0,
+            "input": {"format": 0, "value": 3},
+            "output": {"format": 0, "value": 4},
+            "records": [
+              {
+                "type": "sampled_header",
+                "protocol": {"Unassigned": 99},
+                "frame_length": 100,
+                "stripped": 0,
+                "header": "0102030405"
+              }
+            ]
           },
           {
-            "Flow": {
-              "sequence_number": 7,
-              "source_id": {"source_id_type": 0, "source_id_index": 3},
-              "sampling_rate": 1000,
-              "sample_pool": 7000,
-              "drops": 0,
-              "input": {"format": 0, "value": 3},
-              "output": {"format": 0, "value": 4},
-              "records": [
-                {
-                  "SampledHeader": {
-                    "protocol": "EthernetIso88023",
-                    "frame_length": 60,
-                    "stripped": 4,
-                    "header": []
-                  }
-                }
-              ]
-            }
+            "type": "flow",
+            "sequence_number": 7,
+            "source_id": {"source_id_type": 0, "source_id_index": 3},
+            "sampling_rate": 1000,
+            "sample_pool": 7000,
+            "drops": 0,
+            "input": {"format": 0, "value": 3},
+            "output": {"format": 0, "value": 4},
+            "records": [
+              {"type": "sampled_header", "protocol": "EthernetIso88023", "frame_length": 60, "stripped": 4, "header": ""}
+            ]
           }
         ]
       }

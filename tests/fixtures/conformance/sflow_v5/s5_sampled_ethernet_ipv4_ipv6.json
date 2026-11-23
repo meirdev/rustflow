@@ -13,58 +13,45 @@
         "uptime": 3600000,
         "samples": [
           {
-            "Flow": {
-              "sequence_number": 1,
-              "source_id": {"source_id_type": 0, "source_id_index": 3},
-              "sampling_rate": 1000,
-              "sample_pool": 1000,
-              "drops": 0,
-              "input": {"format": 0, "value": 3},
-              "output": {"format": 0, "value": 4},
-              "records": [
-                {
-                  "SampledEthernet": {"length": 1518, "src_mac": "02:00:00:00:00:aa", "dst_mac": "02:00:00:00:00:bb", "type": 2048}
-                },
-                {
-                  "SampledIpv4": {"length": 1500, "protocol": 6, "src_ip": "192.0.2.1", "dst_ip": "198.51.100.1", "src_port": 51000, "dst_port": 443, "tcp_flags": 27, "tos": 184}
-                }
-              ]
-            }
+            "type": "flow",
+            "sequence_number": 1,
+            "source_id": {"source_id_type": 0, "source_id_index": 3},
+            "sampling_rate": 1000,
+            "sample_pool": 1000,
+            "drops": 0,
+            "input": {"format": 0, "value": 3},
+            "output": {"format": 0, "value": 4},
+            "records": [
+              {"type": 2048, "length": 1518, "src_mac": "02:00:00:00:00:aa", "dst_mac": "02:00:00:00:00:bb"},
+              {"type": "sampled_ipv4", "length": 1500, "protocol": 6, "src_ip": "192.0.2.1", "dst_ip": "198.51.100.1", "src_port": 51000, "dst_port": 443, "tcp_flags": 27, "tos": 184}
+            ]
           },
           {
-            "Flow": {
-              "sequence_number": 2,
-              "source_id": {"source_id_type": 0, "source_id_index": 3},
-              "sampling_rate": 1000,
-              "sample_pool": 2000,
-              "drops": 0,
-              "input": {"format": 0, "value": 3},
-              "output": {"format": 0, "value": 4},
-              "records": [
-                {
-                  "SampledEthernet": {"length": 86, "src_mac": "02:11:22:33:44:55", "dst_mac": "ff:ff:ff:ff:ff:ff", "type": 34525}
-                },
-                {
-                  "SampledIpv6": {"length": 72, "protocol": 17, "src_ip": "2001:db8:1::1", "dst_ip": "2001:db8:2::2", "src_port": 53, "dst_port": 5353, "tcp_flags": 0, "priority": 46}
-                }
-              ]
-            }
+            "type": "flow",
+            "sequence_number": 2,
+            "source_id": {"source_id_type": 0, "source_id_index": 3},
+            "sampling_rate": 1000,
+            "sample_pool": 2000,
+            "drops": 0,
+            "input": {"format": 0, "value": 3},
+            "output": {"format": 0, "value": 4},
+            "records": [
+              {"type": 34525, "length": 86, "src_mac": "02:11:22:33:44:55", "dst_mac": "ff:ff:ff:ff:ff:ff"},
+              {"type": "sampled_ipv6", "length": 72, "protocol": 17, "src_ip": "2001:db8:1::1", "dst_ip": "2001:db8:2::2", "src_port": 53, "dst_port": 5353, "tcp_flags": 0, "priority": 46}
+            ]
           },
           {
-            "Flow": {
-              "sequence_number": 3,
-              "source_id": {"source_id_type": 0, "source_id_index": 3},
-              "sampling_rate": 1000,
-              "sample_pool": 3000,
-              "drops": 0,
-              "input": {"format": 0, "value": 3},
-              "output": {"format": 0, "value": 4},
-              "records": [
-                {
-                  "SampledIpv4": {"length": 4294967295, "protocol": 255, "src_ip": "255.255.255.255", "dst_ip": "0.0.0.0", "src_port": 65535, "dst_port": 0, "tcp_flags": 255, "tos": 255}
-                }
-              ]
-            }
+            "type": "flow",
+            "sequence_number": 3,
+            "source_id": {"source_id_type": 0, "source_id_index": 3},
+            "sampling_rate": 1000,
+            "sample_pool": 3000,
+            "drops": 0,
+            "input": {"format": 0, "value": 3},
+            "output": {"format": 0, "value": 4},
+            "records": [
+              {"type": "sampled_ipv4", "length": 4294967295, "protocol": 255, "src_ip": "255.255.255.255", "dst_ip": "0.0.0.0", "src_port": 65535, "dst_port": 0, "tcp_flags": 255, "tos": 255}
+            ]
           }
         ]
       }

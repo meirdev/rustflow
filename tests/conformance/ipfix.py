@@ -166,7 +166,7 @@ def options_data(template_id: int, keys: list[str], rows: list[list[Pair]], padd
 
 def undecoded(template_id: int, body: bytes) -> Pair:
     """A Data Set of a template the collector lacks: kept as sent."""
-    text = {"type": "undecoded", "set_id": template_id, "body": list(body)}
+    text = {"type": "undecoded", "set_id": template_id, "body": body.hex()}
     return Pair(a_set(template_id, body), text)
 
 

@@ -148,7 +148,7 @@ def undecoded(template_id: int, body: bytes) -> Pair:
     """A Data FlowSet of a template the collector lacks: kept as sent."""
     return Pair(
         flow_set(template_id, body),
-        {"type": "undecoded", "set_id": template_id, "body": list(body)},
+        {"type": "undecoded", "set_id": template_id, "body": body.hex()},
     )
 
 

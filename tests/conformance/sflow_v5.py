@@ -9,6 +9,7 @@ Structures" (sflow.org, October 2020).
 """
 
 import ipaddress
+import re
 
 from wire import Case, Datagram, Pair, frame, ip, mac, u32, u64
 
@@ -51,18 +52,25 @@ def data_format(enterprise: int, number: int) -> bytes:
     return u32(enterprise << 12 | number)
 
 
+def tagged(variant: str, fields: dict) -> dict:
+    """A sample or record as rustflow prints it: its kind, in snake case,
+    as `type`, beside its fields."""
+    kind = re.sub(r"(?<!^)(?=[A-Z])", "_", variant).lower()
+    return {"type": kind, **fields}
+
+
 def structure(variant: str, number: int, fields: list[tuple[str, bytes, object]]) -> Pair:
     """A standard record: its format, its length, its fields; printed as
     the variant holding the fields by name."""
     body = b"".join(wire for _, wire, _ in fields)
-    text = {variant: {key: value for key, _, value in fields}}
+    text = tagged(variant, {key: value for key, _, value in fields})
     return Pair(data_format(0, number) + opaque(body), text)
 
 
 def unknown(enterprise: int, number: int, body: bytes) -> Pair:
     """A sample or record of a format the collector does not know, kept as
     sent."""
-    text = {"Unknown": {"format": {"enterprise": enterprise, "format": number}, "data": list(body)}}
+    text = tagged("Unknown", {"format": {"enterprise": enterprise, "format": number}, "data": body.hex()})
     return Pair(data_format(enterprise, number) + opaque(body), text)
 
 
@@ -98,7 +106,7 @@ def text_field(key: str, value: str) -> tuple[str, bytes, object]:
 
 
 def bytes_field(key: str, value: bytes) -> tuple[str, bytes, object]:
-    return key, opaque(value), list(value)
+    return key, opaque(value), value.hex()
 
 
 def array(items: list[bytes]) -> bytes:
@@ -324,7 +332,7 @@ def flow_sample(
         "records": [r.text for r in records],
     }
     variant, number = ("ExpandedFlow", 3) if expanded else ("Flow", 1)
-    return Pair(data_format(0, number) + opaque(body), {variant: text})
+    return Pair(data_format(0, number) + opaque(body), tagged(variant, text))
 
 
 def counters_sample(sequence_number: int, source_id: tuple[int, int], records: list[Pair], expanded: bool = False) -> Pair:
@@ -332,7 +340,7 @@ def counters_sample(sequence_number: int, source_id: tuple[int, int], records: l
     body = u32(sequence_number) + source_wire + array([r.wire for r in records])
     text = {"sequence_number": sequence_number, "source_id": source_text, "records": [r.text for r in records]}
     variant, number = ("ExpandedCounters", 4) if expanded else ("Counters", 2)
-    return Pair(data_format(0, number) + opaque(body), {variant: text})
+    return Pair(data_format(0, number) + opaque(body), tagged(variant, text))
 
 
 def discarded_packet(sequence_number, source_id, drops, input_if_index, output_if_index, reason: tuple[int, object], records) -> Pair:
@@ -349,7 +357,7 @@ def discarded_packet(sequence_number, source_id, drops, input_if_index, output_i
         "reason": reason[1],
         "records": [r.text for r in records],
     }
-    return Pair(data_format(0, 5) + opaque(body), {"Discarded": text})
+    return Pair(data_format(0, 5) + opaque(body), tagged("Discarded", text))
 
 
 def datagram(

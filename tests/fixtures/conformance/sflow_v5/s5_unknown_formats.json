@@ -13,88 +13,68 @@
         "uptime": 3600000,
         "samples": [
           {
-            "Unknown": {
-              "format": {"enterprise": 4413, "format": 1},
-              "data": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-            }
+            "type": "unknown",
+            "format": {"enterprise": 4413, "format": 1},
+            "data": "000102030405060708090a0b"
           },
           {
-            "Flow": {
-              "sequence_number": 1,
-              "source_id": {"source_id_type": 0, "source_id_index": 3},
-              "sampling_rate": 1000,
-              "sample_pool": 1000,
-              "drops": 0,
-              "input": {"format": 0, "value": 3},
-              "output": {"format": 0, "value": 4},
-              "records": [
-                {
-                  "Unknown": {
-                    "format": {"enterprise": 4413, "format": 7},
-                    "data": [1, 2, 3, 4, 5, 6, 7, 8]
-                  }
-                },
-                {
-                  "ExtendedSwitch": {"src_vlan": 1, "src_priority": 0, "dst_vlan": 2, "dst_priority": 0}
-                },
-                {
-                  "Unknown": {
-                    "format": {"enterprise": 0, "format": 4000},
-                    "data": [170, 187, 204]
-                  }
-                }
-              ]
-            }
+            "type": "flow",
+            "sequence_number": 1,
+            "source_id": {"source_id_type": 0, "source_id_index": 3},
+            "sampling_rate": 1000,
+            "sample_pool": 1000,
+            "drops": 0,
+            "input": {"format": 0, "value": 3},
+            "output": {"format": 0, "value": 4},
+            "records": [
+              {
+                "type": "unknown",
+                "format": {"enterprise": 4413, "format": 7},
+                "data": "0102030405060708"
+              },
+              {"type": "extended_switch", "src_vlan": 1, "src_priority": 0, "dst_vlan": 2, "dst_priority": 0},
+              {
+                "type": "unknown",
+                "format": {"enterprise": 0, "format": 4000},
+                "data": "aabbcc"
+              }
+            ]
           },
           {
-            "Counters": {
-              "sequence_number": 2,
-              "source_id": {"source_id_type": 0, "source_id_index": 3},
-              "records": [
-                {
-                  "Unknown": {
-                    "format": {"enterprise": 1048575, "format": 4095},
-                    "data": [255, 255, 255, 255, 255]
-                  }
-                },
-                {
-                  "VlanCounters": {"vlan_id": 1, "octets": 1099511627778, "ucast_pkts": 3, "multicast_pkts": 4, "broadcast_pkts": 5, "discards": 6}
-                },
-                {
-                  "Unknown": {
-                    "format": {"enterprise": 0, "format": 3000},
-                    "data": []
-                  }
-                }
-              ]
-            }
+            "type": "counters",
+            "sequence_number": 2,
+            "source_id": {"source_id_type": 0, "source_id_index": 3},
+            "records": [
+              {
+                "type": "unknown",
+                "format": {"enterprise": 1048575, "format": 4095},
+                "data": "ffffffffff"
+              },
+              {"type": "vlan_counters", "vlan_id": 1, "octets": 1099511627778, "ucast_pkts": 3, "multicast_pkts": 4, "broadcast_pkts": 5, "discards": 6},
+              {
+                "type": "unknown",
+                "format": {"enterprise": 0, "format": 3000},
+                "data": ""
+              }
+            ]
           },
           {
-            "Unknown": {
-              "format": {"enterprise": 0, "format": 4000},
-              "data": [0, 0, 0, 1]
-            }
+            "type": "unknown",
+            "format": {"enterprise": 0, "format": 4000},
+            "data": "00000001"
           },
           {
-            "Flow": {
-              "sequence_number": 3,
-              "source_id": {"source_id_type": 0, "source_id_index": 3},
-              "sampling_rate": 1000,
-              "sample_pool": 3000,
-              "drops": 0,
-              "input": {"format": 0, "value": 3},
-              "output": {"format": 0, "value": 4},
-              "records": [
-                {
-                  "SampledHeader": {
-                    "protocol": "EthernetIso88023",
-                    "frame_length": 50,
-                    "stripped": 4,
-                    "header": [2, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 1, 8, 0, 69, 0, 0, 32, 0, 0, 64, 0, 64, 17, 78, 102, 192, 0, 2, 50, 198, 51, 100, 1, 156, 64, 195, 80, 0, 12, 173, 215, 3, 3, 3, 3]
-                  }
-                }
-              ]
-            }
+            "type": "flow",
+            "sequence_number": 3,
+            "source_id": {"source_id_type": 0, "source_id_index": 3},
+            "sampling_rate": 1000,
+            "sample_pool": 3000,
+            "drops": 0,
+            "input": {"format": 0, "value": 3},
+            "output": {"format": 0, "value": 4},
+            "records": [
+              {"type": "sampled_header", "protocol": "EthernetIso88023", "frame_length": 50, "stripped": 4, "header": "0200000000020200000000010800450000200000400040114e66c0000232c63364019c40c350000cadd703030303"}
+            ]
           }
         ]
       }
