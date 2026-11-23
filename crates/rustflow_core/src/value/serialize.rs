@@ -1,5 +1,4 @@
 use std::borrow::Cow;
-use std::fmt;
 
 use rustc_hash::FxHashMap;
 use serde::Serialize;
@@ -15,7 +14,7 @@ impl Serialize for Value {
             Self::Unsigned16(v) => serializer.serialize_u16(*v),
             Self::Unsigned32(v) => serializer.serialize_u32(*v),
             Self::Unsigned64(v) => serializer.serialize_u64(*v),
-            Self::Unsigned256(v) => serializer.collect_str(&format_args!("0x{}", Hex(&v[..]))),
+            Self::Unsigned256(v) => serializer.serialize_str(&format!("0x{}", hex::encode(&v[..]))),
             Self::Signed8(v) => serializer.serialize_i8(*v),
             Self::Signed16(v) => serializer.serialize_i16(*v),
             Self::Signed32(v) => serializer.serialize_i32(*v),
@@ -25,7 +24,7 @@ impl Serialize for Value {
             Self::Float32(_) | Self::Float64(_) => serializer.serialize_none(),
             Self::Boolean(v) => serializer.serialize_bool(*v),
             Self::MacAddress(v) => v.serialize(serializer),
-            Self::OctetArray(v) => serializer.collect_str(&Hex(v)),
+            Self::OctetArray(v) => hex::serialize(v, serializer),
             Self::String(v) => serializer.serialize_str(v),
             Self::DateTimeSeconds(_) => time(serializer, self, 0),
             Self::DateTimeMilliseconds(_) => time(serializer, self, 3),
@@ -171,13 +170,5 @@ impl Serialize for Repeated<'_> {
                 .iter()
                 .map(|&position| self.values.get(position)),
         )
-    }
-}
-
-struct Hex<'a>(&'a [u8]);
-
-impl fmt::Display for Hex<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.iter().try_for_each(|octet| write!(f, "{octet:02x}"))
     }
 }

@@ -115,6 +115,7 @@ pub enum Sample {
     /// parse, as sent.
     Unknown {
         format: DataFormat,
+        #[cfg_attr(feature = "serde", serde(serialize_with = "hex::serialize"))]
         data: Vec<u8>,
     },
 }
@@ -207,6 +208,7 @@ pub enum FlowRecord {
     /// parse, as sent.
     Unknown {
         format: DataFormat,
+        #[cfg_attr(feature = "serde", serde(serialize_with = "hex::serialize"))]
         data: Vec<u8>,
     },
 }
@@ -226,6 +228,7 @@ pub enum CounterRecord {
     /// parse, as sent.
     Unknown {
         format: DataFormat,
+        #[cfg_attr(feature = "serde", serde(serialize_with = "hex::serialize"))]
         data: Vec<u8>,
     },
 }
@@ -263,6 +266,7 @@ pub struct SampledHeader {
     /// Bytes removed from the packet before sampling, such as a trailing
     /// FCS.
     pub stripped: u32,
+    #[cfg_attr(feature = "serde", serde(serialize_with = "hex::serialize"))]
     pub header: Vec<u8>,
 }
 
@@ -359,9 +363,11 @@ pub struct ExtendedUser {
     /// The MIBEnum of the source user's character set (RFC 2978): 106 for
     /// UTF-8, 0 if unknown.
     pub src_charset: u32,
+    #[cfg_attr(feature = "serde", serde(serialize_with = "hex::serialize"))]
     pub src_user: Vec<u8>,
     /// The MIBEnum of the destination user's character set.
     pub dst_charset: u32,
+    #[cfg_attr(feature = "serde", serde(serialize_with = "hex::serialize"))]
     pub dst_user: Vec<u8>,
 }
 

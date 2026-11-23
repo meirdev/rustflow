@@ -8,12 +8,13 @@ description = "NetFlow, IPFIX and sFlow: parsing, encoding, conversion to common
 
 [features]
 pcap = ["dep:pcap-file"]
-serde = ["dep:serde"]
+serde = ["dep:serde", "dep:hex"]
 tokio = ["dep:tokio", "dep:futures-core"]
 
 [dependencies]
 bytes = "1.12.1"
 futures-core = { version = "0.3.34", optional = true }
+hex = { version = "0.4.3", features = ["serde"], optional = true }
 jiff = "0.2.41"
 num_enum = "0.7.6"
 pcap-file = { workspace = true, optional = true }
