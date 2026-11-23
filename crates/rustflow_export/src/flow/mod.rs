@@ -5,17 +5,9 @@ use std::net::IpAddr;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
+use rustflow_core::information_element::FlowEndReason;
 
 use crate::ipfix::data::FlowData;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum FlowEndReason {
-    IdleTimeout = 1,
-    ActiveTimeout = 2,
-    ForcedEnd = 4,
-    LackOfResources = 5,
-}
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct FlowKey {
@@ -100,7 +92,7 @@ impl Flow {
             tcp_flags: self.tcp_flags,
             flow_start: self.flow_start,
             flow_end: self.flow_end,
-            flow_end_reason: self.flow_end_reason.map_or(0, |reason| reason as u8),
+            flow_end_reason: self.flow_end_reason.map_or(0, u8::from),
         }
     }
 }

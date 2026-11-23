@@ -122,10 +122,14 @@ impl Producer {
     /// Queue the flows `decode` adds to the chunk; sends to the encoder once
     /// a chunk is full or has waited long enough, so a slow trickle is not
     /// held back.
-    pub fn push(&mut self, decode: impl FnOnce(&mut Vec<CommonFlow>)) -> Result<(), EncoderGone> {
+    pub fn push<T>(
+        &mut self,
+        decode: impl FnOnce(&mut Vec<CommonFlow>) -> T,
+    ) -> Result<T, EncoderGone> {
         self.start_chunk();
-        decode(&mut self.flows);
-        self.send_if_ready(self.flows.len())
+        let decoded = decode(&mut self.flows);
+        self.send_if_ready(self.flows.len())?;
+        Ok(decoded)
     }
 
     /// Queue a raw packet as one JSON line.

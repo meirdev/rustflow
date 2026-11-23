@@ -13,7 +13,10 @@ use tokio::io::ReadBuf;
 use tokio::net::{ToSocketAddrs, UdpSocket};
 
 use super::source::{Datagram, MAX_DATAGRAM};
-use super::{NetflowProcessor, Processor, Raw, Read, SflowProcessor, queue_flows, read_packet};
+use super::{
+    Batch, NetflowProcessor, Processor, Raw, Read, SflowProcessor, queue_flows, read_batch,
+    read_packet,
+};
 use crate::common_flow::CommonFlow;
 
 pub type AsyncNetflowReader = AsyncReader<NetflowProcessor>;
@@ -69,6 +72,14 @@ impl<P: Processor> AsyncReader<P> {
         &self.processor
     }
 
+    pub fn processor_mut(&mut self) -> &mut P {
+        &mut self.processor
+    }
+
+    pub async fn read_datagram(&mut self) -> io::Result<Read<Batch>> {
+        poll_fn(|cx| self.poll_read_datagram(cx)).await
+    }
+
     pub async fn read_raw(&mut self) -> io::Result<Read<Raw<P::Packet>>> {
         poll_fn(|cx| self.poll_read_raw(cx)).await
     }
@@ -87,6 +98,12 @@ impl<P: Processor> AsyncReader<P> {
 
     pub fn packets(self) -> AsyncPackets<P> {
         AsyncPackets(self)
+    }
+
+    fn poll_read_datagram(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<Read<Batch>>> {
+        let (length, from) = ready!(self.poll_recv(cx))?;
+        let datagram = datagram(&self.buffer[..length], from);
+        Poll::Ready(Ok(read_batch(&mut self.processor, datagram)))
     }
 
     fn poll_read_raw(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<Read<Raw<P::Packet>>>> {

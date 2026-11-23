@@ -42,7 +42,7 @@ A datagram usually carries many flows, which are buffered and returned one by on
 
 `read` gives you control over the waiting. It returns a `Read`: `Item` with the next flow,
 `Timeout` when none arrived before the read timeout, or `Malformed` for a datagram that
-could not be decoded, with its sender and the error. It returns `None` only at the end of
+could not be decoded, with its sender, its length and the error. It returns `None` only at the end of
 the input, which a socket never reaches:
 
 ```rust
@@ -57,7 +57,9 @@ fn main() -> std::io::Result<()> {
     while let Some(read) = reader.read()? {
         match read {
             Read::Item(flow) => println!("{flow:?}"),
-            Read::Malformed { from, error } => eprintln!("undecodable datagram from {from}: {error}"),
+            Read::Malformed { from, error, .. } => {
+                eprintln!("undecodable datagram from {from}: {error}")
+            }
             Read::Timeout => {
                 // No flow within the timeout: flush metrics, check for
                 // shutdown, then keep reading.
@@ -71,6 +73,46 @@ fn main() -> std::io::Result<()> {
 
 Without `with_read_timeout`, `read` blocks until a datagram arrives. A `StopHandle`, from
 `stop_handle`, ends a reader from another thread.
+
+### Reading One Datagram at a Time
+
+`read` and `flows` give the flows one by one and drop the datagram they came in.
+`read_datagram` keeps it: a `Batch` with the sender, the receive time, the payload length,
+the flows, and a `Summary` of what the datagram held. This is the call to build metrics on:
+
+```rust
+use rustflow_core::reader::{NetflowReader, Read};
+
+fn main() -> std::io::Result<()> {
+    let mut reader = NetflowReader::bind("0.0.0.0:9995")?;
+
+    while let Some(read) = reader.read_datagram()? {
+        match read {
+            Read::Item(batch) => {
+                let summary = batch.summary;
+                println!(
+                    "{} octets of {} from {}: {} flows, {} undecoded sets",
+                    batch.length,
+                    summary.flow_type.name(),
+                    batch.from,
+                    batch.flows.len(),
+                    summary.undecoded_sets,
+                );
+            }
+            Read::Malformed { from, error, .. } => {
+                eprintln!("undecodable datagram from {from}: {error}")
+            }
+            Read::Timeout => {}
+        }
+    }
+
+    Ok(())
+}
+```
+
+`undecoded_sets` counts the data sets that were dropped because the exporter's template
+for them is not known yet, or does not match them. A count that keeps rising for an
+exporter means its templates are not arriving.
 
 ## Reading From a PCAP File
 
@@ -224,15 +266,15 @@ use a processor directly. This is what the readers are built on:
 use std::net::IpAddr;
 use std::time::Instant;
 
+use jiff::Timestamp;
 use rustflow_core::common_flow::CommonFlow;
 use rustflow_core::reader::{NetflowProcessor, Processor};
 
-fn decode(exporter: IpAddr, payload: &[u8], received_ns: i64, processor: &mut NetflowProcessor) {
-    let now = Instant::now();
-    match processor.parse(exporter, payload, now) {
-        Ok(packet) => {
-            let mut flows: Vec<CommonFlow> = Vec::new();
-            processor.convert(exporter, &packet, received_ns, now, &mut flows);
+fn decode(exporter: IpAddr, payload: &[u8], processor: &mut NetflowProcessor) {
+    let mut flows: Vec<CommonFlow> = Vec::new();
+    match processor.process(exporter, payload, Timestamp::now(), Instant::now(), &mut flows) {
+        Ok(summary) => {
+            println!("{}: {} flows", summary.flow_type.name(), summary.flows);
             for flow in flows {
                 println!("{flow:?}");
             }
@@ -243,13 +285,15 @@ fn decode(exporter: IpAddr, payload: &[u8], received_ns: i64, processor: &mut Ne
 
 fn main() {
     let mut processor = NetflowProcessor::default();
-    decode([192, 0, 2, 1].into(), &[/* a UDP payload */], 0, &mut processor);
+    decode([192, 0, 2, 1].into(), &[/* a UDP payload */], &mut processor);
 }
 ```
 
 The processor is stateful: it holds the templates and options of each exporter, keyed by
-its address, so keep one per collector rather than creating one per datagram. `now` is the
-clock templates expire by.
+its address, so keep one per collector rather than creating one per datagram. The
+`Timestamp` is the receive time the flows are stamped with, and the `Instant` is the clock
+templates expire by. `process` is `parse` followed by `convert`; call those two yourself
+when you also want the packet as it is.
 
 `SflowProcessor` is the sFlow equivalent.
 

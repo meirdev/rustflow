@@ -33,6 +33,7 @@ pub enum ListRecords {
     },
     Undecoded {
         template_id: u16,
+        #[cfg_attr(feature = "serde", serde(serialize_with = "hex::serialize"))]
         data: Vec<u8>,
     },
 }

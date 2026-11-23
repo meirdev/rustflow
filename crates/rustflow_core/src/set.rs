@@ -27,6 +27,7 @@ pub enum Set<S = FieldSpecifier> {
     /// A data set whose template is not known, or does not match it.
     Undecoded {
         set_id: u16,
+        #[cfg_attr(feature = "serde", serde(serialize_with = "hex::serialize"))]
         body: Vec<u8>,
     },
     /// A set of a reserved ID.

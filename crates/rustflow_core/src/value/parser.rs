@@ -55,16 +55,10 @@ impl DataType {
                     .to_owned(),
             ),
 
-            Self::Unsigned8 => {
-                Value::Unsigned8(read_unsigned(data, 1).ok_or_else(invalid_len)? as u8)
-            }
-            Self::Unsigned16 => {
-                Value::Unsigned16(read_unsigned(data, 2).ok_or_else(invalid_len)? as u16)
-            }
-            Self::Unsigned32 => {
-                Value::Unsigned32(read_unsigned(data, 4).ok_or_else(invalid_len)? as u32)
-            }
-            Self::Unsigned64 => Value::Unsigned64(read_unsigned(data, 8).ok_or_else(invalid_len)?),
+            Self::Unsigned8 => unsigned(data, 1).ok_or_else(invalid_len)?,
+            Self::Unsigned16 => unsigned(data, 2).ok_or_else(invalid_len)?,
+            Self::Unsigned32 => unsigned(data, 4).ok_or_else(invalid_len)?,
+            Self::Unsigned64 => unsigned(data, 8).ok_or_else(invalid_len)?,
             Self::Unsigned256 => {
                 if data.is_empty() || data.len() > 32 {
                     return Err(invalid_len());
@@ -74,10 +68,10 @@ impl DataType {
                 Value::Unsigned256(Box::new(buf))
             }
 
-            Self::Signed8 => Value::Signed8(read_signed(data, 1).ok_or_else(invalid_len)? as i8),
-            Self::Signed16 => Value::Signed16(read_signed(data, 2).ok_or_else(invalid_len)? as i16),
-            Self::Signed32 => Value::Signed32(read_signed(data, 4).ok_or_else(invalid_len)? as i32),
-            Self::Signed64 => Value::Signed64(read_signed(data, 8).ok_or_else(invalid_len)?),
+            Self::Signed8 => signed(data, 1).ok_or_else(invalid_len)?,
+            Self::Signed16 => signed(data, 2).ok_or_else(invalid_len)?,
+            Self::Signed32 => signed(data, 4).ok_or_else(invalid_len)?,
+            Self::Signed64 => signed(data, 8).ok_or_else(invalid_len)?,
 
             Self::Float32 => {
                 Value::Float32(f32::from_be_bytes(fixed(data).ok_or_else(invalid_len)?))
@@ -145,8 +139,28 @@ fn fixed<const N: usize>(data: &[u8]) -> Option<[u8; N]> {
     data.try_into().ok()
 }
 
-fn read_unsigned(data: &[u8], max: usize) -> Option<u64> {
-    if data.is_empty() || data.len() > max || data.len() > 8 {
+fn unsigned(data: &[u8], size: usize) -> Option<Value> {
+    let value = read_unsigned(data)?;
+    Some(match data.len().max(size) {
+        1 => Value::Unsigned8(value as u8),
+        2 => Value::Unsigned16(value as u16),
+        3 | 4 => Value::Unsigned32(value as u32),
+        _ => Value::Unsigned64(value),
+    })
+}
+
+fn signed(data: &[u8], size: usize) -> Option<Value> {
+    let value = read_signed(data)?;
+    Some(match data.len().max(size) {
+        1 => Value::Signed8(value as i8),
+        2 => Value::Signed16(value as i16),
+        3 | 4 => Value::Signed32(value as i32),
+        _ => Value::Signed64(value),
+    })
+}
+
+fn read_unsigned(data: &[u8]) -> Option<u64> {
+    if data.is_empty() || data.len() > 8 {
         return None;
     }
     let mut bytes = [0u8; 8];
@@ -154,8 +168,8 @@ fn read_unsigned(data: &[u8], max: usize) -> Option<u64> {
     Some(u64::from_be_bytes(bytes))
 }
 
-fn read_signed(data: &[u8], max: usize) -> Option<i64> {
-    if data.is_empty() || data.len() > max || data.len() > 8 {
+fn read_signed(data: &[u8]) -> Option<i64> {
+    if data.is_empty() || data.len() > 8 {
         return None;
     }
     // Extend the most significant bit through the leading bytes.
@@ -188,11 +202,34 @@ mod tests {
             DataType::Boolean.decode_or_octets(&[7]),
             Value::OctetArray(vec![7])
         );
-        // Too long for an unsigned16.
+        // Too long for any integer.
         assert_eq!(
-            DataType::Unsigned16.decode_or_octets(&[1, 2, 3]),
-            Value::OctetArray(vec![1, 2, 3])
+            DataType::Unsigned64.decode_or_octets(&[0; 9]),
+            Value::OctetArray(vec![0; 9])
         );
+    }
+
+    #[test]
+    fn integers_take_the_wider_of_their_type_and_field() {
+        let cases: &[(DataType, &[u8], Value)] = &[
+            (DataType::Unsigned8, &[0, 0, 1, 44], Value::Unsigned32(300)),
+            (DataType::Unsigned8, &[0, 0, 1], Value::Unsigned32(1)),
+            (
+                DataType::Unsigned16,
+                &[0, 0, 0, 0, 0, 1],
+                Value::Unsigned64(1),
+            ),
+            (DataType::Unsigned32, &[0, 1], Value::Unsigned32(1)),
+            (DataType::Signed8, &[0xff, 0xfe], Value::Signed16(-2)),
+            (DataType::Signed32, &[0xff], Value::Signed32(-1)),
+        ];
+        for (data_type, data, expected) in cases {
+            assert_eq!(
+                data_type.decode(data).as_ref(),
+                Ok(expected),
+                "{data_type} {data:?}"
+            );
+        }
     }
 
     #[test]
@@ -222,69 +259,52 @@ mod tests {
 
     #[test]
     fn unsigned_values() {
-        let cases: &[(&[u8], usize, Option<u64>)] = &[
-            (&[0x00], 1, Some(0)),
-            (&[0xff], 1, Some(255)),
-            (&[0x01, 0x00], 2, Some(256)),
-            (&[0x12, 0x34, 0x56], 4, Some(0x12_34_56)),
-            (&[0x00, 0x01], 2, Some(1)),
-            (&[0xff; 4], 4, Some(u32::MAX as u64)),
-            (&[0xff; 8], 8, Some(u64::MAX)),
-            (&[0x80, 0, 0, 0, 0, 0, 0, 0], 8, Some(1u64 << 63)),
+        let cases: &[(&[u8], Option<u64>)] = &[
+            (&[0x00], Some(0)),
+            (&[0xff], Some(255)),
+            (&[0x01, 0x00], Some(256)),
+            (&[0x12, 0x34, 0x56], Some(0x12_34_56)),
+            (&[0x00, 0x01], Some(1)),
+            (&[0xff; 4], Some(u32::MAX as u64)),
+            (&[0xff; 8], Some(u64::MAX)),
+            (&[0x80, 0, 0, 0, 0, 0, 0, 0], Some(1u64 << 63)),
         ];
 
-        for &(data, max, expected) in cases {
-            assert_eq!(
-                read_unsigned(data, max),
-                expected,
-                "data={data:02x?}, max={max}",
-            );
+        for &(data, expected) in cases {
+            assert_eq!(read_unsigned(data), expected, "data={data:02x?}");
         }
     }
 
     #[test]
     fn signed_values() {
-        let cases: &[(&[u8], usize, Option<i64>)] = &[
-            (&[0x00], 1, Some(0)),
-            (&[0x7f], 1, Some(127)),
-            (&[0x80], 1, Some(-128)),
-            (&[0xff], 1, Some(-1)),
-            (&[0x00, 0x80], 2, Some(128)),
-            (&[0xff, 0xfe], 2, Some(-2)),
-            (&[0x80, 0x00], 2, Some(-32768)),
-            (&[0x7f, 0xff, 0xff], 4, Some(8_388_607)),
-            (&[0x80, 0x00, 0x00], 4, Some(-8_388_608)),
-            (&[0xff; 8], 8, Some(-1)),
+        let cases: &[(&[u8], Option<i64>)] = &[
+            (&[0x00], Some(0)),
+            (&[0x7f], Some(127)),
+            (&[0x80], Some(-128)),
+            (&[0xff], Some(-1)),
+            (&[0x00, 0x80], Some(128)),
+            (&[0xff, 0xfe], Some(-2)),
+            (&[0x80, 0x00], Some(-32768)),
+            (&[0x7f, 0xff, 0xff], Some(8_388_607)),
+            (&[0x80, 0x00, 0x00], Some(-8_388_608)),
+            (&[0xff; 8], Some(-1)),
             (
                 &[0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff],
-                8,
                 Some(i64::MAX),
             ),
-            (&[0x80, 0, 0, 0, 0, 0, 0, 0], 8, Some(i64::MIN)),
+            (&[0x80, 0, 0, 0, 0, 0, 0, 0], Some(i64::MIN)),
         ];
 
-        for &(data, max, expected) in cases {
-            assert_eq!(
-                read_signed(data, max),
-                expected,
-                "data={data:02x?}, max={max}",
-            );
+        for &(data, expected) in cases {
+            assert_eq!(read_signed(data), expected, "data={data:02x?}");
         }
     }
 
     #[test]
     fn invalid_lengths() {
-        let cases: &[(&[u8], usize)] = &[
-            (&[], 8),           // Empty input.
-            (&[0x01], 0),       // No bytes allowed.
-            (&[0x01, 0x02], 1), // Exceeds the field's maximum.
-            (&[0; 9], 8),       // Exceeds both limits.
-            (&[0; 9], 16),      // Exceeds u64/i64 despite a larger max.
-        ];
-
-        for &(data, max) in cases {
-            assert_eq!(read_unsigned(data, max), None);
-            assert_eq!(read_signed(data, max), None);
+        for data in [&[][..], &[0; 9]] {
+            assert_eq!(read_unsigned(data), None);
+            assert_eq!(read_signed(data), None);
         }
     }
 
@@ -296,10 +316,10 @@ mod tests {
 
             let unsigned_max = u64::MAX >> (8 * (8 - len));
 
-            assert_eq!(read_unsigned(&zeros, 8), Some(0));
-            assert_eq!(read_unsigned(&ones, 8), Some(unsigned_max));
-            assert_eq!(read_signed(&zeros, 8), Some(0));
-            assert_eq!(read_signed(&ones, 8), Some(-1));
+            assert_eq!(read_unsigned(&zeros), Some(0));
+            assert_eq!(read_unsigned(&ones), Some(unsigned_max));
+            assert_eq!(read_signed(&zeros), Some(0));
+            assert_eq!(read_signed(&ones), Some(-1));
         }
     }
 }
