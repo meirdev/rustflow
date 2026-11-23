@@ -6,9 +6,11 @@ use rustflow_core::common_flow::CommonFlow;
 use crate::enrich::config::{EnrichmentConfig, LookupKey, MAX_KEYS};
 use crate::enrich::table::Table;
 use crate::enrich::table::metrics::TableMetrics;
-use crate::enrich::{Key, Result, Source};
+use crate::enrich::{Error, Key, Result, Source};
+use crate::field::{Field, Value};
 
-pub type Enriched = Vec<Option<Arc<str>>>;
+/// The values looked up for one flow, one for each output field.
+pub type Enriched = Vec<Option<Value>>;
 
 struct Lookup {
     table: Table,
@@ -23,7 +25,7 @@ struct Group {
 
 pub struct EnrichmentEngine {
     lookups: Vec<Lookup>,
-    output_fields: Vec<String>,
+    output_fields: Vec<Field>,
     metrics: TableMetrics,
 }
 
@@ -40,20 +42,28 @@ impl EnrichmentEngine {
         let columns = config.source.columns();
         let mut groups: Vec<Group> = Vec::new();
         for mapping in &config.mappings {
-            let output = match self
-                .output_fields
-                .iter()
-                .position(|f| *f == mapping.output_field)
-            {
-                Some(index) => index,
+            let field = Field {
+                name: mapping.output_field.clone(),
+                kind: mapping.kind,
+                number: mapping.number,
+            };
+            let output = match self.output_fields.iter().position(|f| f.name == field.name) {
+                // Several lookups may fill one field, when they agree on it.
+                Some(index) if self.output_fields[index] == field => index,
+                Some(_) => {
+                    return Err(Error::Config(format!(
+                        "Output field '{}' is given two types or numbers",
+                        field.name
+                    )));
+                }
                 None => {
-                    self.output_fields.push(mapping.output_field.clone());
+                    self.output_fields.push(field);
                     self.output_fields.len() - 1
                 }
             };
             let column = columns
                 .iter()
-                .position(|c| *c == mapping.source_column)
+                .position(|(c, _)| *c == mapping.source_column)
                 .expect("mapping columns are the source columns");
             let field = (column, output);
             match groups.iter_mut().find(|g| g.keys == mapping.keys) {
@@ -70,7 +80,7 @@ impl EnrichmentEngine {
         Ok(loaded)
     }
 
-    pub fn output_fields(&self) -> &[String] {
+    pub fn output_fields(&self) -> &[Field] {
         &self.output_fields
     }
 
@@ -104,7 +114,7 @@ impl Snapshot<'_> {
                 };
                 for &(column, output) in &group.fields {
                     if let Some(value) = &row.values()[column] {
-                        out[output] = Some(Arc::clone(value));
+                        out[output] = Some(value.clone());
                     }
                 }
             }

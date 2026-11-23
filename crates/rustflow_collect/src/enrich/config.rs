@@ -8,6 +8,7 @@ use rustflow_core::common_flow::CommonFlow;
 use rustflow_core::for_each_flow_field;
 
 use crate::enrich::{Error, Key, KeyType, ReloadPolicy, Result};
+use crate::field;
 
 /// The most lookup keys one group may combine.
 pub const MAX_KEYS: usize = 4;
@@ -47,14 +48,15 @@ pub struct SourceConfig {
     origin: Origin,
     format: SourceFormat,
     reload: ReloadPolicy,
-    columns: Vec<String>,
+    /// The columns read from the source, and the kind of their values.
+    columns: Vec<(String, field::Kind)>,
 }
 
 impl SourceConfig {
     pub fn new(
         origin: Origin,
         format: SourceFormat,
-        columns: Vec<String>,
+        columns: Vec<(String, field::Kind)>,
         reload: ReloadPolicy,
     ) -> Result<Self> {
         if origin.path().as_os_str().is_empty() {
@@ -82,7 +84,7 @@ impl SourceConfig {
         }
 
         let mut seen = HashSet::new();
-        for column in &columns {
+        for (column, _) in &columns {
             if column.trim().is_empty() || !seen.insert(column) {
                 return Err(Error::Config(
                     "Source columns must be nonempty and unique".into(),
@@ -122,7 +124,7 @@ impl SourceConfig {
     pub fn format(&self) -> &SourceFormat {
         &self.format
     }
-    pub fn columns(&self) -> &[String] {
+    pub fn columns(&self) -> &[(String, field::Kind)] {
         &self.columns
     }
     pub fn reload(&self) -> ReloadPolicy {
@@ -266,6 +268,10 @@ pub struct FieldMapping {
     pub keys: Vec<LookupKey>,
     pub source_column: String,
     pub output_field: String,
+    /// The kind of the column's values, and so of the field's.
+    pub kind: field::Kind,
+    /// The field's protobuf number, when given one.
+    pub number: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -329,7 +335,7 @@ fn parse_field_mappings(value: &str) -> Result<Vec<FieldMapping>> {
     for group in value.split(';').map(str::trim).filter(|g| !g.is_empty()) {
         let (key, specs) = group.split_once('@').ok_or_else(|| {
             Error::Config(format!(
-                "Invalid field group, expected <key>@<source>:<output>[|<source>:<output>...]: '{group}'"
+                "Invalid field group, expected <key>@<source>:<output>[:<type>][:<number>][|...]: '{group}'"
             ))
         })?;
 
@@ -344,15 +350,35 @@ fn parse_field_mappings(value: &str) -> Result<Vec<FieldMapping>> {
         }
         let mut any = false;
         for spec in specs.split('|').map(str::trim).filter(|s| !s.is_empty()) {
-            let (source_column, output_field) = spec
-                .split_once(':')
-                .map(|(s, o)| (s.trim(), o.trim()))
-                .filter(|(s, o)| !s.is_empty() && !o.is_empty())
-                .ok_or_else(|| {
-                    Error::Config(format!(
-                        "Invalid field mapping, expected source:output: '{spec}'"
-                    ))
-                })?;
+            let mut parts = spec.split(':').map(str::trim);
+            let (source_column, output_field) = match (parts.next(), parts.next()) {
+                (Some(source), Some(output)) if !source.is_empty() && !output.is_empty() => {
+                    (source, output)
+                }
+                _ => {
+                    return Err(Error::Config(format!(
+                        "Invalid field mapping, expected source:output[:type][:number]: '{spec}'"
+                    )));
+                }
+            };
+            let (mut kind, mut number) = (None, None);
+            for part in parts {
+                let repeated = match (part.parse::<u32>(), part.parse::<field::Kind>()) {
+                    (Ok(value), _) => number.replace(value).is_some(),
+                    (_, Ok(value)) => kind.replace(value).is_some(),
+                    _ => {
+                        return Err(Error::Config(format!(
+                            "'{part}' in '{spec}' is neither a field number nor a type: \
+                             string, unsigned, signed, float, boolean or timestamp"
+                        )));
+                    }
+                };
+                if repeated {
+                    return Err(Error::Config(format!(
+                        "Field mapping '{spec}' gives a type or a number twice"
+                    )));
+                }
+            }
             if CommonFlow::FIELD_NAMES.contains(&output_field) {
                 return Err(Error::Config(format!(
                     "Output field '{output_field}' is the name of a flow field"
@@ -363,6 +389,8 @@ fn parse_field_mappings(value: &str) -> Result<Vec<FieldMapping>> {
                 keys: keys.clone(),
                 source_column: source_column.to_owned(),
                 output_field: output_field.to_owned(),
+                kind: kind.unwrap_or(field::Kind::Text),
+                number,
             });
             any = true;
         }
@@ -509,10 +537,17 @@ pub fn parse_enrich_arg(arg: &str) -> Result<EnrichmentConfig> {
         .transpose()?
         .unwrap_or_default();
 
-    let mut columns: Vec<String> = Vec::new();
+    let mut columns: Vec<(String, field::Kind)> = Vec::new();
     for mapping in &mappings {
-        if !columns.contains(&mapping.source_column) {
-            columns.push(mapping.source_column.clone());
+        let column = &mapping.source_column;
+        match columns.iter().find(|(name, _)| name == column) {
+            Some((_, kind)) if *kind != mapping.kind => {
+                return Err(Error::Config(format!(
+                    "Source column '{column}' is given two types"
+                )));
+            }
+            Some(_) => {}
+            None => columns.push((column.clone(), mapping.kind)),
         }
     }
 
@@ -547,6 +582,44 @@ mod tests {
         );
         assert_eq!(names(&config.mappings[0]), ["sampler_address", "in_if"]);
         assert_eq!(names(&config.mappings[1]), ["sampler_address", "out_if"]);
+    }
+
+    #[test]
+    fn an_output_can_have_a_type_and_a_field_number() {
+        let mappings = |fields: &str| {
+            let arg = format!("type=prefix_lookup,source=a.csv,key_column=net,fields={fields}");
+            parse_enrich_arg(&arg).map(|config| {
+                let outputs = config.mappings.iter();
+                let outputs = outputs.map(|m| (m.output_field.clone(), m.kind, m.number));
+                (
+                    config.source.columns().to_vec(),
+                    outputs.collect::<Vec<_>>(),
+                )
+            })
+        };
+
+        let (columns, outputs) =
+            mappings("src_addr@asn:src_asn:unsigned:1001|name:src_name|ok:src_ok:1003:boolean")
+                .unwrap();
+        assert_eq!(
+            outputs,
+            [
+                ("src_asn".to_string(), field::Kind::Unsigned, Some(1001)),
+                ("src_name".to_string(), field::Kind::Text, None),
+                ("src_ok".to_string(), field::Kind::Boolean, Some(1003)),
+            ]
+        );
+        assert_eq!(columns[0], ("asn".to_string(), field::Kind::Unsigned));
+
+        for invalid in [
+            "src_addr@asn:src_asn:number",
+            "src_addr@asn:src_asn:unsigned:signed",
+            "src_addr@asn:src_asn:1:2",
+            // One column read as two types.
+            "src_addr@asn:src_asn:unsigned;dst_addr@asn:dst_asn",
+        ] {
+            assert!(mappings(invalid).is_err(), "{invalid}");
+        }
     }
 
     #[test]

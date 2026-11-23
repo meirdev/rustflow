@@ -55,6 +55,9 @@ Fields that are unavailable in the original flow record are left unset.
 
 `flow_type` is one of `NETFLOW_V5`, `NETFLOW_V9`, `IPFIX`, or `SFLOW_V5`.
 
+After the flow's fields come the [extra fields](collector.md#extra-fields), then the
+[enrichment](enrichment.md) fields, each a column of its own in every serialization.
+
 ## NDJSON
 
 Each flow is serialized as a single JSON object per line.
@@ -79,7 +82,7 @@ Optional fields that do not have a value are omitted.
 
 ## CSV
 
-CSV output uses a fixed set of columns matching the common flow schema.
+CSV output has a column for each common flow field, then one for each extra and enrichment field.
 
 ```text
 flow_type,time_received_ns,sampler_address,sequence_num,sampling_rate,...,forwarding_status
@@ -138,6 +141,22 @@ rustflow collect \
 ```
 
 Protobuf messages are **length-delimited**: each message is prefixed with its size as a varint.
+
+Each extra field and enrichment field is a field of the message, with a number of its own
+from 1000 up: the number given with the field, or else the next free one in the order of the
+columns. Give the numbers yourself when files must stay readable after the fields change,
+since adding or removing a field moves the automatic ones.
+
+To read these fields, add them to the `CommonFlow` message in your copy of the schema. The
+collector logs the lines when it starts:
+
+```text
+Add to CommonFlow in rustflow.proto: optional uint64 vrf = 1000;
+Add to CommonFlow in rustflow.proto: optional string src_country = 1001;
+```
+
+A reader without them still reads the flow's own fields. Unsigned values are `uint64`, signed
+`sint64`, floats `double`, booleans `bool`, timestamps `int64` and everything else `string`.
 
 ## Discard
 

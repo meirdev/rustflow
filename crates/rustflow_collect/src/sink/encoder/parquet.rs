@@ -1,7 +1,7 @@
 use std::io;
 use std::sync::Arc;
 
-use arrow_schema::{DataType, Schema};
+use arrow_schema::{DataType, Schema as ArrowSchema};
 use parquet::arrow::ArrowWriter;
 use parquet::basic::{Compression, Encoding};
 use parquet::file::properties::{EnabledStatistics, WriterProperties, WriterVersion};
@@ -11,6 +11,7 @@ use rustflow_core::common_flow::CommonFlow;
 use super::columns::{BATCH_ROWS, Columns};
 use super::{Encoder, Writer};
 use crate::enrich::Enriched;
+use crate::sink::schema::Schema;
 
 /// Nearly every value is unique here, so a dictionary only costs time and
 /// delta encoding compresses far better.
@@ -38,7 +39,7 @@ pub struct Parquet {
 
 /// Statistics only on the timestamp columns: readers prune row groups of
 /// a time-ordered file by time range, never by port or counter.
-fn writer_properties(schema: &Schema) -> WriterProperties {
+fn writer_properties(schema: &ArrowSchema) -> WriterProperties {
     let mut props = WriterProperties::builder()
         .set_compression(Compression::SNAPPY)
         .set_writer_version(WriterVersion::PARQUET_2_0);
@@ -63,10 +64,10 @@ impl Parquet {
     /// testable.
     pub fn open_with_batch_rows(
         out: Writer,
-        enriched_fields: &[String],
+        schema: &Schema,
         batch_rows: usize,
     ) -> io::Result<Self> {
-        let columns = Columns::new(enriched_fields);
+        let columns = Columns::new(schema);
         let props = writer_properties(columns.schema());
         let writer = ArrowWriter::try_new(out, Arc::clone(columns.schema()), Some(props))
             .map_err(io::Error::other)?;
@@ -118,8 +119,8 @@ impl Drop for Parquet {
 }
 
 impl Parquet {
-    pub fn open(out: Writer, enriched_fields: &[String]) -> io::Result<Self> {
-        Self::open_with_batch_rows(out, enriched_fields, BATCH_ROWS)
+    pub fn open(out: Writer, schema: &Schema) -> io::Result<Self> {
+        Self::open_with_batch_rows(out, schema, BATCH_ROWS)
     }
 }
 

@@ -9,6 +9,7 @@ use clap::{Args as ClapArgs, ValueEnum};
 use strum::VariantArray;
 
 use crate::enrich::{EnrichmentConfig, parse_enrich_arg};
+use crate::extra_field::ExtraFieldArg;
 use crate::sink::{
     LEVEL_3_MINUTES, MAX_PARTITION_LEVEL, OutputFormat, Partitioning, Serialization, SinkConfig,
 };
@@ -114,6 +115,15 @@ pub struct CollectArgs {
     #[arg(long)]
     pub(crate) ie_mapping: Option<PathBuf>,
 
+    /// Copy an element of every NetFlow v9 and IPFIX data record into a
+    /// column of its own. ELEMENT is a name (`ingressVRFID`), an ID (`234`)
+    /// or `enterprise/ID` (`9/12232`), and must be known, from IANA or from
+    /// --ie-mapping. `@NUMBER` gives the field its protobuf field number,
+    /// 1000 or more; without it, the next free one. Repeat for several
+    /// fields.
+    #[arg(long = "extra-field", value_name = "NAME=ELEMENT[@NUMBER]")]
+    pub(crate) extra_fields: Vec<ExtraFieldArg>,
+
     /// Template cache timeout, in seconds or with a unit (e.g. `20m`)
     #[arg(
         long,
@@ -127,10 +137,13 @@ pub struct CollectArgs {
     ///
     /// Format: `type=prefix_lookup|exact,source=file.csv,key_column=col,
     /// fields=<key>@col:output|col2:output2;<key2>@col:output3[,
-    /// reload=30s|watch]`. key_column names the CSV column holding the
-    /// prefixes or keys; omit it for MMDB sources. An exact lookup can
-    /// combine several keys with `+`, e.g. key_column=exporter+ifindex and
-    /// fields=sampler_address+in_if@name:in_if_name
+    /// reload=30s|watch]`. An output may be followed by `:type` (string,
+    /// unsigned, signed, float, boolean or timestamp; string by default)
+    /// and by `:number`, its protobuf field number. key_column names the CSV
+    /// column holding the prefixes or keys; omit it for MMDB sources. An
+    /// exact lookup can combine several keys with `+`, e.g.
+    /// key_column=exporter+ifindex and fields=sampler_address+in_if@name:
+    /// in_if_name
     #[arg(long = "enrich", value_parser = parse_enrich_arg)]
     pub(crate) enrich: Vec<EnrichmentConfig>,
 }
@@ -234,6 +247,9 @@ impl CollectArgs {
         let serialization = self.serialization;
         if self.format == OutputFormat::Raw && !serialization.takes_raw() {
             bail!("--serialization {serialization} requires --format common");
+        }
+        if self.format == OutputFormat::Raw && !self.extra_fields.is_empty() {
+            bail!("--extra-field requires --format common");
         }
         if let Some(interval) = self.interval {
             check_interval(interval, self.level)?;

@@ -51,6 +51,14 @@ message CommonFlow {
   optional uint32 observation_domain_id = 36;
   optional uint32 forwarding_status = 37;
 
-  // Fields added by --enrich, keyed by their output name.
-  map<string, string> enriched = 38;
+  // Field numbers from 1000 are the fields added by --extra-field and
+  // --enrich, each under its own number: the one given with the field, or
+  // else the next free one, in the order of the columns. The collector
+  // logs the lines to add here when it starts, e.g.
+  //
+  //   optional uint64 vrf = 1000;
+  //   optional string src_country = 1001;
+  //
+  // Unsigned values are uint64, signed sint64, floats double, booleans
+  // bool, timestamps int64 (Unix nanoseconds) and everything else string.
 }

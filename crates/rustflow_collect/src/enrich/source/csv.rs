@@ -75,11 +75,12 @@ fn read(
     let column_indexes = schema
         .columns()
         .iter()
-        .map(|column| {
-            headers
+        .map(|(column, kind)| {
+            let index = headers
                 .iter()
                 .position(|h| h == column)
-                .ok_or_else(|| Error::Data(format!("CSV field column '{column}' not found")))
+                .ok_or_else(|| Error::Data(format!("CSV field column '{column}' not found")))?;
+            Ok((index, column, *kind))
         })
         .collect::<Result<Vec<_>>>()?;
 
@@ -96,12 +97,21 @@ fn read(
             )));
         }
 
-        let fields = schema.row(column_indexes.iter().map(|&i| {
-            let value = cell(i);
-            (!value.is_empty()).then(|| value.to_owned())
-        }));
+        let values = column_indexes
+            .iter()
+            .map(|&(i, column, kind)| match cell(i) {
+                "" => Ok(None),
+                value => kind.parse(value).map(Some).ok_or_else(|| {
+                    Error::Data(format!(
+                        "'{value}' in CSV column '{column}' at record {} is not of the \
+                         column's type",
+                        index + 1
+                    ))
+                }),
+            })
+            .collect::<Result<Vec<_>>>()?;
 
-        emit(&keys, fields)?;
+        emit(&keys, schema.row(values))?;
     }
 
     Ok(())
@@ -114,6 +124,7 @@ mod tests {
 
     use super::*;
     use crate::enrich::key::{Key, KeyType};
+    use crate::field::{Kind, Value};
 
     #[test]
     fn exact_rows_match_on_every_key_column() {
@@ -123,7 +134,7 @@ mod tests {
         writeln!(file, "lan,10.0.0.1,2").unwrap();
         writeln!(file, "wan,10.0.0.2,1").unwrap();
 
-        let schema = Schema::new(["name"]);
+        let schema = Schema::new([("name", Kind::Text)]);
         let table = open(
             file.reopen().unwrap(),
             &["exporter".into(), "ifindex".into()],
@@ -136,13 +147,38 @@ mod tests {
         let name = |keys: &[Key]| {
             table
                 .lookup(keys)
-                .map(|row| row.values()[0].clone().unwrap().to_string())
+                .map(|row| row.values()[0].clone().unwrap())
         };
 
         assert_eq!(table.len(), 3);
-        assert_eq!(name(&[exporter, Key::Number(2)]).as_deref(), Some("lan"));
+        let lan = Value::Text("lan".into());
+        assert_eq!(name(&[exporter, Key::Number(2)]), Some(lan));
         assert_eq!(name(&[exporter, Key::Number(3)]), None);
         assert_eq!(name(&[Key::Number(2), exporter]), None);
         assert_eq!(name(&[exporter]), None);
+    }
+
+    #[test]
+    fn cells_are_values_of_the_kind_of_their_column() {
+        let lookup = CsvLookup::Exact(vec![KeyType::Number]);
+        let schema = Schema::new([("speed", Kind::Unsigned), ("name", Kind::Text)]);
+        let open = |rows: &str| {
+            let csv = format!("ifindex,speed,name\n{rows}");
+            open(csv.as_bytes(), &["ifindex".into()], &lookup, &schema)
+        };
+
+        let table = open("1,1000,uplink\n2,,lan\n").unwrap();
+        let row = |ifindex| table.lookup(&[Key::Number(ifindex)]).unwrap();
+        assert_eq!(
+            row(1).values(),
+            [
+                Some(Value::Unsigned(1000)),
+                Some(Value::Text("uplink".into()))
+            ]
+        );
+        assert_eq!(row(2).values()[0], None);
+
+        let error = open("1,fast,uplink\n").err().unwrap().to_string();
+        assert!(error.contains("'fast' in CSV column 'speed' at record 1"));
     }
 }

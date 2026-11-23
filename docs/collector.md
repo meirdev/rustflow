@@ -95,6 +95,42 @@ IPFIX exporters can also describe their own elements in type records ([RFC 5610]
 RustFlow uses a type record for an element that neither the built-in mappings nor `--ie-mapping` define, for the exporter and observation domain that sent it.
 Elements described differently by two type records stay undecoded.
 
+## Extra Fields
+
+The common flow has a fixed set of fields. `--extra-field NAME=ELEMENT` adds a column named
+`NAME` holding an element of every NetFlow v9 and IPFIX data record, for elements the common
+flow does not keep. Repeat it for several fields:
+
+```bash
+rustflow collect \
+  --input netflow://:9995 \
+  -f common \
+  --extra-field direction=flowDirection \
+  --extra-field vrf=ingressVRFID \
+  --extra-field app=9/12235
+```
+
+`ELEMENT` is an element name, an ID (`61`), or `enterprise/ID` (`9/12235`). It must be an IANA
+element or one from `--ie-mapping`, whose data type sets the column's type. `@NUMBER` after it,
+as in `vrf=ingressVRFID@1000`, gives the field its [protobuf field number](output.md#protobuf).
+
+
+| Element data type                       | Column                                          |
+| --------------------------------------- | ----------------------------------------------- |
+| unsigned integers                       | uint64                                          |
+| signed integers                         | int64                                           |
+| float32, float64                        | float64                                         |
+| boolean                                 | boolean                                         |
+| dateTimeSeconds ... dateTimeNanoseconds | timestamp, as nanoseconds like the flow's times |
+| IPv4 and IPv6 addresses, MAC addresses  | string, in their usual notation                 |
+| string                                  | string                                          |
+| octetArray                              | string, in hex                                  |
+
+Lists and unsigned256 cannot be columns. A record without the element leaves its column empty,
+and so do NetFlow v5 and sFlow flows. If a template lists an element twice, the first value is
+used. The extra columns come after the flow's fields and before the enrichment fields, and a name
+may not repeat any other column's. `--extra-field` requires `--format common`.
+
 ## Template Cache
 
 NetFlow v9 and IPFIX use templates to describe the fields contained in data records.

@@ -1,12 +1,14 @@
-use std::collections::BTreeMap;
 use std::io::{self, BufWriter, Write};
 use std::net::IpAddr;
 
 use prost::Message;
+use prost::encoding::{WireType, encode_key, encode_varint};
 use rustflow_core::common_flow::{self, CommonFlow};
 
 use super::{Encoder, WRITE_BUFFER_BYTES, Writer};
 use crate::enrich::Enriched;
+use crate::field::Scalar;
+use crate::sink::schema::{Added, Schema};
 
 /// `rustflow.FlowType` of `proto/rustflow.proto`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ::prost::Enumeration)]
@@ -31,7 +33,7 @@ impl From<common_flow::FlowType> for FlowType {
 }
 
 /// `rustflow.CommonFlow` of `proto/rustflow.proto`: the fields of
-/// `CommonFlow`, tagged in its order, then the enrichment map.
+/// `CommonFlow`, tagged in its order.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct FlowMessage {
     #[prost(enumeration = "FlowType", tag = "1")]
@@ -108,8 +110,6 @@ pub struct FlowMessage {
     pub observation_domain_id: Option<u32>,
     #[prost(uint32, optional, tag = "37")]
     pub forwarding_status: Option<u32>,
-    #[prost(btree_map = "string, string", tag = "38")]
-    pub enriched: BTreeMap<String, String>,
 }
 
 /// An address on the wire: 4 bytes for IPv4, 16 for IPv6.
@@ -120,10 +120,13 @@ fn ip_bytes(addr: IpAddr) -> Vec<u8> {
     }
 }
 
+/// The `CommonFlow` fields that [`FlowMessage::from_flow`] maps: a field
+/// added to the core fails this check until it is mapped there.
+const MAPPED_FIELDS: usize = 37;
+const _: () = assert!(CommonFlow::FIELD_NAMES.len() == MAPPED_FIELDS);
+
 impl FlowMessage {
-    /// No `..` in the destructure: a field added to `CommonFlow` fails to
-    /// compile until it is mapped here.
-    pub fn from_flow(flow: &CommonFlow, names: &[String], enriched: &Enriched) -> Self {
+    pub fn from_flow(flow: &CommonFlow) -> Self {
         let CommonFlow {
             flow_type,
             time_received_ns,
@@ -162,6 +165,7 @@ impl FlowMessage {
             dst_vlan,
             observation_domain_id,
             forwarding_status,
+            ..
         } = flow;
         Self {
             flow_type: FlowType::from(*flow_type).into(),
@@ -201,28 +205,64 @@ impl FlowMessage {
             dst_vlan: dst_vlan.map(u32::from),
             observation_domain_id: *observation_domain_id,
             forwarding_status: *forwarding_status,
-            enriched: names
-                .iter()
-                .zip(enriched.iter())
-                .filter_map(|(name, value)| Some((name.clone(), value.as_deref()?.to_owned())))
-                .collect(),
         }
     }
 }
 
-/// Length-delimited protobuf, one [`FlowMessage`] per record.
+/// Appends `value` as the protobuf field `number`, in the wire form of
+/// its kind's type in `rustflow.proto`.
+fn encode_added(buf: &mut Vec<u8>, text: &mut Vec<u8>, number: u32, value: Scalar<'_>) {
+    match value {
+        Scalar::Unsigned(v) => {
+            encode_key(number, WireType::Varint, buf);
+            encode_varint(v, buf);
+        }
+        Scalar::Signed(v) => {
+            encode_key(number, WireType::Varint, buf);
+            // sint64: zigzag, so that small negative numbers stay short.
+            encode_varint(((v << 1) ^ (v >> 63)) as u64, buf);
+        }
+        Scalar::Timestamp(v) => {
+            encode_key(number, WireType::Varint, buf);
+            encode_varint(v as u64, buf);
+        }
+        Scalar::Boolean(v) => {
+            encode_key(number, WireType::Varint, buf);
+            encode_varint(v.into(), buf);
+        }
+        Scalar::Float(v) => {
+            encode_key(number, WireType::SixtyFourBit, buf);
+            buf.extend_from_slice(&v.to_le_bytes());
+        }
+        Scalar::String(_) | Scalar::Address(_) | Scalar::Mac(_) | Scalar::Octets(_) => {
+            text.clear();
+            value.write_text(text);
+            encode_key(number, WireType::LengthDelimited, buf);
+            encode_varint(text.len() as u64, buf);
+            buf.extend_from_slice(text);
+        }
+    }
+}
+
+/// Length-delimited protobuf, one [`FlowMessage`] per record, followed in
+/// the same message by the added fields, each under its own number.
 pub struct Protobuf {
     out: BufWriter<Writer>,
-    names: Vec<String>,
+    added: Vec<Added>,
+    /// One message, written in a single call.
     buf: Vec<u8>,
+    text: Vec<u8>,
+    length: Vec<u8>,
 }
 
 impl Protobuf {
-    pub fn open(out: Writer, enriched_fields: &[String]) -> io::Result<Self> {
+    pub fn open(out: Writer, schema: &Schema) -> io::Result<Self> {
         Ok(Self {
             out: BufWriter::with_capacity(WRITE_BUFFER_BYTES, out),
-            names: enriched_fields.to_vec(),
+            added: schema.added().map(|(_, added)| added).collect(),
             buf: Vec::with_capacity(512),
+            text: Vec::new(),
+            length: Vec::with_capacity(4),
         })
     }
 }
@@ -230,9 +270,17 @@ impl Protobuf {
 impl Encoder for Protobuf {
     fn encode(&mut self, flow: &CommonFlow, enriched: &Enriched) -> io::Result<()> {
         self.buf.clear();
-        FlowMessage::from_flow(flow, &self.names, enriched)
-            .encode_length_delimited(&mut self.buf)
+        FlowMessage::from_flow(flow)
+            .encode(&mut self.buf)
             .map_err(io::Error::other)?;
+        for added in &self.added {
+            if let Some(value) = added.value(flow, enriched) {
+                encode_added(&mut self.buf, &mut self.text, added.number, value);
+            }
+        }
+        self.length.clear();
+        encode_varint(self.buf.len() as u64, &mut self.length);
+        self.out.write_all(&self.length)?;
         self.out.write_all(&self.buf)
     }
 
@@ -242,5 +290,108 @@ impl Encoder for Protobuf {
 
     fn finish(&mut self) -> io::Result<()> {
         self.out.flush()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use rustflow_core::common_flow::FlowType as CoreFlowType;
+    use rustflow_core::value::Value;
+
+    use super::*;
+    use crate::field::{self, Field, Kind};
+
+    /// The added fields of the test, as a consumer would declare them.
+    #[derive(Clone, PartialEq, ::prost::Message)]
+    struct Consumer {
+        #[prost(uint32, tag = "4")]
+        sequence_num: u32,
+        #[prost(uint64, optional, tag = "1000")]
+        count: Option<u64>,
+        #[prost(sint64, optional, tag = "1001")]
+        delta: Option<i64>,
+        #[prost(double, optional, tag = "1002")]
+        ratio: Option<f64>,
+        #[prost(bool, optional, tag = "1003")]
+        ok: Option<bool>,
+        #[prost(int64, optional, tag = "2000")]
+        start: Option<i64>,
+        #[prost(string, optional, tag = "1004")]
+        host: Option<String>,
+        #[prost(string, optional, tag = "1005")]
+        missing: Option<String>,
+        #[prost(string, optional, tag = "1006")]
+        site: Option<String>,
+    }
+
+    #[derive(Clone, Default)]
+    struct Memory(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for Memory {
+        fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(data);
+            Ok(data.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn added_fields_are_fields_of_the_message() {
+        let field = |name: &str, kind, number| Field {
+            name: name.into(),
+            kind,
+            number,
+        };
+        let schema = Schema::new(
+            &[
+                field("count", Kind::Unsigned, None),
+                field("delta", Kind::Signed, None),
+                field("ratio", Kind::Float, None),
+                field("ok", Kind::Boolean, None),
+                field("start", Kind::Timestamp, Some(2000)),
+                field("host", Kind::Text, None),
+                field("missing", Kind::Text, None),
+            ],
+            &[field("site", Kind::Text, None)],
+        )
+        .unwrap();
+        let memory = Memory::default();
+        let mut protobuf = Protobuf::open(Box::new(memory.clone()), &schema).unwrap();
+        let mut flow = CommonFlow::new(CoreFlowType::Ipfix, 0, [192, 0, 2, 1].into(), 9);
+        flow.extra = vec![
+            Some(Value::Unsigned32(7)),
+            Some(Value::Signed32(-3)),
+            Some(Value::Float64(0.5)),
+            Some(Value::Boolean(true)),
+            Some(Value::DateTimeSeconds(2)),
+            Some(Value::Ipv4Address([192, 0, 2, 7].into())),
+            None,
+        ]
+        .into();
+        let enriched = vec![Some(field::Value::Text("lab".into()))];
+        protobuf.encode(&flow, &enriched).unwrap();
+        protobuf.finish().unwrap();
+
+        let written = memory.0.lock().unwrap();
+        let message = Consumer::decode_length_delimited(written.as_slice()).unwrap();
+        assert_eq!(
+            message,
+            Consumer {
+                sequence_num: 9,
+                count: Some(7),
+                delta: Some(-3),
+                ratio: Some(0.5),
+                ok: Some(true),
+                start: Some(2_000_000_000),
+                host: Some("192.0.2.7".into()),
+                missing: None,
+                site: Some("lab".into()),
+            }
+        );
     }
 }

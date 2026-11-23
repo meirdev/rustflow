@@ -4,12 +4,13 @@ use rustflow_core::common_flow::CommonFlow;
 
 use super::{Encoder, Writer};
 use crate::enrich::Enriched;
+use crate::sink::schema::Schema;
 
 /// Writes nothing; the load-testing baseline.
 pub struct Discard;
 
 impl Discard {
-    pub fn open(_: Writer, _: &[String]) -> io::Result<Self> {
+    pub fn open(_: Writer, _: &Schema) -> io::Result<Self> {
         Ok(Self)
     }
 }

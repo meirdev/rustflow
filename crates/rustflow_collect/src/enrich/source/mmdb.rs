@@ -7,6 +7,7 @@ use super::Source;
 use crate::enrich::Result;
 use crate::enrich::key::Key;
 use crate::enrich::row::{Row, Schema};
+use crate::field::{self, Kind};
 
 pub struct MmdbSource {
     reader: Reader<Vec<u8>>,
@@ -27,7 +28,7 @@ impl MmdbSource {
         let paths = schema
             .columns()
             .iter()
-            .map(|column| column.split('.').map(str::to_owned).collect())
+            .map(|(column, _)| column.split('.').map(str::to_owned).collect())
             .collect();
 
         Ok(Self {
@@ -53,13 +54,11 @@ impl Source for MmdbSource {
         let values: Vec<_> = self
             .paths
             .iter()
-            .map(|path| {
+            .zip(self.schema.columns())
+            .map(|(path, (_, kind))| {
                 let path: Vec<_> = path.iter().map(|k| PathElement::Key(k)).collect();
-                result
-                    .decode_path::<Value>(&path)
-                    .ok()
-                    .flatten()
-                    .and_then(value_to_string)
+                let value = result.decode_path::<Value>(&path).ok().flatten()?;
+                value_of(value, *kind)
             })
             .collect();
 
@@ -71,10 +70,18 @@ impl Source for MmdbSource {
     }
 }
 
-pub fn value_to_string(value: Value) -> Option<String> {
-    match value {
-        Value::Null => None,
-        Value::String(s) => (!s.is_empty()).then_some(s),
-        value => Some(value.to_string()),
-    }
+/// A database value as a column of `kind` holds it; `None` when it is not
+/// of that kind. Any value has a text form.
+fn value_of(value: Value, kind: Kind) -> Option<field::Value> {
+    Some(match (kind, value) {
+        (Kind::Unsigned, value) => field::Value::Unsigned(value.as_u64()?),
+        (Kind::Signed, value) => field::Value::Signed(value.as_i64()?),
+        (Kind::Timestamp, value) => field::Value::Timestamp(value.as_i64()?),
+        (Kind::Float, value) => field::Value::Float(value.as_f64()?),
+        (Kind::Boolean, value) => field::Value::Boolean(value.as_bool()?),
+        (Kind::Text, Value::Null) => return None,
+        (Kind::Text, Value::String(text)) if text.is_empty() => return None,
+        (Kind::Text, Value::String(text)) => field::Value::Text(text.into()),
+        (Kind::Text, value) => field::Value::Text(value.to_string().into()),
+    })
 }

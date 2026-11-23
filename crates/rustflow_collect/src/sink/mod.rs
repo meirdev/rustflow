@@ -6,6 +6,7 @@ pub mod layout;
 pub mod metrics;
 pub mod pipeline;
 pub mod rotating;
+pub mod schema;
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -19,6 +20,7 @@ pub use layout::{LEVEL_3_MINUTES, Layout, MAX_PARTITION_LEVEL, Partitioning};
 use log::warn;
 pub use metrics::OutputMetrics;
 pub use rotating::RotatingSink;
+pub use schema::Schema;
 
 /// The original packet structure, or the normalized flow.
 #[derive(
@@ -68,14 +70,14 @@ impl Serialization {
     }
 
     /// Opens the encoder over `out`; the header is written right away.
-    pub fn open(self, out: Writer, enriched_fields: &[String]) -> io::Result<Box<dyn Encoder>> {
+    pub fn open(self, out: Writer, schema: &Schema) -> io::Result<Box<dyn Encoder>> {
         Ok(match self {
-            Self::Ndjson => Box::new(Ndjson::open(out, enriched_fields)?),
-            Self::Csv => Box::new(Csv::open(out, enriched_fields)?),
-            Self::Parquet => Box::new(Parquet::open(out, enriched_fields)?),
-            Self::ArrowIpc => Box::new(ArrowIpc::open(out, enriched_fields)?),
-            Self::Protobuf => Box::new(Protobuf::open(out, enriched_fields)?),
-            Self::Discard => Box::new(Discard::open(out, enriched_fields)?),
+            Self::Ndjson => Box::new(Ndjson::open(out, schema)?),
+            Self::Csv => Box::new(Csv::open(out, schema)?),
+            Self::Parquet => Box::new(Parquet::open(out, schema)?),
+            Self::ArrowIpc => Box::new(ArrowIpc::open(out, schema)?),
+            Self::Protobuf => Box::new(Protobuf::open(out, schema)?),
+            Self::Discard => Box::new(Discard::open(out, schema)?),
         })
     }
 }
@@ -121,7 +123,7 @@ impl SinkConfig {
 /// The sink for the CLI flags.
 pub fn build(
     config: &SinkConfig,
-    enriched_fields: Vec<String>,
+    schema: Schema,
     metrics: &OutputMetrics,
 ) -> io::Result<RotatingSink> {
     let serialization = config.serialization;
@@ -152,8 +154,7 @@ pub fn build(
         }),
         _ => None,
     };
-    let mut sink =
-        RotatingSink::open(serialization, destination, enriched_fields, metrics.clone())?;
+    let mut sink = RotatingSink::open(serialization, destination, schema, metrics.clone())?;
     if let Some(command) = &config.exec {
         let root = config.path.as_deref().unwrap_or(Path::new(""));
         sink = sink.with_hook(FileHook::spawn(Hook::Exec, command, root, metrics)?);

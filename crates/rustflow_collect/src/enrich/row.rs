@@ -1,20 +1,28 @@
 use std::fmt;
 use std::sync::Arc;
 
+use crate::field::{Kind, Value};
+
+/// The columns of a source's rows, and the kind of each one's values.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Schema(Arc<[String]>);
+pub struct Schema(Arc<[(String, Kind)]>);
 
 impl Schema {
-    pub fn new(columns: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        Self(columns.into_iter().map(Into::into).collect())
+    pub fn new(columns: impl IntoIterator<Item = (impl Into<String>, Kind)>) -> Self {
+        Self(
+            columns
+                .into_iter()
+                .map(|(name, kind)| (name.into(), kind))
+                .collect(),
+        )
     }
 
-    pub fn columns(&self) -> &[String] {
+    pub fn columns(&self) -> &[(String, Kind)] {
         &self.0
     }
 
-    pub fn row(&self, values: impl IntoIterator<Item = Option<String>>) -> Row {
-        let values: Arc<[_]> = values.into_iter().map(|v| v.map(Arc::from)).collect();
+    pub fn row(&self, values: impl IntoIterator<Item = Option<Value>>) -> Row {
+        let values: Arc<[_]> = values.into_iter().collect();
         assert_eq!(
             values.len(),
             self.0.len(),
@@ -29,28 +37,24 @@ impl Schema {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq)]
 pub struct Row {
     schema: Schema,
-    values: Arc<[Option<Arc<str>>]>,
+    values: Arc<[Option<Value>]>,
 }
 
 impl Row {
-    pub fn values(&self) -> &[Option<Arc<str>>] {
+    pub fn values(&self) -> &[Option<Value>] {
         &self.values
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
-        self.schema
-            .columns()
-            .iter()
-            .zip(self.values.iter())
-            .filter_map(|(column, value)| Some((column.as_str(), value.as_deref()?)))
     }
 }
 
 impl fmt::Debug for Row {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_map().entries(self.iter()).finish()
+        let columns = self.schema.columns().iter().map(|(name, _)| name);
+        let present = columns
+            .zip(self.values.iter())
+            .filter_map(|(column, value)| Some((column, value.as_ref()?)));
+        f.debug_map().entries(present).finish()
     }
 }

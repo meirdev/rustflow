@@ -5,8 +5,8 @@ use jiff::Timestamp;
 
 use super::{ReadError, nanoseconds};
 use crate::common_flow::{
-    CommonFlow, ExporterOptions, FlowType, from_ipfix, from_netflow_v5, from_netflow_v9,
-    from_sflow_v5,
+    CommonFlow, ExporterOptions, ExtraFields, FlowType, extend_with_extra, from_ipfix,
+    from_netflow_v5, from_netflow_v9, from_sflow_v5,
 };
 use crate::information_element::Registry;
 use crate::set::Set;
@@ -140,6 +140,7 @@ pub struct NetflowProcessor {
     registry: Registry,
     template_ttl: Duration,
     exporters: BoundedTimedMap<IpAddr, Exporter>,
+    extra_fields: ExtraFields,
 }
 
 #[derive(Debug)]
@@ -172,7 +173,19 @@ impl NetflowProcessor {
             registry,
             template_ttl: TEMPLATE_TTL,
             exporters: BoundedTimedMap::new(MAX_EXPORTERS, TEMPLATE_TTL),
+            extra_fields: ExtraFields::default(),
         }
+    }
+
+    /// Copies these elements of each NetFlow v9 and IPFIX data record into
+    /// [`CommonFlow::extra`].
+    pub fn with_extra_fields(mut self, extra_fields: ExtraFields) -> Self {
+        self.extra_fields = extra_fields;
+        self
+    }
+
+    pub fn extra_fields(&self) -> &ExtraFields {
+        &self.extra_fields
     }
 
     pub fn with_template_ttl(mut self, ttl: Duration) -> Self {
@@ -182,11 +195,26 @@ impl NetflowProcessor {
     }
 
     fn exporter(&mut self, from: IpAddr, now: Instant) -> &mut Exporter {
-        let (registry, ttl) = (&self.registry, self.template_ttl);
-        self.exporters
-            .get_or_insert_with_at(from, now, || Exporter::new(registry, ttl))
-            .expect("the exporter map has room")
+        exporter(
+            &mut self.exporters,
+            &self.registry,
+            self.template_ttl,
+            from,
+            now,
+        )
     }
+}
+
+fn exporter<'a>(
+    exporters: &'a mut BoundedTimedMap<IpAddr, Exporter>,
+    registry: &Registry,
+    ttl: Duration,
+    from: IpAddr,
+    now: Instant,
+) -> &'a mut Exporter {
+    exporters
+        .get_or_insert_with_at(from, now, || Exporter::new(registry, ttl))
+        .expect("the exporter map has room")
 }
 
 impl Default for NetflowProcessor {
@@ -240,15 +268,23 @@ impl Processor for NetflowProcessor {
         now: Instant,
         flows: &mut impl Extend<CommonFlow>,
     ) {
+        let Self {
+            registry,
+            template_ttl,
+            exporters,
+            extra_fields,
+        } = self;
         match packet {
             NetflowPacket::V5(packet) => flows.extend(from_netflow_v5(packet, from, received_ns)),
             NetflowPacket::V9(packet) => {
-                let options = &mut self.exporter(from, now).options;
-                flows.extend(from_netflow_v9(packet, from, received_ns, options, now));
+                let options = &mut exporter(exporters, registry, *template_ttl, from, now).options;
+                let converted = from_netflow_v9(packet, from, received_ns, options, now);
+                extend_with_extra(flows, converted, &packet.flow_sets, extra_fields);
             }
             NetflowPacket::Ipfix(packet) => {
-                let options = &mut self.exporter(from, now).options;
-                flows.extend(from_ipfix(packet, from, received_ns, options, now));
+                let options = &mut exporter(exporters, registry, *template_ttl, from, now).options;
+                let converted = from_ipfix(packet, from, received_ns, options, now);
+                extend_with_extra(flows, converted, &packet.sets, extra_fields);
             }
         }
     }
@@ -327,5 +363,92 @@ impl Processor for SflowProcessor {
 
     fn summary(packet: &SflowPacket) -> Summary {
         Summary::new(packet.flow_type(), packet.flow_count())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::Ipv4Addr;
+
+    use super::*;
+    use crate::information_element::ElementId;
+    use crate::value::Value;
+
+    const FIELDS: [u8; 12] = [
+        0, 8, 0, 4, // sourceIPv4Address
+        0, 1, 0, 4, // octetDeltaCount
+        0, 252, 0, 4, // ingressPhysicalInterface
+    ];
+    const RECORDS: [u8; 24] = [
+        192, 0, 2, 1, 0, 0, 0, 100, 0, 0, 0, 5, // a record
+        192, 0, 2, 2, 0, 0, 0, 200, 0, 0, 0, 6, // a record
+    ];
+
+    fn set(id: u16, body: &[&[u8]]) -> Vec<u8> {
+        let body = body.concat();
+        let length = u16::try_from(4 + body.len()).unwrap();
+        [&id.to_be_bytes()[..], &length.to_be_bytes(), &body].concat()
+    }
+
+    fn ipfix() -> Vec<u8> {
+        let template = set(2, &[&[1, 0, 0, 3], &FIELDS]);
+        let sets = [template, set(256, &[&RECORDS])].concat();
+        let length = u16::try_from(16 + sets.len()).unwrap();
+        [&[0, 10][..], &length.to_be_bytes(), &[0; 12], &sets].concat()
+    }
+
+    fn netflow_v9() -> Vec<u8> {
+        let template = set(0, &[&[1, 0, 0, 3], &FIELDS]);
+        let flow_sets = [template, set(256, &[&RECORDS])].concat();
+        [&[0, 9, 0, 3][..], &[0; 16], &flow_sets].concat()
+    }
+
+    fn flows(processor: &mut NetflowProcessor, payload: &[u8]) -> Vec<CommonFlow> {
+        let mut flows = Vec::new();
+        let from = [192, 0, 2, 9].into();
+        let received = Timestamp::UNIX_EPOCH;
+        processor
+            .process(from, payload, received, Instant::now(), &mut flows)
+            .unwrap();
+        flows
+    }
+
+    #[test]
+    fn extra_fields_take_the_values_of_each_record() {
+        let extra = ExtraFields::new([
+            ElementId::INGRESS_PHYSICAL_INTERFACE,
+            ElementId::SOURCE_IPV4_ADDRESS,
+            ElementId::SOURCE_TRANSPORT_PORT,
+        ]);
+        for payload in [ipfix(), netflow_v9()] {
+            let mut processor = NetflowProcessor::default().with_extra_fields(extra.clone());
+            let flows = flows(&mut processor, &payload);
+
+            let extra: Vec<_> = flows.iter().map(|flow| flow.extra.as_slice()).collect();
+            assert_eq!(
+                extra,
+                [
+                    [
+                        Some(Value::Unsigned32(5)),
+                        Some(Value::Ipv4Address(Ipv4Addr::new(192, 0, 2, 1))),
+                        None,
+                    ],
+                    [
+                        Some(Value::Unsigned32(6)),
+                        Some(Value::Ipv4Address(Ipv4Addr::new(192, 0, 2, 2))),
+                        None,
+                    ],
+                ]
+            );
+            assert_eq!(flows[1].bytes, Some(200));
+        }
+    }
+
+    #[test]
+    fn without_extra_fields_the_flows_have_none() {
+        let flows = flows(&mut NetflowProcessor::default(), &ipfix());
+
+        assert_eq!(flows.len(), 2);
+        assert!(flows.iter().all(|flow| flow.extra.is_empty()));
     }
 }

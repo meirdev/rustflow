@@ -32,7 +32,7 @@ pub fn open(config: &SourceConfig, cancel: &AtomicBool) -> Result<Box<dyn Source
 }
 
 fn load(config: &SourceConfig, cancel: &AtomicBool) -> Result<Box<dyn Source>> {
-    let schema = Schema::new(config.columns());
+    let schema = Schema::new(config.columns().iter().cloned());
 
     match (config.format(), config.origin()) {
         (

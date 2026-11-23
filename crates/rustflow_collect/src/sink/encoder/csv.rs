@@ -6,14 +6,19 @@ use rustflow_core::for_each_flow_field;
 use super::text::Text;
 use super::{Encoder, WRITE_BUFFER_BYTES, Writer};
 use crate::enrich::Enriched;
+use crate::sink::schema::{Added, Schema};
 
-/// Comma-separated values with a header row: the flow's columns followed by
-/// the enrichment fields.
+/// Comma-separated values with a header row, one column for each of the
+/// schema's.
 pub struct Csv {
     out: BufWriter<Writer>,
+    /// The columns after the flow's fields.
+    added: Vec<Added>,
     /// One record, written in a single call so a failed write leaves no
     /// partial record behind.
     record: Vec<u8>,
+    /// A text value, before it is quoted into `record`.
+    text: Vec<u8>,
 }
 
 macro_rules! field {
@@ -31,7 +36,7 @@ macro_rules! flow_fields {
     ($( $name:ident : $kind:ident $presence:ident ),* $(,)?) => {
         /// Writes the flow's fields, each followed by a comma.
         fn write_flow(record: &mut Vec<u8>, flow: &CommonFlow) {
-            let CommonFlow { $( $name, )* } = flow;
+            let CommonFlow { $( $name, )* .. } = flow;
             $(
                 field!(record, $presence, $name);
                 record.push(b',');
@@ -43,10 +48,13 @@ for_each_flow_field!(flow_fields);
 
 /// Writes `value` followed by a comma, quoted when it holds a delimiter, a
 /// quote or a line break.
-fn write_field(record: &mut Vec<u8>, value: &str) {
-    if value.contains([',', '"', '\n', '\r']) {
+fn write_field(record: &mut Vec<u8>, value: &[u8]) {
+    if value
+        .iter()
+        .any(|byte| matches!(byte, b',' | b'"' | b'\n' | b'\r'))
+    {
         record.push(b'"');
-        for byte in value.bytes() {
+        for &byte in value {
             if byte == b'"' {
                 record.push(b'"');
             }
@@ -54,20 +62,21 @@ fn write_field(record: &mut Vec<u8>, value: &str) {
         }
         record.push(b'"');
     } else {
-        record.extend_from_slice(value.as_bytes());
+        record.extend_from_slice(value);
     }
     record.push(b',');
 }
 
 impl Csv {
-    pub fn open(out: Writer, enriched_fields: &[String]) -> io::Result<Self> {
+    pub fn open(out: Writer, schema: &Schema) -> io::Result<Self> {
         let mut csv = Self {
             out: BufWriter::with_capacity(WRITE_BUFFER_BYTES, out),
+            added: schema.added().map(|(_, added)| added).collect(),
             record: Vec::with_capacity(1024),
+            text: Vec::new(),
         };
-        let names = CommonFlow::FIELD_NAMES.iter().copied();
-        for name in names.chain(enriched_fields.iter().map(String::as_str)) {
-            write_field(&mut csv.record, name);
+        for (name, _) in schema.columns() {
+            write_field(&mut csv.record, name.as_bytes());
         }
         csv.write_record()?;
         Ok(csv)
@@ -87,9 +96,15 @@ impl Csv {
 
 impl Encoder for Csv {
     fn encode(&mut self, flow: &CommonFlow, enriched: &Enriched) -> io::Result<()> {
-        write_flow(&mut self.record, flow);
-        for value in enriched.iter() {
-            write_field(&mut self.record, value.as_deref().unwrap_or(""));
+        let record = &mut self.record;
+        write_flow(record, flow);
+        for added in &self.added {
+            let text = &mut self.text;
+            text.clear();
+            if let Some(value) = added.value(flow, enriched) {
+                value.write_text(text);
+            }
+            write_field(record, text);
         }
         self.write_record()
     }
@@ -111,6 +126,7 @@ mod tests {
     use rustflow_core::common_flow::FlowType;
 
     use super::*;
+    use crate::field::{Field, Kind, Value};
 
     /// A disk that can be made to fail, keeping what reached it.
     #[derive(Clone, Default)]
@@ -136,10 +152,16 @@ mod tests {
     #[test]
     fn a_failed_write_loses_whole_records_only() {
         let disk = Disk::default();
-        let mut csv = Csv::open(Box::new(disk.clone()), &["site".to_string()]).unwrap();
+        let site = Field {
+            name: "site".into(),
+            kind: Kind::Text,
+            number: None,
+        };
+        let schema = Schema::new(&[], &[site]).unwrap();
+        let mut csv = Csv::open(Box::new(disk.clone()), &schema).unwrap();
         let flow = CommonFlow::new(FlowType::Ipfix, 0, [192, 0, 2, 1].into(), 0);
         // A value that needs quoting.
-        let enriched = vec![Some(Arc::from("a,\"b\""))];
+        let enriched = vec![Some(Value::Text("a,\"b\"".into()))];
 
         let mut failed = 0;
         for i in 0..15_000 {

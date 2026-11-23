@@ -29,7 +29,28 @@ lookup groups. For example:
 fields=src_addr@asn:src_asn|org:src_org;dst_addr@asn:dst_asn
 ```
 
-An output name cannot be the name of a [common flow](output.md#common-flow) field.
+An output name cannot be the name of a [common flow](output.md#common-flow) field, or of an
+[extra field](collector.md#extra-fields).
+
+### Types
+
+An output is a string unless a type follows its name: `string`, `unsigned`, `signed`, `float`,
+`boolean` or `timestamp` (Unix nanoseconds). A typed output is a number in NDJSON and a
+native column in Parquet and Arrow:
+
+```text
+fields=src_addr@asn:src_asn:unsigned|org:src_org
+```
+
+A CSV cell that is not of its column's type fails the load, and a reload keeps the previous
+table. A MaxMind DB value that is not of the type is left out.
+
+A number after the name is the output's [protobuf field number](output.md#protobuf), with or
+without a type:
+
+```text
+fields=src_addr@asn:src_asn:unsigned:1001|org:src_org:1002
+```
 
 ## CSV
 

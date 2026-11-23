@@ -3,19 +3,19 @@ use std::io;
 use chrono::{DateTime, Utc};
 use rustflow_core::common_flow::CommonFlow;
 
-use super::Serialization;
 use super::destination::{Destination, Opened, PendingRename};
 use super::encoder::Encoder;
 use super::expire::Expirer;
 use super::hook::{FileHook, Job};
 use super::metrics::{CountingWriter, OutputMetrics};
+use super::{Schema, Serialization};
 use crate::enrich::Enriched;
 
 /// A [`Destination`] plus the encoder for its current window.
 pub struct RotatingSink {
     serialization: Serialization,
     destination: Destination,
-    enriched_fields: Vec<String>,
+    schema: Schema,
     metrics: OutputMetrics,
     /// `None` after a rotation until the next write, so an idle interval
     /// leaves no empty file behind.
@@ -55,30 +55,24 @@ impl RotatingSink {
     pub fn open(
         serialization: Serialization,
         destination: Destination,
-        enriched_fields: Vec<String>,
+        schema: Schema,
         metrics: OutputMetrics,
     ) -> io::Result<Self> {
-        Self::open_at(
-            serialization,
-            destination,
-            enriched_fields,
-            metrics,
-            Utc::now(),
-        )
+        Self::open_at(serialization, destination, schema, metrics, Utc::now())
     }
 
     /// The first window is opened right away, so a bad path fails at startup.
     pub fn open_at(
         serialization: Serialization,
         destination: Destination,
-        enriched_fields: Vec<String>,
+        schema: Schema,
         metrics: OutputMetrics,
         now: DateTime<Utc>,
     ) -> io::Result<Self> {
         let mut sink = Self {
             serialization,
             destination,
-            enriched_fields,
+            schema,
             metrics,
             current: None,
             hook: None,
@@ -107,7 +101,7 @@ impl RotatingSink {
             rotate_at,
         } = self.destination.open_for(now)?;
         let writer = Box::new(CountingWriter::new(writer, self.metrics.bytes.clone()));
-        let encoder = self.serialization.open(writer, &self.enriched_fields)?;
+        let encoder = self.serialization.open(writer, &self.schema)?;
         if pending.is_some() {
             self.metrics.files.inc();
         }

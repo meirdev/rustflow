@@ -1,5 +1,7 @@
 mod args;
 mod enrich;
+mod extra_field;
+mod field;
 mod ie_mapping;
 mod metrics;
 mod sink;
@@ -15,6 +17,7 @@ pub use args::CollectArgs;
 use args::{FlowType, Input};
 use enrich::{EnrichmentConfig, EnrichmentEngine};
 use log::{error, info, warn};
+use rustflow_core::common_flow::ExtraFields;
 use rustflow_core::information_element::Registry;
 use rustflow_core::reader::{
     NetflowProcessor, PcapSource, Processor, ReadError, Recv, SflowProcessor, Source, UdpSource,
@@ -53,6 +56,7 @@ struct Decoding {
     format: OutputFormat,
     registry: Registry,
     template_timeout: Duration,
+    extra_fields: ExtraFields,
 }
 
 fn ingest(
@@ -65,7 +69,8 @@ fn ingest(
     let result = match feed.flow_type {
         FlowType::Netflow => {
             let mut processor = NetflowProcessor::new(decoding.registry.clone())
-                .with_template_ttl(decoding.template_timeout);
+                .with_template_ttl(decoding.template_timeout)
+                .with_extra_fields(decoding.extra_fields.clone());
             collect(
                 feed,
                 &mut processor,
@@ -236,7 +241,22 @@ pub fn run(cli: CollectArgs) -> Result<()> {
     let shutdown = Shutdown::default();
 
     let registry = load_ie_registry(cli.ie_mapping.as_deref())?;
+    let extra_fields = cli
+        .extra_fields
+        .iter()
+        .map(|arg| arg.resolve(&registry))
+        .collect::<Result<Vec<_>>>()?;
     let enrichment = load_enrichment(&cli.enrich, &metrics)?;
+    let fields: Vec<_> = extra_fields
+        .iter()
+        .map(|extra| extra.field.clone())
+        .collect();
+    let schema = sink::Schema::new(&fields, enrichment.output_fields())?;
+    if sink_config.serialization == sink::Serialization::Protobuf {
+        for line in schema.proto_lines() {
+            info!("Add to CommonFlow in rustflow.proto: {line}");
+        }
+    }
 
     // Everything that can fail opens before the sink, which creates its
     // first output file right away.
@@ -255,16 +275,13 @@ pub fn run(cli: CollectArgs) -> Result<()> {
             .context("Failed to start the metrics server")?;
     }
 
-    let sink = sink::build(
-        &sink_config,
-        enrichment.output_fields().to_vec(),
-        &metrics.output,
-    )?;
+    let sink = sink::build(&sink_config, schema, &metrics.output)?;
     let output = Pipeline::spawn(sink, enrichment, metrics.output.clone());
     let decoding = Decoding {
         format: cli.format,
         registry,
         template_timeout: cli.template_timeout,
+        extra_fields: ExtraFields::new(extra_fields.iter().map(|field| field.id)),
     };
 
     install_shutdown_handler(shutdown.clone());

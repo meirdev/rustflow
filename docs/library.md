@@ -200,6 +200,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 `Registry::iana` starts from IANA's registry; `Registry::empty` starts empty.
 
+## Extra Fields
+
+`CommonFlow` has a fixed set of fields. To keep other elements of NetFlow v9 and IPFIX data
+records, list them on the processor. Each flow's `extra` then holds their values, in the
+same order, with `None` where a record has no such element:
+
+```rust
+use rustflow_core::common_flow::ExtraFields;
+use rustflow_core::information_element::ElementId;
+use rustflow_core::reader::{NetflowProcessor, NetflowReader, Reader, UdpSource};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let extra = ExtraFields::new([
+        ElementId::INGRESS_PHYSICAL_INTERFACE,
+        ElementId::new(Some(9), 1)?,
+    ]);
+    let processor = NetflowProcessor::default().with_extra_fields(extra);
+    let reader: NetflowReader = Reader::new(UdpSource::bind("0.0.0.0:4739")?, processor);
+
+    for flow in reader.flows() {
+        let flow = flow?;
+        if let Some(interface) = flow.extra.get(0) {
+            println!("{} came in on physical interface {interface:?}", flow.sampler_address);
+        }
+    }
+
+    Ok(())
+}
+```
+
+The values are decoded by each element's data type, so an enterprise element must be in
+the registry, as above, to have a type. An element a template lists twice gives its first
+value. NetFlow v5 and sFlow flows have no extra values, and when no extra fields are set
+`extra` is empty and costs nothing.
+
 ## Template Cache
 
 NetFlow v9 and IPFIX send templates separately from data, and data records cannot be
