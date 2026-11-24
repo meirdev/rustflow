@@ -99,8 +99,8 @@
                 "ignoredPacketTotalCount": 12,
                 "ignoredOctetTotalCount": 3456,
                 "observationTimeSeconds": [
-                  "2023-11-14T22:13:20Z",
-                  "2023-11-14T22:14:20Z"
+                  "2023-11-14T22:13:20",
+                  "2023-11-14T22:14:20"
                 ]
               }
             ]
@@ -115,8 +115,8 @@
                 "notSentPacketTotalCount": 40,
                 "notSentOctetTotalCount": 5000,
                 "observationTimeMilliseconds": [
-                  "2023-11-14T22:13:20.250Z",
-                  "2023-11-14T22:13:21.750Z"
+                  "2023-11-14T22:13:20.250",
+                  "2023-11-14T22:13:21.750"
                 ]
               }
             ]

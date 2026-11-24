@@ -85,7 +85,7 @@ def mac(value) -> str | None:
 
 def instant(text: str) -> tuple[int, int]:
     """An RFC 3339 time as Unix seconds and nanoseconds."""
-    whole, _, fraction = text.rstrip("Z").partition(".")
+    whole, _, fraction = text.partition(".")
     seconds = int(datetime.fromisoformat(whole).replace(tzinfo=timezone.utc).timestamp())
     return seconds, int(fraction.ljust(9, "0")) if fraction else 0
 
@@ -97,9 +97,12 @@ def nearest_era(seconds: int, epoch: int, reference: int) -> int:
     return epoch + era * ERA + seconds
 
 
+TIME = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$")
+
+
 def is_time(value) -> bool:
     """A time, rather than the octets of a field too short for one."""
-    return isinstance(value, str) and value.endswith("Z")
+    return isinstance(value, str) and TIME.match(value) is not None
 
 
 def timestamp_ns(name: str, value, export_secs: int) -> int | None:

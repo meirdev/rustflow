@@ -31,10 +31,14 @@ impl Serialize for Value {
             Self::MacAddress(v) => v.serialize(serializer),
             Self::OctetArray(v) => hex::serialize(v, serializer),
             Self::String(v) => serializer.serialize_str(v),
-            Self::DateTimeSeconds(_) => time(serializer, self, 0),
-            Self::DateTimeMilliseconds(_) => time(serializer, self, 3),
-            Self::DateTimeMicroseconds(_) => time(serializer, self, 6),
-            Self::DateTimeNanoseconds(_) => time(serializer, self, 9),
+            // RFC 7373 §4.8: in UTC, without an offset.
+            Self::DateTimeSeconds(_)
+            | Self::DateTimeMilliseconds(_)
+            | Self::DateTimeMicroseconds(_)
+            | Self::DateTimeNanoseconds(_) => match self.to_text() {
+                Ok(text) => serializer.serialize_str(&text),
+                Err(_) => serializer.serialize_none(),
+            },
             Self::Ipv4Address(v) => serializer.collect_str(v),
             Self::Ipv6Address(v) => serializer.collect_str(v),
             Self::BasicList(list) => serializer.collect_seq(&list.values),
@@ -66,13 +70,6 @@ impl Serialize for Value {
             }
             Self::Null => serializer.serialize_unit(),
         }
-    }
-}
-
-fn time<S: Serializer>(serializer: S, value: &Value, precision: usize) -> Result<S::Ok, S::Error> {
-    match value.to_timestamp() {
-        Some(timestamp) => serializer.collect_str(&format_args!("{timestamp:.precision$}")),
-        None => serializer.serialize_none(),
     }
 }
 

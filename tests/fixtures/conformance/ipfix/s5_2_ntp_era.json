@@ -29,7 +29,7 @@
             "template_id": 256,
             "records": [
               {
-                "flowStartMicroseconds": "2036-02-07T06:28:21.000000Z",
+                "flowStartMicroseconds": "2036-02-07T06:28:21.000000",
                 "ingressInterface": 1
               }
             ]
@@ -51,7 +51,7 @@
             "template_id": 256,
             "records": [
               {
-                "flowStartMicroseconds": "1968-01-20T03:14:08.000000Z",
+                "flowStartMicroseconds": "1968-01-20T03:14:08.000000",
                 "ingressInterface": 2
               }
             ]

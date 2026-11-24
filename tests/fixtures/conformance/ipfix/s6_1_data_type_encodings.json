@@ -55,10 +55,10 @@
                 "dataRecordsReliability": true,
                 "interfaceName": "eth0",
                 "mplsVpnRouteDistinguisher": "0000fde800000064",
-                "flowStartSeconds": "2023-11-14T22:13:20Z",
-                "flowStartMilliseconds": "2012-11-05T18:31:01.135Z",
-                "flowStartMicroseconds": "2023-11-14T22:13:20.500000Z",
-                "flowStartNanoseconds": "2023-11-14T22:13:20.250000000Z"
+                "flowStartSeconds": "2023-11-14T22:13:20",
+                "flowStartMilliseconds": "2012-11-05T18:31:01.135",
+                "flowStartMicroseconds": "2023-11-14T22:13:20.500000",
+                "flowStartNanoseconds": "2023-11-14T22:13:20.250000000"
               },
               {
                 "protocolIdentifier": 255,
@@ -73,10 +73,10 @@
                 "dataRecordsReliability": false,
                 "interfaceName": "lo00",
                 "mplsVpnRouteDistinguisher": "ffffffffffffffff",
-                "flowStartSeconds": "1970-01-01T00:00:00Z",
-                "flowStartMilliseconds": "1970-01-01T00:00:00.000Z",
-                "flowStartMicroseconds": "2023-11-14T22:13:20.500000Z",
-                "flowStartNanoseconds": "2023-11-14T22:13:20.000000000Z"
+                "flowStartSeconds": "1970-01-01T00:00:00",
+                "flowStartMilliseconds": "1970-01-01T00:00:00.000",
+                "flowStartMicroseconds": "2023-11-14T22:13:20.500000",
+                "flowStartNanoseconds": "2023-11-14T22:13:20.000000000"
               },
               {
                 "protocolIdentifier": 0,
@@ -91,10 +91,10 @@
                 "dataRecordsReliability": true,
                 "interfaceName": "éab",
                 "mplsVpnRouteDistinguisher": "0000000000000000",
-                "flowStartSeconds": "2000-02-29T00:00:00Z",
-                "flowStartMilliseconds": "2000-02-29T00:00:00.999Z",
-                "flowStartMicroseconds": "2000-02-29T00:00:00.750000Z",
-                "flowStartNanoseconds": "2000-02-29T00:00:00.125000000Z"
+                "flowStartSeconds": "2000-02-29T00:00:00",
+                "flowStartMilliseconds": "2000-02-29T00:00:00.999",
+                "flowStartMicroseconds": "2000-02-29T00:00:00.750000",
+                "flowStartNanoseconds": "2000-02-29T00:00:00.125000000"
               }
             ]
           }

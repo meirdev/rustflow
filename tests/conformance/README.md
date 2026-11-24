@@ -45,8 +45,9 @@ The expected result has the shape of `rustflow collect --format raw`: one
 JSON object per packet, in capture order, as `{"protocol": ..., "packet":
 ...}`. A datagram that must be discarded has no entry. NetFlow v9 and
 IPFIX records are maps from IANA element names to values in their RFC 7373
-text form (timestamps with a trailing `Z`), and a list is an array of its
-values or records. The files are compared as JSON values, not as text.
+text form (timestamps in UTC, without an offset), and a list is an array
+of its values or records. The files are compared as JSON values, not as
+text.
 
 The shape is rustflow's, so a change to the raw output format means
 updating the helpers that build it (`packet`, `message`, `datagram`,
