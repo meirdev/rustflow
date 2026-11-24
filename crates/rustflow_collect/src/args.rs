@@ -8,7 +8,6 @@ use clap::builder::PossibleValue;
 use clap::{Args as ClapArgs, ValueEnum};
 use strum::VariantArray;
 
-use crate::enrich::{EnrichmentConfig, parse_enrich_arg};
 use crate::extra_field::ExtraFieldArg;
 use crate::sink::{
     LEVEL_3_MINUTES, MAX_PARTITION_LEVEL, OutputFormat, Partitioning, Serialization, SinkConfig,
@@ -124,6 +123,11 @@ pub struct CollectArgs {
     #[arg(long = "extra-field", value_name = "NAME=ELEMENT[@NUMBER]")]
     pub(crate) extra_fields: Vec<ExtraFieldArg>,
 
+    /// Write only these columns, by name: common flow fields, extra
+    /// fields and enrichment outputs. They keep their usual order
+    #[arg(long, value_name = "NAME,...", value_delimiter = ',')]
+    pub(crate) fields: Vec<String>,
+
     /// Template cache timeout, in seconds or with a unit (e.g. `20m`)
     #[arg(
         long,
@@ -144,8 +148,8 @@ pub struct CollectArgs {
     /// exact lookup can combine several keys with `+`, e.g.
     /// key_column=exporter+ifindex and fields=sampler_address+in_if@name:
     /// in_if_name
-    #[arg(long = "enrich", value_parser = parse_enrich_arg)]
-    pub(crate) enrich: Vec<EnrichmentConfig>,
+    #[arg(long = "enrich")]
+    pub(crate) enrich: Vec<String>,
 }
 
 impl ValueEnum for OutputFormat {
@@ -250,6 +254,9 @@ impl CollectArgs {
         }
         if self.format == OutputFormat::Raw && !self.extra_fields.is_empty() {
             bail!("--extra-field requires --format common");
+        }
+        if self.format == OutputFormat::Raw && !self.fields.is_empty() {
+            bail!("--fields requires --format common");
         }
         if let Some(interval) = self.interval {
             check_interval(interval, self.level)?;

@@ -4,11 +4,12 @@ use std::net::IpAddr;
 use prost::Message;
 use prost::encoding::{WireType, encode_key, encode_varint};
 use rustflow_core::common_flow::{self, CommonFlow};
+use rustflow_core::for_each_flow_field;
 
 use super::{Encoder, WRITE_BUFFER_BYTES, Writer};
 use crate::enrich::Enriched;
 use crate::field::Scalar;
-use crate::sink::schema::{Added, Schema};
+use crate::sink::schema::{Added, FlowFields, Schema};
 
 /// `rustflow.FlowType` of `proto/rustflow.proto`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ::prost::Enumeration)]
@@ -209,6 +210,24 @@ impl FlowMessage {
     }
 }
 
+macro_rules! unselected {
+    ($( $name:ident : $kind:ident $presence:ident ),* $(,)?) => {
+        impl FlowMessage {
+            /// Leaves the fields that are not selected unset, so that they
+            /// are not written.
+            fn clear_unselected(&mut self, selected: FlowFields) {
+                let [ $( $name, )* ] = selected;
+                $(
+                    if !$name {
+                        self.$name = Default::default();
+                    }
+                )*
+            }
+        }
+    };
+}
+for_each_flow_field!(unselected);
+
 /// Appends `value` as the protobuf field `number`, in the wire form of
 /// its kind's type in `rustflow.proto`.
 fn encode_added(buf: &mut Vec<u8>, text: &mut Vec<u8>, number: u32, value: Scalar<'_>) {
@@ -248,6 +267,8 @@ fn encode_added(buf: &mut Vec<u8>, text: &mut Vec<u8>, number: u32, value: Scala
 /// the same message by the added fields, each under its own number.
 pub struct Protobuf {
     out: BufWriter<Writer>,
+    /// The selected fields of the flow, unless they are all selected.
+    flow: Option<FlowFields>,
     added: Vec<Added>,
     /// One message, written in a single call.
     buf: Vec<u8>,
@@ -259,6 +280,7 @@ impl Protobuf {
     pub fn open(out: Writer, schema: &Schema) -> io::Result<Self> {
         Ok(Self {
             out: BufWriter::with_capacity(WRITE_BUFFER_BYTES, out),
+            flow: Some(schema.flow_fields()).filter(|fields| fields.contains(&false)),
             added: schema.added().map(|(_, added)| added).collect(),
             buf: Vec::with_capacity(512),
             text: Vec::new(),
@@ -270,9 +292,11 @@ impl Protobuf {
 impl Encoder for Protobuf {
     fn encode(&mut self, flow: &CommonFlow, enriched: &Enriched) -> io::Result<()> {
         self.buf.clear();
-        FlowMessage::from_flow(flow)
-            .encode(&mut self.buf)
-            .map_err(io::Error::other)?;
+        let mut message = FlowMessage::from_flow(flow);
+        if let Some(selected) = self.flow {
+            message.clear_unselected(selected);
+        }
+        message.encode(&mut self.buf).map_err(io::Error::other)?;
         for added in &self.added {
             if let Some(value) = added.value(flow, enriched) {
                 encode_added(&mut self.buf, &mut self.text, added.number, value);

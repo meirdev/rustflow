@@ -13,7 +13,7 @@ use rustflow_core::for_each_flow_field;
 use super::text::Text;
 use crate::enrich::Enriched;
 use crate::field::{Kind, Scalar};
-use crate::sink::schema::{Added, Schema};
+use crate::sink::schema::{Added, FlowFields, Schema};
 
 /// Rows per record batch when nothing flushes earlier.
 pub const BATCH_ROWS: usize = 32_768;
@@ -127,17 +127,32 @@ macro_rules! flow_columns {
                 }
             }
 
-            fn fields() -> Vec<Field> {
-                vec![ $( Field::new(stringify!($name), data_type!($kind), nullable!($presence)), )* ]
+            fn fields(selected: FlowFields) -> Vec<Field> {
+                let fields = [ $( Field::new(stringify!($name), data_type!($kind), nullable!($presence)), )* ];
+                let selected = fields.into_iter().zip(selected).filter(|(_, selected)| *selected);
+                selected.map(|(field, _)| field).collect()
             }
 
-            fn append(&mut self, text: &mut Vec<u8>, flow: &CommonFlow) {
-                let CommonFlow { $( $name, )* .. } = flow;
-                $( append!(&mut self.$name, text, $kind $presence, *$name); )*
+            /// Appends to the builders of the selected fields; the others
+            /// stay empty.
+            fn append(&mut self, text: &mut Vec<u8>, flow: &CommonFlow, selected: FlowFields) {
+                let [ $( $name, )* ] = selected;
+                $(
+                    if $name {
+                        append!(&mut self.$name, text, $kind $presence, flow.$name);
+                    }
+                )*
             }
 
-            fn finish(&mut self) -> Vec<ArrayRef> {
-                vec![ $( Arc::new(self.$name.finish()) as ArrayRef, )* ]
+            fn finish(&mut self, selected: FlowFields) -> Vec<ArrayRef> {
+                let mut arrays: Vec<ArrayRef> = Vec::new();
+                let [ $( $name, )* ] = selected;
+                $(
+                    if $name {
+                        arrays.push(Arc::new(self.$name.finish()));
+                    }
+                )*
+                arrays
             }
         }
     };
@@ -209,6 +224,7 @@ impl Builder {
 pub struct Columns {
     schema: Arc<ArrowSchema>,
     flow: FlowColumns,
+    selected: FlowFields,
     /// The columns after the flow's fields.
     added: Vec<(Added, Builder)>,
     text: Vec<u8>,
@@ -217,7 +233,8 @@ pub struct Columns {
 
 impl Columns {
     pub fn new(schema: &Schema) -> Self {
-        let mut fields = FlowColumns::fields();
+        let selected = schema.flow_fields();
+        let mut fields = FlowColumns::fields(selected);
         let mut columns = Vec::new();
         for (name, added) in schema.added() {
             let (data_type, builder) = Builder::new(added.kind);
@@ -227,6 +244,7 @@ impl Columns {
         Self {
             schema: Arc::new(ArrowSchema::new(fields)),
             flow: FlowColumns::new(),
+            selected,
             added: columns,
             text: Vec::new(),
             rows: 0,
@@ -243,7 +261,7 @@ impl Columns {
 
     pub fn append(&mut self, flow: &CommonFlow, enriched: &Enriched) {
         let text = &mut self.text;
-        self.flow.append(text, flow);
+        self.flow.append(text, flow, self.selected);
         for (added, builder) in &mut self.added {
             builder.append(text, added.value(flow, enriched));
         }
@@ -257,7 +275,7 @@ impl Columns {
             return Ok(None);
         }
         self.rows = 0;
-        let mut columns = self.flow.finish();
+        let mut columns = self.flow.finish(self.selected);
         columns.extend(self.added.iter_mut().map(|(_, builder)| builder.finish()));
         RecordBatch::try_new(Arc::clone(&self.schema), columns)
             .map(Some)

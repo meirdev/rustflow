@@ -32,6 +32,22 @@ fields=src_addr@asn:src_asn|org:src_org;dst_addr@asn:dst_asn
 An output name cannot be the name of a [common flow](output.md#common-flow) field, or of an
 [extra field](collector.md#extra-fields).
 
+### Extra fields as keys
+
+A lookup key is a common flow field or an [extra field](collector.md#extra-fields), by the name
+`--extra-field` gives it. This reaches elements the common flow does not keep, such as a VRF:
+
+```bash
+rustflow collect \
+  --input netflow://:9995 \
+  -f common \
+  --extra-field vrf=ingressVRFID \
+  --enrich "type=exact,source=vrfs.csv,key_column=exporter+id,fields=sampler_address+vrf@name:vrf_name"
+```
+
+The extra field's element must be an unsigned integer or an IPv4 or IPv6 address. A flow whose
+record lacks the element has no key, and gets nothing from that lookup.
+
 ### Types
 
 An output is a string unless a type follows its name: `string`, `unsigned`, `signed`, `float`,

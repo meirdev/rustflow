@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -162,11 +163,20 @@ impl FromStr for ReloadPolicy {
     }
 }
 
-#[derive(Clone, Copy)]
+/// A field of the flow, or one of its extra fields, that a lookup takes
+/// as a key.
+#[derive(Clone)]
 pub struct LookupKey {
-    name: &'static str,
+    name: Cow<'static, str>,
     key_type: KeyType,
-    extract: fn(&CommonFlow) -> Option<Key>,
+    extract: Extract,
+}
+
+#[derive(Clone, Copy)]
+enum Extract {
+    Flow(fn(&CommonFlow) -> Option<Key>),
+    /// A value of `CommonFlow::extra`, by its position.
+    Extra(usize),
 }
 
 macro_rules! lookup_fields {
@@ -184,30 +194,30 @@ macro_rules! lookup_fields {
     };
     (@fields [$($acc:tt)*] $name:ident : Ip required, $($rest:tt)*) => {
         lookup_fields!(@fields [$($acc)* LookupKey {
-            name: stringify!($name),
+            name: Cow::Borrowed(stringify!($name)),
             key_type: KeyType::Ip,
-            extract: |flow| Some(Key::Ip(flow.$name)),
+            extract: Extract::Flow(|flow| Some(Key::Ip(flow.$name))),
         },] $($rest)*);
     };
     (@fields [$($acc:tt)*] $name:ident : Ip optional, $($rest:tt)*) => {
         lookup_fields!(@fields [$($acc)* LookupKey {
-            name: stringify!($name),
+            name: Cow::Borrowed(stringify!($name)),
             key_type: KeyType::Ip,
-            extract: |flow| flow.$name.map(Key::Ip),
+            extract: Extract::Flow(|flow| flow.$name.map(Key::Ip)),
         },] $($rest)*);
     };
     (@fields [$($acc:tt)*] $name:ident : $kind:ident optional, $($rest:tt)*) => {
         lookup_fields!(@fields [$($acc)* LookupKey {
-            name: stringify!($name),
+            name: Cow::Borrowed(stringify!($name)),
             key_type: KeyType::Number,
-            extract: |flow| flow.$name.map(|value| Key::Number(value.into())),
+            extract: Extract::Flow(|flow| flow.$name.map(|value| Key::Number(value.into()))),
         },] $($rest)*);
     };
     (@fields [$($acc:tt)*] $name:ident : $kind:ident required, $($rest:tt)*) => {
         lookup_fields!(@fields [$($acc)* LookupKey {
-            name: stringify!($name),
+            name: Cow::Borrowed(stringify!($name)),
             key_type: KeyType::Number,
-            extract: |flow| Some(Key::Number(flow.$name.into())),
+            extract: Extract::Flow(|flow| Some(Key::Number(flow.$name.into()))),
         },] $($rest)*);
     };
     (@fields [$($acc:tt)*]) => {
@@ -217,20 +227,41 @@ macro_rules! lookup_fields {
 for_each_flow_field!(lookup_fields);
 
 impl LookupKey {
-    pub fn all() -> impl Iterator<Item = Self> {
-        LOOKUP_KEYS.iter().copied()
+    /// The key that is the extra field `name`, at `index` of
+    /// `CommonFlow::extra`.
+    pub fn extra(name: &str, index: usize, key_type: KeyType) -> Self {
+        Self {
+            name: Cow::Owned(name.to_owned()),
+            key_type,
+            extract: Extract::Extra(index),
+        }
     }
 
-    pub fn name(self) -> &'static str {
-        self.name
+    /// The key called `name`: a field of the flow, or one of `extra`.
+    fn find(name: &str, extra: &[LookupKey]) -> Result<Self> {
+        let mut keys = LOOKUP_KEYS.iter().chain(extra);
+        keys.find(|key| key.name == name).cloned().ok_or_else(|| {
+            let names: Vec<_> = LOOKUP_KEYS.iter().chain(extra).map(Self::name).collect();
+            Error::Config(format!(
+                "Unknown lookup key '{name}'. Valid keys: {}",
+                names.join(", ")
+            ))
+        })
     }
 
-    pub fn key_type(self) -> KeyType {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn key_type(&self) -> KeyType {
         self.key_type
     }
 
-    pub fn extract(self, flow: &CommonFlow) -> Option<Key> {
-        (self.extract)(flow)
+    pub fn extract(&self, flow: &CommonFlow) -> Option<Key> {
+        match self.extract {
+            Extract::Flow(extract) => extract(flow),
+            Extract::Extra(index) => Key::of_record(flow.extra.get(index)?),
+        }
     }
 }
 
@@ -248,23 +279,9 @@ impl fmt::Debug for LookupKey {
     }
 }
 
-impl FromStr for LookupKey {
-    type Err = Error;
-
-    fn from_str(value: &str) -> Result<Self> {
-        Self::all().find(|key| key.name() == value).ok_or_else(|| {
-            let names: Vec<_> = Self::all().map(LookupKey::name).collect();
-            Error::Config(format!(
-                "Unknown lookup key '{value}'. Valid keys: {}",
-                names.join(", ")
-            ))
-        })
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldMapping {
-    /// The flow fields that together form the lookup key.
+    /// The fields that together form the lookup key.
     pub keys: Vec<LookupKey>,
     pub source_column: String,
     pub output_field: String,
@@ -329,7 +346,7 @@ impl FromStr for Format {
     }
 }
 
-fn parse_field_mappings(value: &str) -> Result<Vec<FieldMapping>> {
+fn parse_field_mappings(value: &str, extra: &[LookupKey]) -> Result<Vec<FieldMapping>> {
     let mut mappings = Vec::new();
 
     for group in value.split(';').map(str::trim).filter(|g| !g.is_empty()) {
@@ -341,7 +358,7 @@ fn parse_field_mappings(value: &str) -> Result<Vec<FieldMapping>> {
 
         let keys = key
             .split('+')
-            .map(|key| key.trim().parse())
+            .map(|key| LookupKey::find(key.trim(), extra))
             .collect::<Result<Vec<LookupKey>>>()?;
         if keys.len() > MAX_KEYS {
             return Err(Error::Config(format!(
@@ -408,7 +425,9 @@ fn parse_field_mappings(value: &str) -> Result<Vec<FieldMapping>> {
     Ok(mappings)
 }
 
-pub fn parse_enrich_arg(arg: &str) -> Result<EnrichmentConfig> {
+/// The configuration `--enrich` gives. A lookup key is a field of the
+/// flow, or one of `extra`, the extra fields that can be keys.
+pub fn parse_enrich_arg(arg: &str, extra: &[LookupKey]) -> Result<EnrichmentConfig> {
     let mut params = HashMap::new();
     for part in arg.split(',') {
         let (key, value) = part
@@ -481,7 +500,7 @@ pub fn parse_enrich_arg(arg: &str) -> Result<EnrichmentConfig> {
         (None, Origin::Command { .. }) => Format::Csv,
     };
 
-    let mappings = parse_field_mappings(required("fields")?)?;
+    let mappings = parse_field_mappings(required("fields")?, extra)?;
 
     let key_types: Vec<KeyType> = mappings[0].keys.iter().map(|key| key.key_type()).collect();
     if mappings.iter().any(|m| {
@@ -570,6 +589,7 @@ mod tests {
         let config = parse_enrich_arg(
             "type=exact,source=ifnames.csv,key_column=exporter+ifindex,\
              fields=sampler_address+in_if@name:in_if_name;sampler_address+out_if@name:out_if_name",
+            &[],
         )
         .unwrap();
 
@@ -588,7 +608,7 @@ mod tests {
     fn an_output_can_have_a_type_and_a_field_number() {
         let mappings = |fields: &str| {
             let arg = format!("type=prefix_lookup,source=a.csv,key_column=net,fields={fields}");
-            parse_enrich_arg(&arg).map(|config| {
+            parse_enrich_arg(&arg, &[]).map(|config| {
                 let outputs = config.mappings.iter();
                 let outputs = outputs.map(|m| (m.output_field.clone(), m.kind, m.number));
                 (
@@ -623,8 +643,39 @@ mod tests {
     }
 
     #[test]
+    fn an_extra_field_can_be_a_lookup_key() {
+        let extra = [
+            LookupKey::extra("vrf", 0, KeyType::Number),
+            LookupKey::extra("tunnel", 2, KeyType::Ip),
+        ];
+        let config = parse_enrich_arg(
+            "type=exact,source=vrf.csv,key_column=exporter+id,\
+             fields=sampler_address+vrf@name:vrf_name",
+            &extra,
+        )
+        .unwrap();
+        assert_eq!(names(&config.mappings[0]), ["sampler_address", "vrf"]);
+
+        let mut flow = CommonFlow::new(
+            rustflow_core::common_flow::FlowType::Ipfix,
+            0,
+            [192, 0, 2, 1].into(),
+            0,
+        );
+        let key = &config.mappings[0].keys[1];
+        assert_eq!(key.extract(&flow), None);
+        flow.extra = vec![Some(rustflow_core::value::Value::Unsigned32(7))].into();
+        assert_eq!(key.extract(&flow), Some(Key::Number(7)));
+
+        let prefix = "type=prefix_lookup,source=a.csv,key_column=net,fields=";
+        assert!(parse_enrich_arg(&format!("{prefix}tunnel@name:n"), &extra).is_ok());
+        assert!(parse_enrich_arg(&format!("{prefix}vrf@name:n"), &extra).is_err());
+        assert!(parse_enrich_arg(&format!("{prefix}other@name:n"), &extra).is_err());
+    }
+
+    #[test]
     fn composite_keys_are_validated() {
-        let error = |arg: &str| parse_enrich_arg(arg).unwrap_err().to_string();
+        let error = |arg: &str| parse_enrich_arg(arg, &[]).unwrap_err().to_string();
 
         assert!(
             error(
@@ -655,9 +706,10 @@ mod tests {
     #[test]
     fn an_output_field_cannot_be_a_flow_field() {
         for name in ["proto", "src_mac", "flow_type"] {
-            let error = parse_enrich_arg(&format!(
-                "type=exact,source=a.csv,key_column=k,fields=proto@name:{name}"
-            ))
+            let error = parse_enrich_arg(
+                &format!("type=exact,source=a.csv,key_column=k,fields=proto@name:{name}"),
+                &[],
+            )
             .unwrap_err();
             assert!(
                 error.to_string().contains("is the name of a flow field"),
@@ -671,7 +723,7 @@ mod tests {
         let parse = |extra: &str| {
             parse_enrich_arg(&format!(
                 "type=exact,command=/opt/ifnames.sh,key_column=number,fields=proto@name:n{extra}"
-            ))
+            ), &[])
             .unwrap()
         };
 
@@ -701,7 +753,7 @@ mod tests {
 
     #[test]
     fn command_is_validated() {
-        let error = |arg: &str| parse_enrich_arg(arg).unwrap_err().to_string();
+        let error = |arg: &str| parse_enrich_arg(arg, &[]).unwrap_err().to_string();
 
         assert!(
             error("type=exact,source=a.csv,command=a.sh,key_column=k,fields=proto@name:n")

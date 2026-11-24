@@ -7,12 +7,13 @@ use super::text::Text;
 use super::{Encoder, WRITE_BUFFER_BYTES, Writer};
 use crate::enrich::Enriched;
 use crate::field::Scalar;
-use crate::sink::schema::{Added, Schema};
+use crate::sink::schema::{Added, FlowFields, Schema};
 
 /// Newline-delimited JSON, one object per record, with a member for each
 /// of the schema's columns that has a value.
 pub struct Ndjson {
     out: BufWriter<Writer>,
+    flow: FlowFields,
     /// The columns after the flow's fields, each with its `,"name":`.
     added: Vec<(Vec<u8>, Added)>,
     /// One record, written in a single call so a failed write leaves no
@@ -44,10 +45,15 @@ macro_rules! member {
 
 macro_rules! flow_fields {
     ($( $name:ident : $kind:ident $presence:ident ),* $(,)?) => {
-        /// Writes the flow's members, each preceded by a comma.
-        fn write_flow(line: &mut Vec<u8>, flow: &CommonFlow) {
-            let CommonFlow { $( $name, )* .. } = flow;
-            $( member!(line, $name, $presence, $name); )*
+        /// Writes the selected members of the flow, each preceded by a
+        /// comma.
+        fn write_flow(line: &mut Vec<u8>, flow: &CommonFlow, selected: FlowFields) {
+            let [ $( $name, )* ] = selected;
+            $(
+                if $name {
+                    member!(line, $name, $presence, &flow.$name);
+                }
+            )*
         }
     };
 }
@@ -91,6 +97,7 @@ impl Ndjson {
             .collect::<io::Result<_>>()?;
         Ok(Self {
             out: BufWriter::with_capacity(WRITE_BUFFER_BYTES, out),
+            flow: schema.flow_fields(),
             added,
             line: Vec::with_capacity(1024),
         })
@@ -101,15 +108,18 @@ impl Encoder for Ndjson {
     fn encode(&mut self, flow: &CommonFlow, enriched: &Enriched) -> io::Result<()> {
         let line = &mut self.line;
         line.clear();
-        write_flow(line, flow);
+        write_flow(line, flow, self.flow);
         for (key, added) in &self.added {
             if let Some(value) = added.value(flow, enriched) {
                 write_added(line, key, value)?;
             }
         }
-        // The flow's required fields always write the first member, so the
-        // line starts with its comma.
-        line[0] = b'{';
+        // Every member starts with a comma; the first one's opens the
+        // object. A flow with none of the selected fields is empty.
+        match line.first_mut() {
+            Some(first) => *first = b'{',
+            None => line.push(b'{'),
+        }
         line.extend_from_slice(b"}\n");
         self.out.write_all(line)
     }

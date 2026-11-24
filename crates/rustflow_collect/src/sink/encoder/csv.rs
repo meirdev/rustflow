@@ -6,12 +6,13 @@ use rustflow_core::for_each_flow_field;
 use super::text::Text;
 use super::{Encoder, WRITE_BUFFER_BYTES, Writer};
 use crate::enrich::Enriched;
-use crate::sink::schema::{Added, Schema};
+use crate::sink::schema::{Added, FlowFields, Schema};
 
 /// Comma-separated values with a header row, one column for each of the
 /// schema's.
 pub struct Csv {
     out: BufWriter<Writer>,
+    flow: FlowFields,
     /// The columns after the flow's fields.
     added: Vec<Added>,
     /// One record, written in a single call so a failed write leaves no
@@ -34,12 +35,15 @@ macro_rules! field {
 
 macro_rules! flow_fields {
     ($( $name:ident : $kind:ident $presence:ident ),* $(,)?) => {
-        /// Writes the flow's fields, each followed by a comma.
-        fn write_flow(record: &mut Vec<u8>, flow: &CommonFlow) {
-            let CommonFlow { $( $name, )* .. } = flow;
+        /// Writes the selected fields of the flow, each followed by a
+        /// comma.
+        fn write_flow(record: &mut Vec<u8>, flow: &CommonFlow, selected: FlowFields) {
+            let [ $( $name, )* ] = selected;
             $(
-                field!(record, $presence, $name);
-                record.push(b',');
+                if $name {
+                    field!(record, $presence, &flow.$name);
+                    record.push(b',');
+                }
             )*
         }
     };
@@ -71,6 +75,7 @@ impl Csv {
     pub fn open(out: Writer, schema: &Schema) -> io::Result<Self> {
         let mut csv = Self {
             out: BufWriter::with_capacity(WRITE_BUFFER_BYTES, out),
+            flow: schema.flow_fields(),
             added: schema.added().map(|(_, added)| added).collect(),
             record: Vec::with_capacity(1024),
             text: Vec::new(),
@@ -97,7 +102,7 @@ impl Csv {
 impl Encoder for Csv {
     fn encode(&mut self, flow: &CommonFlow, enriched: &Enriched) -> io::Result<()> {
         let record = &mut self.record;
-        write_flow(record, flow);
+        write_flow(record, flow, self.flow);
         for added in &self.added {
             let text = &mut self.text;
             text.clear();
@@ -147,6 +152,29 @@ mod tests {
         fn flush(&mut self) -> io::Result<()> {
             Ok(())
         }
+    }
+
+    #[test]
+    fn only_the_selected_columns_are_written() {
+        let site = Field {
+            name: "site".into(),
+            kind: Kind::Text,
+            number: None,
+        };
+        let names = ["site", "sequence_num", "flow_type", "bytes"].map(String::from);
+        let schema = Schema::new(&[], &[site]).unwrap().select(&names).unwrap();
+        let disk = Disk::default();
+        let mut csv = Csv::open(Box::new(disk.clone()), &schema).unwrap();
+        let flow = CommonFlow::new(FlowType::Ipfix, 0, [192, 0, 2, 1].into(), 7);
+        csv.encode(&flow, &vec![Some(Value::Text("lab".into()))])
+            .unwrap();
+        csv.finish().unwrap();
+
+        let written = disk.written.lock().unwrap();
+        assert_eq!(
+            std::str::from_utf8(&written).unwrap(),
+            "flow_type,sequence_num,bytes,site\nIPFIX,7,,lab\n"
+        );
     }
 
     #[test]

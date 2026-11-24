@@ -3,6 +3,7 @@ use std::str::FromStr;
 use anyhow::{Context, Result, anyhow};
 use rustflow_core::information_element::{ElementId, Registry};
 
+use crate::enrich::KeyType;
 use crate::field::{Field, Kind};
 
 /// `--extra-field NAME=ELEMENT[@NUMBER]`, before the element is looked up.
@@ -45,6 +46,9 @@ impl FromStr for ExtraFieldArg {
 pub struct ExtraField {
     pub id: ElementId,
     pub field: Field,
+    /// The type of key its values make for an enrichment lookup, if they
+    /// can be keys.
+    pub key_type: Option<KeyType>,
 }
 
 impl ExtraFieldArg {
@@ -78,6 +82,7 @@ impl ExtraFieldArg {
                 kind,
                 number: *number,
             },
+            key_type: KeyType::of(element.data_type),
         })
     }
 }

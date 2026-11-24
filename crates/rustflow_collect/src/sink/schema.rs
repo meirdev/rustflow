@@ -1,8 +1,8 @@
 //! The columns of the output, in order: the flow's fields, then the fields
 //! added to it. Every encoder writes the columns of one [`Schema`]. The
-//! flow's fields are always all there, first and in their order, so the
-//! encoders write them as one block: a call for each field made the CSV
-//! encoder a third slower.
+//! flow's fields come first and in their order, whichever of them are
+//! selected, so the encoders write them as one block that skips the
+//! others: a call for each field made the CSV encoder a third slower.
 
 use std::collections::HashSet;
 
@@ -53,6 +53,10 @@ impl Added {
         }
     }
 }
+
+/// Whether each of the flow's fields is a column, in the order of
+/// `CommonFlow::FIELD_NAMES`.
+pub type FlowFields = [bool; CommonFlow::FIELD_NAMES.len()];
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Schema {
@@ -116,6 +120,33 @@ impl Schema {
         Ok(Self { columns })
     }
 
+    /// The schema with only the columns `names` list, still in the
+    /// schema's order.
+    pub fn select(mut self, names: &[String]) -> Result<Self> {
+        let mut seen = HashSet::new();
+        for name in names {
+            if !self.columns.iter().any(|(column, _)| column == name) {
+                bail!("Unknown field '{name}'");
+            }
+            if !seen.insert(name) {
+                bail!("Field '{name}' is selected twice");
+            }
+        }
+        self.columns.retain(|(name, _)| seen.contains(name));
+        Ok(self)
+    }
+
+    /// The flow's fields that are columns.
+    pub fn flow_fields(&self) -> FlowFields {
+        let mut fields = [false; CommonFlow::FIELD_NAMES.len()];
+        for (_, column) in self.columns() {
+            if let Column::Flow(index) = column {
+                fields[index] = true;
+            }
+        }
+        fields
+    }
+
     pub fn columns(&self) -> impl Iterator<Item = (&str, Column)> {
         self.columns
             .iter()
@@ -169,6 +200,38 @@ mod tests {
         assert_eq!(columns[0], ("flow_type", Column::Flow(0)));
         let added: Vec<_> = schema.added().map(|(name, _)| name).collect();
         assert_eq!(added, ["vrf", "site"]);
+    }
+
+    #[test]
+    fn a_selection_keeps_the_listed_columns_in_the_schema_order() {
+        let schema = Schema::new(
+            &[field("vrf", Kind::Unsigned, None)],
+            &[field("site", Kind::Text, None)],
+        )
+        .unwrap();
+        assert_eq!(schema.flow_fields(), [true; CommonFlow::FIELD_NAMES.len()]);
+        let select = |names: &[&str]| {
+            let names: Vec<_> = names.iter().map(|name| name.to_string()).collect();
+            schema.clone().select(&names)
+        };
+
+        let selected = select(&["site", "bytes", "flow_type"]).unwrap();
+        let names: Vec<_> = selected.columns().map(|(name, _)| name).collect();
+        assert_eq!(names, ["flow_type", "bytes", "site"]);
+        let flags = selected.flow_fields();
+        let bytes = CommonFlow::FIELD_NAMES
+            .iter()
+            .position(|name| *name == "bytes");
+        assert_eq!(flags.iter().filter(|selected| **selected).count(), 2);
+        assert!(flags[0] && flags[bytes.unwrap()]);
+        // The number of an added field does not depend on the selection.
+        assert_eq!(
+            selected.proto_lines().collect::<Vec<_>>(),
+            ["optional string site = 1001;"]
+        );
+
+        assert!(select(&["no_such_field"]).is_err());
+        assert!(select(&["bytes", "bytes"]).is_err());
     }
 
     #[test]

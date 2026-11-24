@@ -57,6 +57,7 @@ Fields that are unavailable in the original flow record are left unset.
 
 After the flow's fields come the [extra fields](collector.md#extra-fields), then the
 [enrichment](enrichment.md) fields, each a column of its own in every serialization.
+[`--fields`](collector.md#selecting-fields) writes only the columns it lists.
 
 ## NDJSON
 

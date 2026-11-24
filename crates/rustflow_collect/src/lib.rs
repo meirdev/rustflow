@@ -15,7 +15,9 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 pub use args::CollectArgs;
 use args::{FlowType, Input};
-use enrich::{EnrichmentConfig, EnrichmentEngine};
+use enrich::config::LookupKey;
+use enrich::{EnrichmentEngine, parse_enrich_arg};
+use extra_field::ExtraField;
 use log::{error, info, warn};
 use rustflow_core::common_flow::ExtraFields;
 use rustflow_core::information_element::Registry;
@@ -206,15 +208,27 @@ fn load_ie_registry(path: Option<&Path>) -> Result<Registry> {
     Ok(registry)
 }
 
+/// Loads the tables of the `--enrich` arguments. Their lookup keys are the
+/// flow's fields and the extra fields whose values can be keys.
 fn load_enrichment(
-    configs: &[EnrichmentConfig],
+    args: &[String],
+    extra_fields: &[ExtraField],
     metrics: &metrics::Metrics,
 ) -> Result<EnrichmentEngine> {
+    let extra_keys: Vec<_> = extra_fields
+        .iter()
+        .enumerate()
+        .filter_map(|(index, extra)| {
+            Some(LookupKey::extra(&extra.field.name, index, extra.key_type?))
+        })
+        .collect();
     let mut engine = EnrichmentEngine::new(metrics.enrichment.clone());
-    for config in configs {
+    for arg in args {
+        let config = parse_enrich_arg(arg, &extra_keys)
+            .with_context(|| format!("Invalid --enrich '{arg}'"))?;
         let source = config.source.source().display().to_string();
         let count = engine
-            .add(config.clone())
+            .add(config)
             .with_context(|| format!("Failed to load enrichment from {source}"))?;
         info!("Loaded {count} rows from {source}");
     }
@@ -246,12 +260,15 @@ pub fn run(cli: CollectArgs) -> Result<()> {
         .iter()
         .map(|arg| arg.resolve(&registry))
         .collect::<Result<Vec<_>>>()?;
-    let enrichment = load_enrichment(&cli.enrich, &metrics)?;
+    let enrichment = load_enrichment(&cli.enrich, &extra_fields, &metrics)?;
     let fields: Vec<_> = extra_fields
         .iter()
         .map(|extra| extra.field.clone())
         .collect();
-    let schema = sink::Schema::new(&fields, enrichment.output_fields())?;
+    let mut schema = sink::Schema::new(&fields, enrichment.output_fields())?;
+    if !cli.fields.is_empty() {
+        schema = schema.select(&cli.fields)?;
+    }
     if sink_config.serialization == sink::Serialization::Protobuf {
         for line in schema.proto_lines() {
             info!("Add to CommonFlow in rustflow.proto: {line}");

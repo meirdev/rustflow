@@ -131,6 +131,25 @@ and so do NetFlow v5 and sFlow flows. If a template lists an element twice, the 
 used. The extra columns come after the flow's fields and before the enrichment fields, and a name
 may not repeat any other column's. `--extra-field` requires `--format common`.
 
+## Selecting Fields
+
+`--fields` writes only the listed columns. A name is a common flow field, an extra field or an
+enrichment output:
+
+```bash
+rustflow collect \
+  --input netflow://:9995 \
+  -f common \
+  -s csv \
+  --extra-field direction=flowDirection \
+  --fields time_received_ns,src_addr,dst_addr,bytes,packets,direction
+```
+
+The columns keep their usual order, whatever the order of the list: the flow's fields, then the
+extra fields, then the enrichment fields. In protobuf the fields left out are unset, and the
+numbers of the others do not change. An enrichment lookup can still use a flow field that is
+not written as its key. `--fields` requires `--format common`.
+
 ## Template Cache
 
 NetFlow v9 and IPFIX use templates to describe the fields contained in data records.
