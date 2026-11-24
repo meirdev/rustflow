@@ -3,16 +3,9 @@
 from values import HEX, IP, MAC, STR, U, record
 from wire import Case, Datagram, Pair, case, u16, u32
 
-# Scope field types (section 6.1) and the element each is printed as.
 SYSTEM, INTERFACE, LINE_CARD, CACHE, TEMPLATE = 1, 2, 3, 4, 5
-SCOPE_TYPES = {
-    SYSTEM: "System",
-    INTERFACE: "Interface",
-    LINE_CARD: "LineCard",
-    CACHE: "Cache",
-    TEMPLATE: "Template",
-}
-# The key a scope value is printed under.
+# Scope field types (section 6.1) by the name they print as, in a template
+# and as the key of a scope value.
 SCOPE_NAMES = {
     SYSTEM: "system",
     INTERFACE: "interface",
@@ -88,8 +81,8 @@ def fields_text(fields: list[tuple[int, int]]) -> list[dict]:
 
 
 def scopes_text(scopes: list[tuple[int, int]]) -> list[dict]:
-    """A scope type section 6.1 does not define prints as `Unassigned`."""
-    return [{"field_type": SCOPE_TYPES.get(t, {"Unassigned": t}), "length": length} for t, length in scopes]
+    """A scope type section 6.1 does not define prints as `unassigned`."""
+    return [{"field_type": SCOPE_NAMES.get(t, {"unassigned": t}), "length": length} for t, length in scopes]
 
 
 def scope_name(scope_type: int) -> str:

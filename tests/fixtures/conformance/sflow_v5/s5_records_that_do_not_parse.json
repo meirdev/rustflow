@@ -39,7 +39,7 @@
               },
               {
                 "type": "sampled_header",
-                "protocol": "EthernetIso88023",
+                "protocol": "ethernet_iso88023",
                 "frame_length": 64,
                 "stripped": 4,
                 "header": "02000000000202000000000108004500001f0000400040114e67c0000232c63364019c40c350000bb3df000000"

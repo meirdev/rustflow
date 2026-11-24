@@ -1,0 +1,138 @@
+{
+  "reference": "RFC 6313 section 4.4",
+  "description": "List semantics IANA has not assigned (5 and 254) are reported as sent, next to the undefined semantic (255), in each kind of list.",
+  "datagrams": 1,
+  "expected": [
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 131,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 301,
+                "fields": [{ "information_element_id": 7, "field_length": 2 }]
+              },
+              {
+                "template_id": 256,
+                "fields": [
+                  { "information_element_id": 10, "field_length": 4 },
+                  { "information_element_id": 291, "field_length": 65535 },
+                  { "information_element_id": 292, "field_length": 65535 },
+                  { "information_element_id": 293, "field_length": 65535 }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {
+                "ingressInterface": 5,
+                "basicList": {
+                  "semantic": { "unassigned": 5 },
+                  "field": { "information_element_id": 7, "field_length": 2 },
+                  "values": [80]
+                },
+                "subTemplateList": {
+                  "semantic": { "unassigned": 5 },
+                  "template_id": 301,
+                  "records": [{ "sourceTransportPort": 443 }]
+                },
+                "subTemplateMultiList": {
+                  "semantic": { "unassigned": 5 },
+                  "groups": [
+                    {
+                      "template_id": 301,
+                      "records": [{ "sourceTransportPort": 8080 }]
+                    }
+                  ]
+                }
+              },
+              {
+                "ingressInterface": 254,
+                "basicList": {
+                  "semantic": { "unassigned": 254 },
+                  "field": { "information_element_id": 7, "field_length": 2 },
+                  "values": [80]
+                },
+                "subTemplateList": {
+                  "semantic": { "unassigned": 254 },
+                  "template_id": 301,
+                  "records": [{ "sourceTransportPort": 443 }]
+                },
+                "subTemplateMultiList": {
+                  "semantic": { "unassigned": 254 },
+                  "groups": [
+                    {
+                      "template_id": 301,
+                      "records": [{ "sourceTransportPort": 8080 }]
+                    }
+                  ]
+                }
+              },
+              {
+                "ingressInterface": 255,
+                "basicList": {
+                  "semantic": "undefined",
+                  "field": { "information_element_id": 7, "field_length": 2 },
+                  "values": [80]
+                },
+                "subTemplateList": {
+                  "semantic": "undefined",
+                  "template_id": 301,
+                  "records": [{ "sourceTransportPort": 443 }]
+                },
+                "subTemplateMultiList": {
+                  "semantic": "undefined",
+                  "groups": [
+                    {
+                      "template_id": 301,
+                      "records": [{ "sourceTransportPort": 8080 }]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "flows": [
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0,
+      "in_if": 5
+    },
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0,
+      "in_if": 254
+    },
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0,
+      "in_if": 255
+    }
+  ],
+  "tshark": {
+    "cflow.inputint": ["5", "254", "255"]
+  }
+}

@@ -31,11 +31,19 @@
             "template_id": 256,
             "records": [
               {
-                "basicList": [1, 2],
+                "basicList": {
+                  "semantic": "allOf",
+                  "field": { "information_element_id": 10, "field_length": 4 },
+                  "values": [1, 2]
+                },
                 "exportedMessageTotalCount": 5
               },
               {
-                "basicList": [],
+                "basicList": {
+                  "semantic": "allOf",
+                  "field": { "information_element_id": 10, "field_length": 0 },
+                  "values": []
+                },
                 "exportedMessageTotalCount": 6
               }
             ]

@@ -17,20 +17,20 @@ SPEC = "sFlow Version 5 section 5"
 DROPS = "sFlow Dropped Packet Notification Structures section 2"
 
 HEADER_PROTOCOLS = {
-    1: "EthernetIso88023",
-    2: "Iso88024TokenBus",
-    3: "Iso88025TokenRing",
-    4: "Fddi",
-    5: "FrameRelay",
-    6: "X25",
-    7: "Ppp",
-    8: "Smds",
-    9: "Aal5",
-    10: "Aal5Ip",
-    11: "Ipv4",
-    12: "Ipv6",
-    13: "Mpls",
-    14: "Pos",
+    1: "ethernet_iso88023",
+    2: "iso88024_token_bus",
+    3: "iso88025_token_ring",
+    4: "fddi",
+    5: "frame_relay",
+    6: "x25",
+    7: "ppp",
+    8: "smds",
+    9: "aal5",
+    10: "aal5_ip",
+    11: "ipv4",
+    12: "ipv6",
+    13: "mpls",
+    14: "pos",
 }
 
 
@@ -120,7 +120,7 @@ def array(items: list[bytes]) -> bytes:
 
 
 def sampled_header(protocol: int, frame_length: int, stripped: int, header: bytes) -> Pair:
-    name = HEADER_PROTOCOLS.get(protocol, {"Unassigned": protocol})
+    name = HEADER_PROTOCOLS.get(protocol, {"unassigned": protocol})
     return structure(
         "SampledHeader",
         1,
@@ -183,8 +183,8 @@ def extended_router(nexthop: str | None, src_mask_len: int, dst_mask_len: int) -
 
 
 def extended_gateway(nexthop, router_as, src_as, src_peer_as, path, communities, localpref) -> Pair:
-    """`path` is a list of ("AsSet" or "AsSequence", [AS numbers])."""
-    kinds = {"AsSet": 1, "AsSequence": 2}
+    """`path` is a list of ("as_set" or "as_sequence", [AS numbers])."""
+    kinds = {"as_set": 1, "as_sequence": 2}
     segments = [u32(kinds[kind]) + array([u32(n) for n in numbers]) for kind, numbers in path]
     return structure(
         "ExtendedGateway",
@@ -210,7 +210,7 @@ def extended_user(src_charset: int, src_user: bytes, dst_charset: int, dst_user:
 
 
 def extended_url(direction: int, url: str, host: str) -> Pair:
-    name = {1: "Src", 2: "Dst"}[direction]
+    name = {1: "src", 2: "dst"}[direction]
     return structure("ExtendedUrl", 1005, [("direction", u32(direction), name), text_field("url", url), text_field("host", host)])
 
 
@@ -219,7 +219,7 @@ def extended_egress_queue(queue: int) -> Pair:
 
 
 def extended_acl(number: int, name: str, direction: int) -> Pair:
-    direction_name = {0: "Unknown", 1: "Ingress", 2: "Egress"}[direction]
+    direction_name = {0: "unknown", 1: "ingress", 2: "egress"}[direction]
     return structure("ExtendedAcl", 1037, [n32("number", number), text_field("name", name), ("direction", u32(direction), direction_name)])
 
 
@@ -677,11 +677,11 @@ def cases() -> list[Case]:
                             [
                                 extended_switch(100, 3, 200, 5),
                                 extended_router("203.0.113.1", 24, 16),
-                                extended_gateway("203.0.113.254", 64496, 64497, 64498, [("AsSequence", [64499, 64500]), ("AsSet", [64501, 64502, 64503]), ("AsSequence", [4_200_000_000])], [0xFDE8_0064, 0xFFFF_FF01], 150),
+                                extended_gateway("203.0.113.254", 64496, 64497, 64498, [("as_sequence", [64499, 64500]), ("as_set", [64501, 64502, 64503]), ("as_sequence", [4_200_000_000])], [0xFDE8_0064, 0xFFFF_FF01], 150),
                             ],
                         ),
                         simple_flow(2, [extended_router("2001:db8:ffff::1", 48, 64), extended_gateway("2001:db8:ffff::fe", 64496, 0, 0, [], [], 100)]),
-                        simple_flow(3, [extended_router(None, 0, 0), extended_gateway(None, 1, 2, 3, [("AsSet", []), ("AsSequence", [64510])], [1], 2**32 - 1)]),
+                        simple_flow(3, [extended_router(None, 0, 0), extended_gateway(None, 1, 2, 3, [("as_set", []), ("as_sequence", [64510])], [1], 2**32 - 1)]),
                     ]
                 )
             ],
@@ -798,10 +798,10 @@ def cases() -> list[Case]:
             [
                 datagram(
                     [
-                        discarded_packet(0x0102_0304, (0, 0x0506_0708), 0x090A_0B0C, 0x0D0E_0F10, 0x1112_1314, (258, "Acl"), [sampled_header(1, len(discarded) + 4, 4, discarded), extended_acl(101, "edge-in", 1), extended_egress_queue(3)]),
-                        discarded_packet(2, (0, 7), 0, 7, 0, (257, "TtlExceeded"), [sampled_header(1, len(discarded) + 4, 4, discarded), extended_function("ip_forward")]),
-                        discarded_packet(3, (0, 8), 0, 0, 8, (0, "NetUnreachable"), [extended_acl(0, "", 0), extended_acl(2, "out", 2)]),
-                        discarded_packet(4, (0, 9), 1, 9, 0, (9999, {"Unassigned": 9999}), []),
+                        discarded_packet(0x0102_0304, (0, 0x0506_0708), 0x090A_0B0C, 0x0D0E_0F10, 0x1112_1314, (258, "acl"), [sampled_header(1, len(discarded) + 4, 4, discarded), extended_acl(101, "edge-in", 1), extended_egress_queue(3)]),
+                        discarded_packet(2, (0, 7), 0, 7, 0, (257, "ttl_exceeded"), [sampled_header(1, len(discarded) + 4, 4, discarded), extended_function("ip_forward")]),
+                        discarded_packet(3, (0, 8), 0, 0, 8, (0, "net_unreachable"), [extended_acl(0, "", 0), extended_acl(2, "out", 2)]),
+                        discarded_packet(4, (0, 9), 1, 9, 0, (9999, {"unassigned": 9999}), []),
                     ]
                 )
             ],

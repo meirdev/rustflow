@@ -23,7 +23,7 @@
             "records": [
               {
                 "type": "sampled_header",
-                "protocol": "EthernetIso88023",
+                "protocol": "ethernet_iso88023",
                 "frame_length": 50,
                 "stripped": 4,
                 "header": "0200000000020200000000010800450000200000400040114e66c0000232c63364019c40c350000cb1db01010101"
@@ -58,7 +58,7 @@
             "records": [
               {
                 "type": "sampled_header",
-                "protocol": "EthernetIso88023",
+                "protocol": "ethernet_iso88023",
                 "frame_length": 50,
                 "stripped": 4,
                 "header": "0200000000020200000000010800450000200000400040114e66c0000232c63364019c40c350000cafd902020202"
@@ -89,7 +89,7 @@
             "records": [
               {
                 "type": "sampled_header",
-                "protocol": "EthernetIso88023",
+                "protocol": "ethernet_iso88023",
                 "frame_length": 50,
                 "stripped": 4,
                 "header": "0200000000020200000000010800450000200000400040114e66c0000232c63364019c40c350000cb1db01010101"
@@ -108,7 +108,7 @@
             "records": [
               {
                 "type": "sampled_header",
-                "protocol": "EthernetIso88023",
+                "protocol": "ethernet_iso88023",
                 "frame_length": 50,
                 "stripped": 4,
                 "header": "0200000000020200000000010800450000200000400040114e66c0000232c63364019c40c350000cafd902020202"
@@ -127,7 +127,7 @@
             "records": [
               {
                 "type": "sampled_header",
-                "protocol": "EthernetIso88023",
+                "protocol": "ethernet_iso88023",
                 "frame_length": 50,
                 "stripped": 4,
                 "header": "0200000000020200000000010800450000200000400040114e66c0000232c63364019c40c350000cadd703030303"

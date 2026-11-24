@@ -1,6 +1,6 @@
 {
   "reference": "RFC 6313 section 4.5.3",
-  "description": "subTemplateMultiList groups: two records of template 301, a group of template 302 with no records (a length of 4, its header), a group of template 999, which the collector does not have, and one more record of template 301. The list is reported as the records of its groups in order, an unknown group as null; the empty group adds nothing.",
+  "description": "subTemplateMultiList groups: two records of template 301, a group of template 302 with no records (a length of 4, its header), a group of template 999, which the collector does not have, and one more record of template 301. Each group is reported in order with its Template ID: the records, none for the empty group, and the octets of the unknown one.",
   "datagrams": 1,
   "expected": [
     {
@@ -38,12 +38,27 @@
             "records": [
               {
                 "ingressInterface": 1,
-                "subTemplateMultiList": [
-                  { "sourceTransportPort": 80 },
-                  { "sourceTransportPort": 443 },
-                  null,
-                  { "sourceTransportPort": 8080 }
-                ]
+                "subTemplateMultiList": {
+                  "semantic": "allOf",
+                  "groups": [
+                    {
+                      "template_id": 301,
+                      "records": [
+                        { "sourceTransportPort": 80 },
+                        { "sourceTransportPort": 443 }
+                      ]
+                    },
+                    {
+                      "template_id": 302,
+                      "records": []
+                    },
+                    { "template_id": 999, "data": "0035" },
+                    {
+                      "template_id": 301,
+                      "records": [{ "sourceTransportPort": 8080 }]
+                    }
+                  ]
+                }
               }
             ]
           }

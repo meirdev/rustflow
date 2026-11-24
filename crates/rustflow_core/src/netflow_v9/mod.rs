@@ -83,6 +83,7 @@ pub type TemplateRef = crate::template::TemplateRef<ScopeField>;
     num_enum::IntoPrimitive,
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 #[strum(serialize_all = "camelCase")]
 #[repr(u16)]
 pub enum ScopeType {

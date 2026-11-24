@@ -167,7 +167,7 @@ def netflow_v5(base: dict, sender: str, packet: dict) -> list[dict]:
 # Scope fields that cover part of a domain: v9 scope types by the name
 # they print as (an unknown one prints as its number, and may be any part),
 # IPFIX elements by ID.
-V9_PARTIAL = {"Interface", "LineCard", "Template"}
+V9_PARTIAL = {"interface", "lineCard", "template"}
 IPFIX_PARTIAL = {10, 14, 141, 145}
 
 
@@ -176,7 +176,7 @@ def extent(v9: bool, scopes: list[dict]) -> str:
         types = [s["field_type"] for s in scopes]
         if any(not isinstance(t, str) or t in V9_PARTIAL for t in types):
             return "partial"
-        return "system" if "System" in types else "domain"
+        return "system" if "system" in types else "domain"
     partial = any(s.get("enterprise_number") is None and s["information_element_id"] in IPFIX_PARTIAL for s in scopes)
     return "partial" if partial else "domain"
 
@@ -505,9 +505,9 @@ def sflow_record(flow: dict, record: dict) -> None:
     match record["type"]:
         case "sampled_header":
             flow["bytes"] = record["frame_length"]
-            # An unassigned protocol prints as {"Unassigned": number}.
+            # An unassigned protocol prints as {"unassigned": number}.
             protocol = record["protocol"] if isinstance(record["protocol"], str) else None
-            start = {"EthernetIso88023": "ethernet", "Ipv4": "ipv4", "Ipv6": "ipv6"}.get(protocol)
+            start = {"ethernet_iso88023": "ethernet", "ipv4": "ipv4", "ipv6": "ipv6"}.get(protocol)
             if start is not None:
                 dissect(flow, start, bytes.fromhex(record["header"]))
         case "sampled_ethernet":
@@ -541,7 +541,7 @@ def sflow_record(flow: dict, record: dict) -> None:
             # The destination is the last AS of an ordered last segment.
             path = record["dst_as_path"]
             last = path[-1] if path else {}
-            sequence = last.get("AsSequence")
+            sequence = last.get("as_sequence")
             if sequence:
                 flow["dst_as"] = sequence[-1]
 

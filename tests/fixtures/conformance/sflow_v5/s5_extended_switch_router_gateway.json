@@ -42,13 +42,13 @@
                 "src_peer_as": 64498,
                 "dst_as_path": [
                   {
-                    "AsSequence": [64499, 64500]
+                    "as_sequence": [64499, 64500]
                   },
                   {
-                    "AsSet": [64501, 64502, 64503]
+                    "as_set": [64501, 64502, 64503]
                   },
                   {
-                    "AsSequence": [4200000000]
+                    "as_sequence": [4200000000]
                   }
                 ],
                 "communities": [4259840100, 4294967041],
@@ -106,10 +106,10 @@
                 "src_peer_as": 3,
                 "dst_as_path": [
                   {
-                    "AsSet": []
+                    "as_set": []
                   },
                   {
-                    "AsSequence": [64510]
+                    "as_sequence": [64510]
                   }
                 ],
                 "communities": [1],

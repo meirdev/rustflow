@@ -66,7 +66,7 @@
             "templates": [
               {
                 "template_id": 257,
-                "scope_fields": [{ "field_type": "System", "length": 4 }],
+                "scope_fields": [{ "field_type": "system", "length": 4 }],
                 "option_fields": [
                   { "information_element_id": 48, "field_length": 4 },
                   { "information_element_id": 84, "field_length": 40 },

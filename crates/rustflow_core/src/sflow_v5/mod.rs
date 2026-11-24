@@ -237,6 +237,7 @@ pub enum CounterRecord {
 /// The protocol a sampled header starts with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, num_enum::FromPrimitive, num_enum::IntoPrimitive)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 #[repr(u32)]
 pub enum HeaderProtocol {
     EthernetIso88023 = 1,
@@ -356,6 +357,7 @@ pub struct ExtendedGateway {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum AsPathSegment {
     AsSet(Vec<u32>),
     AsSequence(Vec<u32>),
@@ -377,6 +379,7 @@ pub struct ExtendedUser {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, num_enum::FromPrimitive, num_enum::IntoPrimitive)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 #[repr(u32)]
 pub enum UrlDirection {
     /// The source is the server.
@@ -404,6 +407,7 @@ pub struct ExtendedEgressQueue {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, num_enum::FromPrimitive, num_enum::IntoPrimitive)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 #[repr(u32)]
 pub enum AclDirection {
     Unknown = 0,
@@ -432,6 +436,7 @@ pub struct ExtendedFunction {
 /// Why a packet was discarded (sFlow drop notifications).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, num_enum::FromPrimitive, num_enum::IntoPrimitive)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 #[repr(u32)]
 pub enum DropReason {
     NetUnreachable = 0,

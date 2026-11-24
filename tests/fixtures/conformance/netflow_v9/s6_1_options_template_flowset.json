@@ -19,11 +19,11 @@
               {
                 "template_id": 300,
                 "scope_fields": [
-                  { "field_type": "System", "length": 4 },
-                  { "field_type": "Interface", "length": 4 },
-                  { "field_type": "LineCard", "length": 4 },
-                  { "field_type": "Cache", "length": 4 },
-                  { "field_type": "Template", "length": 2 }
+                  { "field_type": "system", "length": 4 },
+                  { "field_type": "interface", "length": 4 },
+                  { "field_type": "lineCard", "length": 4 },
+                  { "field_type": "cache", "length": 4 },
+                  { "field_type": "template", "length": 2 }
                 ],
                 "option_fields": [
                   { "information_element_id": 34, "field_length": 4 }
@@ -36,7 +36,7 @@
             "templates": [
               {
                 "template_id": 301,
-                "scope_fields": [{ "field_type": "System", "length": 4 }],
+                "scope_fields": [{ "field_type": "system", "length": 4 }],
                 "option_fields": [
                   { "information_element_id": 34, "field_length": 4 },
                   { "information_element_id": 35, "field_length": 1 }
@@ -44,7 +44,7 @@
               },
               {
                 "template_id": 302,
-                "scope_fields": [{ "field_type": "Interface", "length": 4 }],
+                "scope_fields": [{ "field_type": "interface", "length": 4 }],
                 "option_fields": [
                   { "information_element_id": 82, "field_length": 8 },
                   { "information_element_id": 83, "field_length": 16 }

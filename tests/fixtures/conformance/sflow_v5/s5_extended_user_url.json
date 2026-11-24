@@ -30,7 +30,7 @@
               },
               {
                 "type": "extended_url",
-                "direction": "Src",
+                "direction": "src",
                 "url": "/",
                 "host": "a.example"
               }
@@ -55,7 +55,7 @@
               },
               {
                 "type": "extended_url",
-                "direction": "Dst",
+                "direction": "dst",
                 "url": "",
                 "host": ""
               }
@@ -80,7 +80,7 @@
               },
               {
                 "type": "extended_url",
-                "direction": "Src",
+                "direction": "src",
                 "url": "/ab",
                 "host": "abcd"
               }
@@ -105,7 +105,7 @@
               },
               {
                 "type": "extended_url",
-                "direction": "Dst",
+                "direction": "dst",
                 "url": "/index.html?q=1",
                 "host": "www.example.com"
               },

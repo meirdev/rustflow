@@ -406,8 +406,7 @@ fn text(value: &Value) -> Option<Cow<'static, str>> {
 }
 
 fn parse_list_semantic(input: &mut &[u8]) -> Result<ListSemantic> {
-    u8.map(|byte| ListSemantic::try_from(byte).unwrap_or_default())
-        .parse_next(input)
+    u8.map(ListSemantic::from).parse_next(input)
 }
 
 fn parse_all<'i, T>(

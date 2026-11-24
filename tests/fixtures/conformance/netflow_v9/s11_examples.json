@@ -60,7 +60,7 @@
             "templates": [
               {
                 "template_id": 257,
-                "scope_fields": [{ "field_type": "LineCard", "length": 2 }],
+                "scope_fields": [{ "field_type": "lineCard", "length": 2 }],
                 "option_fields": [
                   { "information_element_id": 41, "field_length": 2 },
                   { "information_element_id": 42, "field_length": 2 }

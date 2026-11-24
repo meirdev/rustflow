@@ -23,7 +23,7 @@
             "records": [
               {
                 "type": "sampled_header",
-                "protocol": "EthernetIso88023",
+                "protocol": "ethernet_iso88023",
                 "frame_length": 1518,
                 "stripped": 4,
                 "header": "02000000000202000000000108004500001e0000400040114e68c0000232c63364019c40c350000a3b697878"
@@ -49,7 +49,7 @@
             "records": [
               {
                 "type": "sampled_header",
-                "protocol": "EthernetIso88023",
+                "protocol": "ethernet_iso88023",
                 "frame_length": 64,
                 "stripped": 8,
                 "header": "02000000000202000000000108004500001f0000400040114e67c0000232c63364019c40c350000bc366787878"
@@ -75,7 +75,7 @@
             "records": [
               {
                 "type": "sampled_header",
-                "protocol": "EthernetIso88023",
+                "protocol": "ethernet_iso88023",
                 "frame_length": 9018,
                 "stripped": 4,
                 "header": "0200000000020200000000010800450000200000400040114e66c0000232c63364019c40c350000cc2ec78787878"
@@ -101,7 +101,7 @@
             "records": [
               {
                 "type": "sampled_header",
-                "protocol": "EthernetIso88023",
+                "protocol": "ethernet_iso88023",
                 "frame_length": 4294967295,
                 "stripped": 4294967295,
                 "header": "0200000000020200000000010800450000210000400040114e65c0000232c63364019c40c350000d4aea7878787878"
@@ -127,7 +127,7 @@
             "records": [
               {
                 "type": "sampled_header",
-                "protocol": "Ipv4",
+                "protocol": "ipv4",
                 "frame_length": 30,
                 "stripped": 0,
                 "header": "4500001e0000400040114e68c0000232c63364019c40c350000a3b697878"
@@ -146,7 +146,7 @@
             "records": [
               {
                 "type": "sampled_header",
-                "protocol": { "Unassigned": 99 },
+                "protocol": { "unassigned": 99 },
                 "frame_length": 100,
                 "stripped": 0,
                 "header": "0102030405"
@@ -165,7 +165,7 @@
             "records": [
               {
                 "type": "sampled_header",
-                "protocol": "EthernetIso88023",
+                "protocol": "ethernet_iso88023",
                 "frame_length": 60,
                 "stripped": 4,
                 "header": ""

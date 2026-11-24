@@ -1,6 +1,6 @@
 {
   "reference": "RFC 6313 section 4.5.2",
-  "description": "subTemplateList: a semantic octet, a Template ID and records of that template. A list of two records, an empty list, and a list of a template the collector does not have, which is reported as null. The fields before and after each list are read.",
+  "description": "subTemplateList: a semantic octet, a Template ID and records of that template. A list of two records, an empty list, and a list of a template the collector does not have, which is reported with its Template ID and octets. The fields before and after each list are read.",
   "datagrams": 1,
   "expected": [
     {
@@ -38,26 +38,38 @@
             "records": [
               {
                 "ingressInterface": 1,
-                "subTemplateList": [
-                  {
-                    "sourceIPv4Address": "192.0.2.1",
-                    "sourceTransportPort": 1001
-                  },
-                  {
-                    "sourceIPv4Address": "192.0.2.2",
-                    "sourceTransportPort": 1002
-                  }
-                ],
+                "subTemplateList": {
+                  "semantic": "allOf",
+                  "template_id": 300,
+                  "records": [
+                    {
+                      "sourceIPv4Address": "192.0.2.1",
+                      "sourceTransportPort": 1001
+                    },
+                    {
+                      "sourceIPv4Address": "192.0.2.2",
+                      "sourceTransportPort": 1002
+                    }
+                  ]
+                },
                 "egressInterface": 11
               },
               {
                 "ingressInterface": 2,
-                "subTemplateList": [],
+                "subTemplateList": {
+                  "semantic": "allOf",
+                  "template_id": 300,
+                  "records": []
+                },
                 "egressInterface": 12
               },
               {
                 "ingressInterface": 3,
-                "subTemplateList": null,
+                "subTemplateList": {
+                  "semantic": "allOf",
+                  "template_id": 999,
+                  "data": "c000020103e9c000020203ea"
+                },
                 "egressInterface": 13
               }
             ]

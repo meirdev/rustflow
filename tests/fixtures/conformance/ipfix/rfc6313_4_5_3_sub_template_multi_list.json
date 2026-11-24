@@ -42,24 +42,40 @@
             "records": [
               {
                 "ingressInterface": 1,
-                "subTemplateMultiList": [
-                  {
-                    "sourceIPv4Address": "192.0.2.1",
-                    "sourceTransportPort": 1001
-                  },
-                  {
-                    "sourceIPv4Address": "192.0.2.2",
-                    "sourceTransportPort": 1002
-                  },
-                  { "protocolIdentifier": 6 },
-                  { "protocolIdentifier": 17 },
-                  { "protocolIdentifier": 1 }
-                ],
+                "subTemplateMultiList": {
+                  "semantic": "allOf",
+                  "groups": [
+                    {
+                      "template_id": 300,
+                      "records": [
+                        {
+                          "sourceIPv4Address": "192.0.2.1",
+                          "sourceTransportPort": 1001
+                        },
+                        {
+                          "sourceIPv4Address": "192.0.2.2",
+                          "sourceTransportPort": 1002
+                        }
+                      ]
+                    },
+                    {
+                      "template_id": 301,
+                      "records": [
+                        { "protocolIdentifier": 6 },
+                        { "protocolIdentifier": 17 },
+                        { "protocolIdentifier": 1 }
+                      ]
+                    }
+                  ]
+                },
                 "egressInterface": 11
               },
               {
                 "ingressInterface": 2,
-                "subTemplateMultiList": [],
+                "subTemplateMultiList": {
+                  "semantic": "allOf",
+                  "groups": []
+                },
                 "egressInterface": 12
               }
             ]

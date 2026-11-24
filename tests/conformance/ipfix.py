@@ -105,6 +105,40 @@ def spec_text(spec: Spec) -> dict:
     return text
 
 
+# List semantics (RFC 6313 section 4.4), by the name IANA's registry gives.
+SEMANTICS = {0: "noneOf", 1: "exactlyOneOf", 2: "oneOrMoreOf", 3: "allOf", 4: "ordered", 0xFF: "undefined"}
+
+
+def semantic_text(semantic: int):
+    """A semantic IANA has not assigned prints as `unassigned`."""
+    return SEMANTICS.get(semantic, {"unassigned": semantic})
+
+
+def listed(semantic: int, spec: Spec, values: list) -> dict:
+    """A basicList as printed: its semantic, its field specifier and its
+    values (RFC 6313 section 4.5.1)."""
+    return {"semantic": semantic_text(semantic), "field": spec_text(spec), "values": values}
+
+
+def group(template_id: int, records: list | None = None, data: bytes | None = None) -> dict:
+    """Records of a template as a list prints them, or for a template the
+    collector does not have, the octets (RFC 6313 sections 4.5.2 and
+    4.5.3)."""
+    if data is not None:
+        return {"template_id": template_id, "data": data.hex()}
+    return {"template_id": template_id, "records": records}
+
+
+def sub_listed(semantic: int, template_id: int, records: list | None = None, data: bytes | None = None) -> dict:
+    """A subTemplateList as printed: its semantic and its records."""
+    return {"semantic": semantic_text(semantic), **group(template_id, records, data)}
+
+
+def multi_listed(semantic: int, groups: list[dict]) -> dict:
+    """A subTemplateMultiList as printed: its semantic and its groups."""
+    return {"semantic": semantic_text(semantic), "groups": groups}
+
+
 def a_set(set_id: int, body: bytes, padding: bytes = b"") -> bytes:
     """Section 3.3: Set ID, Length (header and padding included), records,
     padding."""
@@ -1065,9 +1099,10 @@ def section_9() -> list[Case]:
 
 
 def structured_data() -> list[Case]:
-    """RFC 6313. A list is printed as an array: a basicList of its values,
-    the other two of their records, each a map as a data record is. The
-    list's semantic is not printed."""
+    """RFC 6313. A list is printed with its semantic: a basicList with its
+    field specifier and its values, a subTemplateList with its Template
+    ID and its records, each a map as a data record is, and a
+    subTemplateMultiList with its groups, each the same."""
     out = []
     all_of, ordered = 3, 4
 
@@ -1086,8 +1121,8 @@ def structured_data() -> list[Case]:
             "enterprise-specific element, of a variable-length element, "
             "and an empty list; in a variable-length field with the one- "
             "and the three-octet length, and in a field of fixed length. "
-            "Each list is reported with its values, and the fields before "
-            "and after it are read.",
+            "Each list is reported with its semantic, its field specifier "
+            "and its values, and the fields before and after it are read.",
             [
                 message(
                     [
@@ -1096,14 +1131,14 @@ def structured_data() -> list[Case]:
                             256,
                             names(with_list),
                             [
-                                [U(1, 4), short(Pair(ports, [80, 443, 8080])), U(11, 4)],
-                                [U(2, 4), long(Pair(enterprise, ["00000001", "00000002"])), U(12, 4)],
-                                [U(3, 4), short(Pair(names_list, ["eth0", "", "eth10"])), U(13, 4)],
-                                [U(4, 4), short(Pair(u8(all_of) + u16(11) + u16(2), [])), U(14, 4)],
+                                [U(1, 4), short(Pair(ports, listed(all_of, (11, 2), [80, 443, 8080]))), U(11, 4)],
+                                [U(2, 4), long(Pair(enterprise, listed(ordered, (5, 4, PEN), ["00000001", "00000002"]))), U(12, 4)],
+                                [U(3, 4), short(Pair(names_list, listed(ordered, (82, VARIABLE), ["eth0", "", "eth10"]))), U(13, 4)],
+                                [U(4, 4), short(Pair(u8(all_of) + u16(11) + u16(2), listed(all_of, (11, 2), []))), U(14, 4)],
                             ],
                             padding=b"\0\0",
                         ),
-                        data(257, names(fixed_list), [[U(5, 4), Pair(ports, [80, 443, 8080]), U(15, 4)]], padding=b"\0"),
+                        data(257, names(fixed_list), [[U(5, 4), Pair(ports, listed(all_of, (11, 2), [80, 443, 8080])), U(15, 4)]], padding=b"\0"),
                     ]
                 )
             ],
@@ -1127,8 +1162,8 @@ def structured_data() -> list[Case]:
             "subTemplateList: a semantic octet, a Template ID and records "
             "of that template. A list of two records, an empty list, and a "
             "list of a template the collector does not have, which is "
-            "reported as null. The fields before and after each list are "
-            "read.",
+            "reported with its Template ID and octets. The fields before "
+            "and after each list are read.",
             [
                 message(
                     [
@@ -1137,9 +1172,9 @@ def structured_data() -> list[Case]:
                             256,
                             names(with_sub),
                             [
-                                [U(1, 4), short(Pair(sub, inner_text)), U(11, 4)],
-                                [U(2, 4), short(Pair(u8(all_of) + u16(300), [])), U(12, 4)],
-                                [U(3, 4), long(Pair(u8(all_of) + u16(999) + inner_rows, None)), U(13, 4)],
+                                [U(1, 4), short(Pair(sub, sub_listed(all_of, 300, inner_text))), U(11, 4)],
+                                [U(2, 4), short(Pair(u8(all_of) + u16(300), sub_listed(all_of, 300, []))), U(12, 4)],
+                                [U(3, 4), long(Pair(u8(all_of) + u16(999) + inner_rows, sub_listed(all_of, 999, data=inner_rows))), U(13, 4)],
                             ],
                             padding=b"\0\0\0",
                         ),
@@ -1173,8 +1208,8 @@ def structured_data() -> list[Case]:
                             256,
                             names(with_multi),
                             [
-                                [U(1, 4), short(Pair(multi, inner_text + [{"protocolIdentifier": p} for p in (6, 17, 1)])), U(11, 4)],
-                                [U(2, 4), short(Pair(u8(all_of), [])), U(12, 4)],
+                                [U(1, 4), short(Pair(multi, multi_listed(all_of, [group(300, inner_text), group(301, [{"protocolIdentifier": p} for p in (6, 17, 1)])]))), U(11, 4)],
+                                [U(2, 4), short(Pair(u8(all_of), multi_listed(all_of, []))), U(12, 4)],
                             ],
                             padding=b"\0\0",
                         ),
@@ -1489,8 +1524,10 @@ def more_structured_data() -> list[Case]:
             "rfc6313_5_2_nested_lists",
             "RFC 6313 sections 4.5.1, 4.5.2 and 5.2",
             "Lists inside lists: a basicList of basicLists of ports, and a "
-            "subTemplateList whose template holds a subTemplateList. Each "
-            "is reported as an array of its inner lists or records.",
+            "subTemplateList whose template holds a subTemplateList. The "
+            "outer basicList's values are the inner lists, each with its "
+            "own semantic and field; the subTemplateList's records hold "
+            "the inner one's.",
             [
                 message(
                     [
@@ -1498,7 +1535,13 @@ def more_structured_data() -> list[Case]:
                         data(
                             256,
                             names(nested),
-                            [[U(1, 4), short(Pair(of_lists, [[80, 443], [53]])), short(Pair(outer_list, [{"subTemplateList": [{"sourceTransportPort": 80}, {"sourceTransportPort": 443}]}]))]],
+                            [
+                                [
+                                    U(1, 4),
+                                    short(Pair(of_lists, listed(all_of, (291, VARIABLE), [listed(all_of, (7, 2), [80, 443]), listed(all_of, (7, 2), [53])]))),
+                                    short(Pair(outer_list, sub_listed(all_of, 300, [{"subTemplateList": sub_listed(all_of, 301, [{"sourceTransportPort": 80}, {"sourceTransportPort": 443}])}]))),
+                                ]
+                            ],
                         ),
                     ]
                 )
@@ -1522,9 +1565,9 @@ def more_structured_data() -> list[Case]:
             "subTemplateMultiList groups: two records of template 301, a "
             "group of template 302 with no records (a length of 4, its "
             "header), a group of template 999, which the collector does not "
-            "have, and one more record of template 301. The list is "
-            "reported as the records of its groups in order, an unknown "
-            "group as null; the empty group adds nothing.",
+            "have, and one more record of template 301. Each group is "
+            "reported in order with its Template ID: the records, none for "
+            "the empty group, and the octets of the unknown one.",
             [
                 message(
                     [
@@ -1532,13 +1575,67 @@ def more_structured_data() -> list[Case]:
                         data(
                             256,
                             names(with_multi),
-                            [[U(1, 4), short(Pair(groups, [{"sourceTransportPort": 80}, {"sourceTransportPort": 443}, None, {"sourceTransportPort": 8080}]))]],
+                            [
+                                [
+                                    U(1, 4),
+                                    short(
+                                        Pair(
+                                            groups,
+                                            multi_listed(
+                                                all_of,
+                                                [
+                                                    group(301, [{"sourceTransportPort": 80}, {"sourceTransportPort": 443}]),
+                                                    group(302, []),
+                                                    group(999, data=u16(53)),
+                                                    group(301, [{"sourceTransportPort": 8080}]),
+                                                ],
+                                            ),
+                                        )
+                                    ),
+                                ]
+                            ],
                         ),
                     ]
                 )
             ],
             tshark={"cflow.inputint": ["1"]},
             clean=False,
+        )
+    )
+
+    unassigned = [(10, 4), (291, VARIABLE), (292, VARIABLE), (293, VARIABLE)]
+    port_list = lambda semantic: u8(semantic) + u16(7) + u16(2) + u16(80)
+    record_list = lambda semantic: u8(semantic) + u16(301) + u16(443)
+    group_list = lambda semantic: u8(semantic) + u16(301) + u16(4 + 2) + u16(8080)
+    out.append(
+        case(
+            "rfc6313_4_4_unassigned_semantics",
+            "RFC 6313 section 4.4",
+            "List semantics IANA has not assigned (5 and 254) are reported "
+            "as sent, next to the undefined semantic (255), in each kind of "
+            "list.",
+            [
+                message(
+                    [
+                        templates(template(301, inner), template(256, unassigned)),
+                        data(
+                            256,
+                            names(unassigned),
+                            [
+                                [
+                                    U(semantic, 4),
+                                    short(Pair(port_list(semantic), listed(semantic, (7, 2), [80]))),
+                                    short(Pair(record_list(semantic), sub_listed(semantic, 301, [{"sourceTransportPort": 443}]))),
+                                    short(Pair(group_list(semantic), multi_listed(semantic, [group(301, [{"sourceTransportPort": 8080}])]))),
+                                ]
+                                for semantic in (5, 0xFE, 0xFF)
+                            ],
+                            padding=b"\0",
+                        ),
+                    ]
+                )
+            ],
+            tshark={"cflow.inputint": ["5", "254", "255"]},
         )
     )
 
@@ -1561,7 +1658,7 @@ def more_structured_data() -> list[Case]:
                         options_data(
                             256,
                             names(scoped + counted),
-                            [[short(Pair(interfaces, [1, 2])), U(5, 4)], [short(Pair(empty_elements, [])), U(6, 4)]],
+                            [[short(Pair(interfaces, listed(all_of, (10, 4), [1, 2]))), U(5, 4)], [short(Pair(empty_elements, listed(all_of, (10, 0), []))), U(6, 4)]],
                         ),
                     ]
                 )

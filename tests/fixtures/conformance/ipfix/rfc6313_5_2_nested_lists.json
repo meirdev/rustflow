@@ -1,6 +1,6 @@
 {
   "reference": "RFC 6313 sections 4.5.1, 4.5.2 and 5.2",
-  "description": "Lists inside lists: a basicList of basicLists of ports, and a subTemplateList whose template holds a subTemplateList. Each is reported as an array of its inner lists or records.",
+  "description": "Lists inside lists: a basicList of basicLists of ports, and a subTemplateList whose template holds a subTemplateList. The outer basicList's values are the inner lists, each with its own semantic and field; the subTemplateList's records hold the inner one's.",
   "datagrams": 1,
   "expected": [
     {
@@ -41,15 +41,47 @@
             "records": [
               {
                 "ingressInterface": 1,
-                "basicList": [[80, 443], [53]],
-                "subTemplateList": [
-                  {
-                    "subTemplateList": [
-                      { "sourceTransportPort": 80 },
-                      { "sourceTransportPort": 443 }
-                    ]
-                  }
-                ]
+                "basicList": {
+                  "semantic": "allOf",
+                  "field": {
+                    "information_element_id": 291,
+                    "field_length": 65535
+                  },
+                  "values": [
+                    {
+                      "semantic": "allOf",
+                      "field": {
+                        "information_element_id": 7,
+                        "field_length": 2
+                      },
+                      "values": [80, 443]
+                    },
+                    {
+                      "semantic": "allOf",
+                      "field": {
+                        "information_element_id": 7,
+                        "field_length": 2
+                      },
+                      "values": [53]
+                    }
+                  ]
+                },
+                "subTemplateList": {
+                  "semantic": "allOf",
+                  "template_id": 300,
+                  "records": [
+                    {
+                      "subTemplateList": {
+                        "semantic": "allOf",
+                        "template_id": 301,
+                        "records": [
+                          { "sourceTransportPort": 80 },
+                          { "sourceTransportPort": 443 }
+                        ]
+                      }
+                    }
+                  ]
+                }
               }
             ]
           }
