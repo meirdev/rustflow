@@ -59,6 +59,9 @@ impl Parser {
         let mut body = take(header.length - HEADER_LENGTH)
             .context(StrContext::Label("message body"))
             .parse_next(&mut input)?;
+        // A malformed message is discarded whole (RFC 7011 §9.1), templates
+        // included, so it is checked before any of them is kept.
+        check_sets(body)?;
 
         let mut sets = Vec::new();
         while !body.is_empty() {
@@ -69,18 +72,7 @@ impl Parser {
     }
 
     fn parse_set(&mut self, input: &mut &[u8], domain: DomainId) -> Result<Set> {
-        let set_id = be_u16.parse_next(input)?;
-        let length = be_u16
-            .verify(|&length| length >= SET_HEADER_LENGTH)
-            .context(StrContext::Label("set length"))
-            .context(StrContext::Expected(StrContextValue::Description(
-                "at least the 4-octet set header",
-            )))
-            .parse_next(input)?;
-        let mut body = take(length - SET_HEADER_LENGTH)
-            .context(StrContext::Label("set body"))
-            .parse_next(input)?;
-
+        let (set_id, mut body) = parse_set_header(input)?;
         let set = match set_id {
             TEMPLATE_SET_ID => {
                 let templates = parse_records(&mut body, parse_template.map(Arc::new))?;
@@ -365,7 +357,13 @@ fn type_record_element(template: &OptionsTemplate, record: &[Value]) -> Option<I
     for (field, value) in fields.zip(record) {
         let number = value.as_u64();
         match field.element_id() {
-            ElementId::INFORMATION_ELEMENT_ID => id = number.and_then(|n| u16::try_from(n).ok()),
+            // The Enterprise bit is ignored; the enterprise is in
+            // privateEnterpriseNumber (RFC 5610 §3.8).
+            ElementId::INFORMATION_ELEMENT_ID => {
+                id = number
+                    .and_then(|n| u16::try_from(n).ok())
+                    .map(|n| n & !ENTERPRISE_BIT);
+            }
             ElementId::PRIVATE_ENTERPRISE_NUMBER => {
                 enterprise = number.and_then(|n| u32::try_from(n).ok());
             }
@@ -427,6 +425,34 @@ fn parse_all<'i, T>(
     Ok(items)
 }
 
+fn parse_set_header<'i>(input: &mut &'i [u8]) -> Result<(u16, &'i [u8])> {
+    let set_id = be_u16.parse_next(input)?;
+    let length = be_u16
+        .verify(|&length| length >= SET_HEADER_LENGTH)
+        .context(StrContext::Label("set length"))
+        .context(StrContext::Expected(StrContextValue::Description(
+            "at least the 4-octet set header",
+        )))
+        .parse_next(input)?;
+    let body = take(length - SET_HEADER_LENGTH)
+        .context(StrContext::Label("set body"))
+        .parse_next(input)?;
+    Ok((set_id, body))
+}
+
+/// Fails where parsing the sets would: on a set header or a template record.
+fn check_sets(mut body: &[u8]) -> Result<()> {
+    while !body.is_empty() {
+        let (set_id, mut set) = parse_set_header(&mut body)?;
+        match set_id {
+            TEMPLATE_SET_ID => drop(parse_records(&mut set, parse_template)?),
+            OPTIONS_TEMPLATE_SET_ID => drop(parse_records(&mut set, parse_options_template)?),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 fn min_record_length(template: &TemplateRef) -> usize {
     template
         .fields()
@@ -442,7 +468,10 @@ fn parse_records<'i, T>(
     mut record: impl winnow::Parser<&'i [u8], T, ContextError>,
 ) -> Result<Vec<T>> {
     let mut records = Vec::new();
-    while body.len() >= MIN_TEMPLATE_RECORD_LENGTH {
+    // Zero octets after the last record are padding (RFC 7011 §3.3.1): no
+    // record starts with Template ID 0. Over UDP, where withdrawals are not
+    // sent, a template record is at least 8 octets, so padding can be 4.
+    while body.len() >= MIN_TEMPLATE_RECORD_LENGTH && body.iter().any(|&octet| octet != 0) {
         records.push(record.parse_next(body)?);
     }
     Ok(records)

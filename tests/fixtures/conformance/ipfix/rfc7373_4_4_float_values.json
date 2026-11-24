@@ -1,0 +1,118 @@
+{
+  "reference": "RFC 7373 section 4.4; RFC 7011 sections 6.1.3 and 6.2",
+  "description": "Floats JSON has no number for are printed as RFC 7373 writes them: \"NaN\", \"+inf\" and \"-inf\", as float64 and as float64 sent in 4 octets. The extremes JSON can hold are numbers: -0, 1e300 and the smallest subnormal, 5e-324.",
+  "datagrams": 1,
+  "expected": [
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 104,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [{ "information_element_id": 311, "field_length": 8 }]
+              },
+              {
+                "template_id": 257,
+                "fields": [{ "information_element_id": 311, "field_length": 4 }]
+              }
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              { "samplingProbability": "NaN" },
+              { "samplingProbability": "+inf" },
+              { "samplingProbability": "-inf" },
+              { "samplingProbability": -0.0 },
+              { "samplingProbability": 1e300 },
+              { "samplingProbability": 5e-324 }
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 257,
+            "records": [
+              { "samplingProbability": "NaN" },
+              { "samplingProbability": "+inf" },
+              { "samplingProbability": "-inf" }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "flows": [
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0
+    },
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0
+    },
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0
+    },
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0
+    },
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0
+    },
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0
+    },
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0
+    },
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0
+    },
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0
+    }
+  ]
+}

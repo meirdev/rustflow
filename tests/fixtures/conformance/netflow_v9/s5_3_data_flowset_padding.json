@@ -19,16 +19,16 @@
               {
                 "template_id": 256,
                 "fields": [
-                  {"information_element_id": 8, "field_length": 4},
-                  {"information_element_id": 4, "field_length": 1}
+                  { "information_element_id": 8, "field_length": 4 },
+                  { "information_element_id": 4, "field_length": 1 }
                 ]
               },
               {
                 "template_id": 257,
                 "fields": [
-                  {"information_element_id": 12, "field_length": 4},
-                  {"information_element_id": 7, "field_length": 2},
-                  {"information_element_id": 5, "field_length": 1}
+                  { "information_element_id": 12, "field_length": 4 },
+                  { "information_element_id": 7, "field_length": 2 },
+                  { "information_element_id": 5, "field_length": 1 }
                 ]
               }
             ]
@@ -50,22 +50,26 @@
             "type": "data",
             "template_id": 256,
             "records": [
-              {"sourceIPv4Address": "192.0.2.1", "protocolIdentifier": 6}
+              { "sourceIPv4Address": "192.0.2.1", "protocolIdentifier": 6 }
             ]
           },
           {
             "type": "data",
             "template_id": 256,
             "records": [
-              {"sourceIPv4Address": "192.0.2.2", "protocolIdentifier": 17},
-              {"sourceIPv4Address": "192.0.2.3", "protocolIdentifier": 1}
+              { "sourceIPv4Address": "192.0.2.2", "protocolIdentifier": 17 },
+              { "sourceIPv4Address": "192.0.2.3", "protocolIdentifier": 1 }
             ]
           },
           {
             "type": "data",
             "template_id": 257,
             "records": [
-              {"destinationIPv4Address": "198.51.100.1", "sourceTransportPort": 443, "ipClassOfService": 184}
+              {
+                "destinationIPv4Address": "198.51.100.1",
+                "sourceTransportPort": 443,
+                "ipClassOfService": 184
+              }
             ]
           }
         ]
@@ -85,19 +89,19 @@
             "type": "data",
             "template_id": 256,
             "records": [
-              {"sourceIPv4Address": "192.0.2.4", "protocolIdentifier": 4},
-              {"sourceIPv4Address": "192.0.2.5", "protocolIdentifier": 5},
-              {"sourceIPv4Address": "192.0.2.6", "protocolIdentifier": 6}
+              { "sourceIPv4Address": "192.0.2.4", "protocolIdentifier": 4 },
+              { "sourceIPv4Address": "192.0.2.5", "protocolIdentifier": 5 },
+              { "sourceIPv4Address": "192.0.2.6", "protocolIdentifier": 6 }
             ]
           },
           {
             "type": "data",
             "template_id": 256,
             "records": [
-              {"sourceIPv4Address": "192.0.2.7", "protocolIdentifier": 7},
-              {"sourceIPv4Address": "192.0.2.8", "protocolIdentifier": 8},
-              {"sourceIPv4Address": "192.0.2.9", "protocolIdentifier": 9},
-              {"sourceIPv4Address": "192.0.2.10", "protocolIdentifier": 10}
+              { "sourceIPv4Address": "192.0.2.7", "protocolIdentifier": 7 },
+              { "sourceIPv4Address": "192.0.2.8", "protocolIdentifier": 8 },
+              { "sourceIPv4Address": "192.0.2.9", "protocolIdentifier": 9 },
+              { "sourceIPv4Address": "192.0.2.10", "protocolIdentifier": 10 }
             ]
           }
         ]
@@ -105,21 +109,132 @@
     }
   ],
   "flows": [
-    {"flow_type": "NETFLOW_V9", "time_received_ns": 1700000001000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "observation_domain_id": 0, "src_addr": "192.0.2.1", "proto": 6, "etype": 2048},
-    {"flow_type": "NETFLOW_V9", "time_received_ns": 1700000001000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "observation_domain_id": 0, "src_addr": "192.0.2.2", "proto": 17, "etype": 2048},
-    {"flow_type": "NETFLOW_V9", "time_received_ns": 1700000001000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "observation_domain_id": 0, "src_addr": "192.0.2.3", "proto": 1, "etype": 2048},
-    {"flow_type": "NETFLOW_V9", "time_received_ns": 1700000001000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "observation_domain_id": 0, "dst_addr": "198.51.100.1", "src_port": 443, "ip_tos": 184, "etype": 2048},
-    {"flow_type": "NETFLOW_V9", "time_received_ns": 1700000002000000000, "sampler_address": "192.0.2.1", "sequence_num": 2, "observation_domain_id": 0, "src_addr": "192.0.2.4", "proto": 4, "etype": 2048},
-    {"flow_type": "NETFLOW_V9", "time_received_ns": 1700000002000000000, "sampler_address": "192.0.2.1", "sequence_num": 2, "observation_domain_id": 0, "src_addr": "192.0.2.5", "proto": 5, "etype": 2048},
-    {"flow_type": "NETFLOW_V9", "time_received_ns": 1700000002000000000, "sampler_address": "192.0.2.1", "sequence_num": 2, "observation_domain_id": 0, "src_addr": "192.0.2.6", "proto": 6, "etype": 2048},
-    {"flow_type": "NETFLOW_V9", "time_received_ns": 1700000002000000000, "sampler_address": "192.0.2.1", "sequence_num": 2, "observation_domain_id": 0, "src_addr": "192.0.2.7", "proto": 7, "etype": 2048},
-    {"flow_type": "NETFLOW_V9", "time_received_ns": 1700000002000000000, "sampler_address": "192.0.2.1", "sequence_num": 2, "observation_domain_id": 0, "src_addr": "192.0.2.8", "proto": 8, "etype": 2048},
-    {"flow_type": "NETFLOW_V9", "time_received_ns": 1700000002000000000, "sampler_address": "192.0.2.1", "sequence_num": 2, "observation_domain_id": 0, "src_addr": "192.0.2.9", "proto": 9, "etype": 2048},
-    {"flow_type": "NETFLOW_V9", "time_received_ns": 1700000002000000000, "sampler_address": "192.0.2.1", "sequence_num": 2, "observation_domain_id": 0, "src_addr": "192.0.2.10", "proto": 10, "etype": 2048}
+    {
+      "flow_type": "NETFLOW_V9",
+      "time_received_ns": 1700000001000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 1,
+      "observation_domain_id": 0,
+      "src_addr": "192.0.2.1",
+      "proto": 6,
+      "etype": 2048
+    },
+    {
+      "flow_type": "NETFLOW_V9",
+      "time_received_ns": 1700000001000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 1,
+      "observation_domain_id": 0,
+      "src_addr": "192.0.2.2",
+      "proto": 17,
+      "etype": 2048
+    },
+    {
+      "flow_type": "NETFLOW_V9",
+      "time_received_ns": 1700000001000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 1,
+      "observation_domain_id": 0,
+      "src_addr": "192.0.2.3",
+      "proto": 1,
+      "etype": 2048
+    },
+    {
+      "flow_type": "NETFLOW_V9",
+      "time_received_ns": 1700000001000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 1,
+      "observation_domain_id": 0,
+      "dst_addr": "198.51.100.1",
+      "src_port": 443,
+      "ip_tos": 184,
+      "etype": 2048
+    },
+    {
+      "flow_type": "NETFLOW_V9",
+      "time_received_ns": 1700000002000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 2,
+      "observation_domain_id": 0,
+      "src_addr": "192.0.2.4",
+      "proto": 4,
+      "etype": 2048
+    },
+    {
+      "flow_type": "NETFLOW_V9",
+      "time_received_ns": 1700000002000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 2,
+      "observation_domain_id": 0,
+      "src_addr": "192.0.2.5",
+      "proto": 5,
+      "etype": 2048
+    },
+    {
+      "flow_type": "NETFLOW_V9",
+      "time_received_ns": 1700000002000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 2,
+      "observation_domain_id": 0,
+      "src_addr": "192.0.2.6",
+      "proto": 6,
+      "etype": 2048
+    },
+    {
+      "flow_type": "NETFLOW_V9",
+      "time_received_ns": 1700000002000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 2,
+      "observation_domain_id": 0,
+      "src_addr": "192.0.2.7",
+      "proto": 7,
+      "etype": 2048
+    },
+    {
+      "flow_type": "NETFLOW_V9",
+      "time_received_ns": 1700000002000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 2,
+      "observation_domain_id": 0,
+      "src_addr": "192.0.2.8",
+      "proto": 8,
+      "etype": 2048
+    },
+    {
+      "flow_type": "NETFLOW_V9",
+      "time_received_ns": 1700000002000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 2,
+      "observation_domain_id": 0,
+      "src_addr": "192.0.2.9",
+      "proto": 9,
+      "etype": 2048
+    },
+    {
+      "flow_type": "NETFLOW_V9",
+      "time_received_ns": 1700000002000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 2,
+      "observation_domain_id": 0,
+      "src_addr": "192.0.2.10",
+      "proto": 10,
+      "etype": 2048
+    }
   ],
   "tshark": {
     "cflow.flowset_length": ["32", "12", "16", "12", "20", "24"],
-    "cflow.srcaddr": ["192.0.2.1", "192.0.2.2", "192.0.2.3", "192.0.2.4", "192.0.2.5", "192.0.2.6", "192.0.2.7", "192.0.2.8", "192.0.2.9", "192.0.2.10"],
+    "cflow.srcaddr": [
+      "192.0.2.1",
+      "192.0.2.2",
+      "192.0.2.3",
+      "192.0.2.4",
+      "192.0.2.5",
+      "192.0.2.6",
+      "192.0.2.7",
+      "192.0.2.8",
+      "192.0.2.9",
+      "192.0.2.10"
+    ],
     "cflow.dstaddr": ["198.51.100.1"]
   }
 }

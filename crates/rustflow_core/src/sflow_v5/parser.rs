@@ -106,14 +106,15 @@ fn parse_formatted<'i>(input: &mut &'i [u8]) -> Result<(DataFormat, &'i [u8])> {
     Ok((format, data))
 }
 
-/// Parses all of `data`; `None` if it fails or leaves bytes over.
+/// Parses a structure from the start of `data`; `None` if it fails. An
+/// enterprise may extend its structures at the end, the standard ones
+/// included, so octets after the structure are skipped (sFlow v5,
+/// `data_format`).
 fn parse_whole<'i, T>(
     data: &'i [u8],
     mut parser: impl FnMut(&mut &'i [u8]) -> Result<T>,
 ) -> Option<T> {
-    let mut input = data;
-    let value = parser(&mut input).ok()?;
-    input.is_empty().then_some(value)
+    parser(&mut &*data).ok()
 }
 
 // Samples.

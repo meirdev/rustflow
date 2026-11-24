@@ -14,37 +14,152 @@
           {
             "type": "counters",
             "sequence_number": 16909060,
-            "source_id": {"source_id_type": 0, "source_id_index": 329223},
+            "source_id": { "source_id_type": 0, "source_id_index": 329223 },
             "records": [
-              {"type": "if_counters", "if_index": 100, "if_type": 101, "if_speed": 1099511627878, "if_direction": 103, "if_status": 104, "if_in_octets": 1099511627881, "if_in_ucast_pkts": 106, "if_in_multicast_pkts": 107, "if_in_broadcast_pkts": 108, "if_in_discards": 109, "if_in_errors": 110, "if_in_unknown_protos": 111, "if_out_octets": 1099511627888, "if_out_ucast_pkts": 113, "if_out_multicast_pkts": 114, "if_out_broadcast_pkts": 115, "if_out_discards": 116, "if_out_errors": 117, "if_promiscuous_mode": 118},
-              {"type": "ethernet_counters", "dot3_stats_alignment_errors": 200, "dot3_stats_fcs_errors": 201, "dot3_stats_single_collision_frames": 202, "dot3_stats_multiple_collision_frames": 203, "dot3_stats_sqe_test_errors": 204, "dot3_stats_deferred_transmissions": 205, "dot3_stats_late_collisions": 206, "dot3_stats_excessive_collisions": 207, "dot3_stats_internal_mac_transmit_errors": 208, "dot3_stats_carrier_sense_errors": 209, "dot3_stats_frame_too_longs": 210, "dot3_stats_internal_mac_receive_errors": 211, "dot3_stats_symbol_errors": 212}
+              {
+                "type": "if_counters",
+                "if_index": 100,
+                "if_type": 101,
+                "if_speed": 1099511627878,
+                "if_direction": 103,
+                "if_status": 104,
+                "if_in_octets": 1099511627881,
+                "if_in_ucast_pkts": 106,
+                "if_in_multicast_pkts": 107,
+                "if_in_broadcast_pkts": 108,
+                "if_in_discards": 109,
+                "if_in_errors": 110,
+                "if_in_unknown_protos": 111,
+                "if_out_octets": 1099511627888,
+                "if_out_ucast_pkts": 113,
+                "if_out_multicast_pkts": 114,
+                "if_out_broadcast_pkts": 115,
+                "if_out_discards": 116,
+                "if_out_errors": 117,
+                "if_promiscuous_mode": 118
+              },
+              {
+                "type": "ethernet_counters",
+                "dot3_stats_alignment_errors": 200,
+                "dot3_stats_fcs_errors": 201,
+                "dot3_stats_single_collision_frames": 202,
+                "dot3_stats_multiple_collision_frames": 203,
+                "dot3_stats_sqe_test_errors": 204,
+                "dot3_stats_deferred_transmissions": 205,
+                "dot3_stats_late_collisions": 206,
+                "dot3_stats_excessive_collisions": 207,
+                "dot3_stats_internal_mac_transmit_errors": 208,
+                "dot3_stats_carrier_sense_errors": 209,
+                "dot3_stats_frame_too_longs": 210,
+                "dot3_stats_internal_mac_receive_errors": 211,
+                "dot3_stats_symbol_errors": 212
+              }
             ]
           },
           {
             "type": "expanded_counters",
             "sequence_number": 2,
-            "source_id": {"source_id_type": 0, "source_id_index": 16777225},
+            "source_id": { "source_id_type": 0, "source_id_index": 16777225 },
             "records": [
-              {"type": "tokenring_counters", "dot5_stats_line_errors": 300, "dot5_stats_burst_errors": 301, "dot5_stats_ac_errors": 302, "dot5_stats_abort_trans_errors": 303, "dot5_stats_internal_errors": 304, "dot5_stats_lost_frame_errors": 305, "dot5_stats_receive_congestions": 306, "dot5_stats_frame_copied_errors": 307, "dot5_stats_token_errors": 308, "dot5_stats_soft_errors": 309, "dot5_stats_hard_errors": 310, "dot5_stats_signal_loss": 311, "dot5_stats_transmit_beacons": 312, "dot5_stats_recoverys": 313, "dot5_stats_lobe_wires": 314, "dot5_stats_removes": 315, "dot5_stats_singles": 316, "dot5_stats_freq_errors": 317},
-              {"type": "vg_counters", "dot12_in_high_priority_frames": 400, "dot12_in_high_priority_octets": 1099511628177, "dot12_in_norm_priority_frames": 402, "dot12_in_norm_priority_octets": 1099511628179, "dot12_in_ipm_errors": 404, "dot12_in_oversize_frame_errors": 405, "dot12_in_data_errors": 406, "dot12_in_null_addressed_frames": 407, "dot12_out_high_priority_frames": 408, "dot12_out_high_priority_octets": 1099511628185, "dot12_transition_into_trainings": 410, "dot12_hc_in_high_priority_octets": 1099511628187, "dot12_hc_in_norm_priority_octets": 1099511628188, "dot12_hc_out_high_priority_octets": 1099511628189},
-              {"type": "vlan_counters", "vlan_id": 500, "octets": 1099511628277, "ucast_pkts": 502, "multicast_pkts": 503, "broadcast_pkts": 504, "discards": 505}
+              {
+                "type": "tokenring_counters",
+                "dot5_stats_line_errors": 300,
+                "dot5_stats_burst_errors": 301,
+                "dot5_stats_ac_errors": 302,
+                "dot5_stats_abort_trans_errors": 303,
+                "dot5_stats_internal_errors": 304,
+                "dot5_stats_lost_frame_errors": 305,
+                "dot5_stats_receive_congestions": 306,
+                "dot5_stats_frame_copied_errors": 307,
+                "dot5_stats_token_errors": 308,
+                "dot5_stats_soft_errors": 309,
+                "dot5_stats_hard_errors": 310,
+                "dot5_stats_signal_loss": 311,
+                "dot5_stats_transmit_beacons": 312,
+                "dot5_stats_recoverys": 313,
+                "dot5_stats_lobe_wires": 314,
+                "dot5_stats_removes": 315,
+                "dot5_stats_singles": 316,
+                "dot5_stats_freq_errors": 317
+              },
+              {
+                "type": "vg_counters",
+                "dot12_in_high_priority_frames": 400,
+                "dot12_in_high_priority_octets": 1099511628177,
+                "dot12_in_norm_priority_frames": 402,
+                "dot12_in_norm_priority_octets": 1099511628179,
+                "dot12_in_ipm_errors": 404,
+                "dot12_in_oversize_frame_errors": 405,
+                "dot12_in_data_errors": 406,
+                "dot12_in_null_addressed_frames": 407,
+                "dot12_out_high_priority_frames": 408,
+                "dot12_out_high_priority_octets": 1099511628185,
+                "dot12_transition_into_trainings": 410,
+                "dot12_hc_in_high_priority_octets": 1099511628187,
+                "dot12_hc_in_norm_priority_octets": 1099511628188,
+                "dot12_hc_out_high_priority_octets": 1099511628189
+              },
+              {
+                "type": "vlan_counters",
+                "vlan_id": 500,
+                "octets": 1099511628277,
+                "ucast_pkts": 502,
+                "multicast_pkts": 503,
+                "broadcast_pkts": 504,
+                "discards": 505
+              }
             ]
           },
           {
             "type": "counters",
             "sequence_number": 3,
-            "source_id": {"source_id_type": 2, "source_id_index": 1},
+            "source_id": { "source_id_type": 2, "source_id_index": 1 },
             "records": [
-              {"type": "processor", "cpu_5s": 1234, "cpu_1m": 5678, "cpu_5m": 9999, "total_memory": 17179869184, "free_memory": 8589934592},
-              {"type": "processor", "cpu_5s": -1, "cpu_1m": -1, "cpu_5m": -1, "total_memory": 18446744073709551615, "free_memory": 0}
+              {
+                "type": "processor",
+                "cpu_5s": 1234,
+                "cpu_1m": 5678,
+                "cpu_5m": 9999,
+                "total_memory": 17179869184,
+                "free_memory": 8589934592
+              },
+              {
+                "type": "processor",
+                "cpu_5s": -1,
+                "cpu_1m": -1,
+                "cpu_5m": -1,
+                "total_memory": 18446744073709551615,
+                "free_memory": 0
+              }
             ]
           },
           {
             "type": "counters",
             "sequence_number": 4,
-            "source_id": {"source_id_type": 0, "source_id_index": 1},
+            "source_id": { "source_id_type": 0, "source_id_index": 1 },
             "records": [
-              {"type": "if_counters", "if_index": 4294967295, "if_type": 4294967295, "if_speed": 18446744073709551615, "if_direction": 4294967295, "if_status": 4294967295, "if_in_octets": 18446744073709551615, "if_in_ucast_pkts": 4294967295, "if_in_multicast_pkts": 4294967295, "if_in_broadcast_pkts": 4294967295, "if_in_discards": 4294967295, "if_in_errors": 4294967295, "if_in_unknown_protos": 4294967295, "if_out_octets": 18446744073709551615, "if_out_ucast_pkts": 4294967295, "if_out_multicast_pkts": 4294967295, "if_out_broadcast_pkts": 4294967295, "if_out_discards": 4294967295, "if_out_errors": 4294967295, "if_promiscuous_mode": 4294967295}
+              {
+                "type": "if_counters",
+                "if_index": 4294967295,
+                "if_type": 4294967295,
+                "if_speed": 18446744073709551615,
+                "if_direction": 4294967295,
+                "if_status": 4294967295,
+                "if_in_octets": 18446744073709551615,
+                "if_in_ucast_pkts": 4294967295,
+                "if_in_multicast_pkts": 4294967295,
+                "if_in_broadcast_pkts": 4294967295,
+                "if_in_discards": 4294967295,
+                "if_in_errors": 4294967295,
+                "if_in_unknown_protos": 4294967295,
+                "if_out_octets": 18446744073709551615,
+                "if_out_ucast_pkts": 4294967295,
+                "if_out_multicast_pkts": 4294967295,
+                "if_out_broadcast_pkts": 4294967295,
+                "if_out_discards": 4294967295,
+                "if_out_errors": 4294967295,
+                "if_promiscuous_mode": 4294967295
+              }
             ]
           }
         ],

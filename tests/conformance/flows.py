@@ -162,9 +162,20 @@ def netflow_v5(base: dict, sender: str, packet: dict) -> list[dict]:
 # NetFlow v9 and IPFIX.
 
 # Scope fields that cover part of a domain: v9 scope types by the name
-# they print as, IPFIX elements by ID.
-V9_PARTIAL = {"interface", "lineCard"}
-IPFIX_PARTIAL = {10, 14, 141}
+# they print as (an unknown one prints as its number, and may be any part),
+# IPFIX elements by ID.
+V9_PARTIAL = {"Interface", "LineCard", "Template"}
+IPFIX_PARTIAL = {10, 14, 141, 145}
+
+
+def extent(v9: bool, scopes: list[dict]) -> str:
+    if v9:
+        types = [s["field_type"] for s in scopes]
+        if any(not isinstance(t, str) or t in V9_PARTIAL for t in types):
+            return "partial"
+        return "system" if "System" in types else "domain"
+    partial = any(s.get("enterprise_number") is None and s["information_element_id"] in IPFIX_PARTIAL for s in scopes)
+    return "partial" if partial else "domain"
 
 
 class Sampling:
@@ -277,18 +288,9 @@ def templated(base: dict, sender: str, protocol: str, packet: dict, exporter: Ex
             for template in flow_set["templates"]:
                 exporter.scopes[domain, template["template_id"]] = template["scope_fields"]
         elif flow_set["type"] == "options_data":
+            scopes = exporter.scopes.get((domain, flow_set["template_id"]), [])
             for record in flow_set["records"]:
-                if v9:
-                    partial = any(name in V9_PARTIAL for name in record)
-                    system = "system" in record
-                else:
-                    scopes = exporter.scopes.get((domain, flow_set["template_id"]), [])
-                    partial = any(
-                        s.get("enterprise_number") is None and s["information_element_id"] in IPFIX_PARTIAL
-                        for s in scopes
-                    )
-                    system = False
-                exporter.learn(domain, "partial" if partial else "system" if system else "domain", record)
+                exporter.learn(domain, extent(v9, scopes), record)
 
     if v9:
         export_secs, uptime = packet["unix_secs"], packet["sys_uptime"]
@@ -307,7 +309,12 @@ def templated(base: dict, sender: str, protocol: str, packet: dict, exporter: Ex
         if flow_set["type"] != "data":
             continue
         for record in flow_set["records"]:
-            out.append(record_flow(dict(flow), record, export_secs, uptime, exporter, domain))
+            flow_record = record_flow(dict(flow), record, export_secs, uptime, exporter, domain)
+            # RFC 3954 section 8: without IP_PROTOCOL_VERSION, version 4 is
+            # assumed.
+            if v9 and flow_record.get("etype") is None and "ipVersion" not in record:
+                flow_record["etype"] = ETHER_IPV4
+            out.append(flow_record)
     return out
 
 
@@ -356,6 +363,10 @@ def record_flow(flow: dict, record: dict, export_secs: int, uptime: int | None, 
                 put("src_mac", mac(value))
             case "destinationMacAddress":
                 put("dst_mac", mac(value))
+            case "postSourceMacAddress":
+                fill("src_mac", mac(value))
+            case "postDestinationMacAddress":
+                fill("dst_mac", mac(value))
             case "ethernetType":
                 put("etype", narrow(value, 16))
             case "ipVersion":

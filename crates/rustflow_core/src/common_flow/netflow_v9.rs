@@ -5,6 +5,8 @@ use super::fields::{ExportTime, record_flow};
 use super::options::ExporterOptions;
 use super::sets::{data_records, learn_options};
 use super::{CommonFlow, FlowType};
+use crate::information_element::ElementId;
+use crate::net::ETHER_TYPE_IPV4;
 use crate::netflow_v9::Packet;
 
 pub fn from_netflow_v9<'a>(
@@ -31,8 +33,18 @@ pub fn from_netflow_v9<'a>(
         )
     };
     data_records(&packet.flow_sets).map(move |(fields, record)| {
-        record_flow(flow.clone(), &export, fields, record, |sampler| {
+        let mut flow = record_flow(flow.clone(), &export, fields, record, |sampler| {
             options.sampling_rate(domain, sampler, now)
-        })
+        });
+        // "If not present in the template, then version 4 is assumed"
+        // (RFC 3954 §8, IP_PROTOCOL_VERSION).
+        if flow.etype.is_none()
+            && !fields
+                .iter()
+                .any(|f| f.element_id() == ElementId::IP_VERSION)
+        {
+            flow.etype = Some(ETHER_TYPE_IPV4);
+        }
+        flow
     })
 }

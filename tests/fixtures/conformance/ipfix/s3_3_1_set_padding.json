@@ -18,23 +18,23 @@
               {
                 "template_id": 256,
                 "fields": [
-                  {"information_element_id": 8, "field_length": 4},
-                  {"information_element_id": 4, "field_length": 1}
+                  { "information_element_id": 8, "field_length": 4 },
+                  { "information_element_id": 4, "field_length": 1 }
                 ]
               },
               {
                 "template_id": 257,
                 "fields": [
-                  {"information_element_id": 12, "field_length": 4},
-                  {"information_element_id": 7, "field_length": 2},
-                  {"information_element_id": 5, "field_length": 1}
+                  { "information_element_id": 12, "field_length": 4 },
+                  { "information_element_id": 7, "field_length": 2 },
+                  { "information_element_id": 5, "field_length": 1 }
                 ]
               },
               {
                 "template_id": 258,
                 "fields": [
-                  {"information_element_id": 1, "field_length": 8},
-                  {"information_element_id": 4, "field_length": 1}
+                  { "information_element_id": 1, "field_length": 8 },
+                  { "information_element_id": 4, "field_length": 1 }
                 ]
               }
             ]
@@ -45,11 +45,11 @@
               {
                 "template_id": 259,
                 "scope_fields": [
-                  {"information_element_id": 141, "field_length": 4}
+                  { "information_element_id": 141, "field_length": 4 }
                 ],
                 "option_fields": [
-                  {"information_element_id": 41, "field_length": 2},
-                  {"information_element_id": 42, "field_length": 2}
+                  { "information_element_id": 41, "field_length": 2 },
+                  { "information_element_id": 42, "field_length": 2 }
                 ]
               }
             ]
@@ -70,45 +70,53 @@
             "type": "data",
             "template_id": 256,
             "records": [
-              {"sourceIPv4Address": "192.0.2.1", "protocolIdentifier": 6}
+              { "sourceIPv4Address": "192.0.2.1", "protocolIdentifier": 6 }
             ]
           },
           {
             "type": "data",
             "template_id": 256,
             "records": [
-              {"sourceIPv4Address": "192.0.2.2", "protocolIdentifier": 17},
-              {"sourceIPv4Address": "192.0.2.3", "protocolIdentifier": 1}
+              { "sourceIPv4Address": "192.0.2.2", "protocolIdentifier": 17 },
+              { "sourceIPv4Address": "192.0.2.3", "protocolIdentifier": 1 }
             ]
           },
           {
             "type": "data",
             "template_id": 256,
             "records": [
-              {"sourceIPv4Address": "192.0.2.4", "protocolIdentifier": 4},
-              {"sourceIPv4Address": "192.0.2.5", "protocolIdentifier": 5},
-              {"sourceIPv4Address": "192.0.2.6", "protocolIdentifier": 6}
+              { "sourceIPv4Address": "192.0.2.4", "protocolIdentifier": 4 },
+              { "sourceIPv4Address": "192.0.2.5", "protocolIdentifier": 5 },
+              { "sourceIPv4Address": "192.0.2.6", "protocolIdentifier": 6 }
             ]
           },
           {
             "type": "data",
             "template_id": 257,
             "records": [
-              {"destinationIPv4Address": "198.51.100.1", "sourceTransportPort": 443, "ipClassOfService": 184}
+              {
+                "destinationIPv4Address": "198.51.100.1",
+                "sourceTransportPort": 443,
+                "ipClassOfService": 184
+              }
             ]
           },
           {
             "type": "data",
             "template_id": 258,
             "records": [
-              {"octetDeltaCount": 1099511627776, "protocolIdentifier": 47}
+              { "octetDeltaCount": 1099511627776, "protocolIdentifier": 47 }
             ]
           },
           {
             "type": "options_data",
             "template_id": 259,
             "records": [
-              {"lineCardId": 1, "exportedMessageTotalCount": 345, "exportedFlowRecordTotalCount": 10201}
+              {
+                "lineCardId": 1,
+                "exportedMessageTotalCount": 345,
+                "exportedFlowRecordTotalCount": 10201
+              }
             ]
           }
         ]
@@ -127,8 +135,8 @@
             "type": "data",
             "template_id": 256,
             "records": [
-              {"sourceIPv4Address": "192.0.2.7", "protocolIdentifier": 7},
-              {"sourceIPv4Address": "192.0.2.8", "protocolIdentifier": 8}
+              { "sourceIPv4Address": "192.0.2.7", "protocolIdentifier": 7 },
+              { "sourceIPv4Address": "192.0.2.8", "protocolIdentifier": 8 }
             ]
           }
         ]
@@ -136,20 +144,129 @@
     }
   ],
   "flows": [
-    {"flow_type": "IPFIX", "time_received_ns": 1700000001000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "src_addr": "192.0.2.1", "proto": 6, "etype": 2048},
-    {"flow_type": "IPFIX", "time_received_ns": 1700000001000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "src_addr": "192.0.2.2", "proto": 17, "etype": 2048},
-    {"flow_type": "IPFIX", "time_received_ns": 1700000001000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "src_addr": "192.0.2.3", "proto": 1, "etype": 2048},
-    {"flow_type": "IPFIX", "time_received_ns": 1700000001000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "src_addr": "192.0.2.4", "proto": 4, "etype": 2048},
-    {"flow_type": "IPFIX", "time_received_ns": 1700000001000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "src_addr": "192.0.2.5", "proto": 5, "etype": 2048},
-    {"flow_type": "IPFIX", "time_received_ns": 1700000001000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "src_addr": "192.0.2.6", "proto": 6, "etype": 2048},
-    {"flow_type": "IPFIX", "time_received_ns": 1700000001000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "dst_addr": "198.51.100.1", "src_port": 443, "ip_tos": 184, "etype": 2048},
-    {"flow_type": "IPFIX", "time_received_ns": 1700000001000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "bytes": 1099511627776, "proto": 47},
-    {"flow_type": "IPFIX", "time_received_ns": 1700000002000000000, "sampler_address": "192.0.2.1", "sequence_num": 9, "observation_domain_id": 0, "src_addr": "192.0.2.7", "proto": 7, "etype": 2048},
-    {"flow_type": "IPFIX", "time_received_ns": 1700000002000000000, "sampler_address": "192.0.2.1", "sequence_num": 9, "observation_domain_id": 0, "src_addr": "192.0.2.8", "proto": 8, "etype": 2048}
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000001000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0,
+      "src_addr": "192.0.2.1",
+      "proto": 6,
+      "etype": 2048
+    },
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000001000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0,
+      "src_addr": "192.0.2.2",
+      "proto": 17,
+      "etype": 2048
+    },
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000001000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0,
+      "src_addr": "192.0.2.3",
+      "proto": 1,
+      "etype": 2048
+    },
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000001000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0,
+      "src_addr": "192.0.2.4",
+      "proto": 4,
+      "etype": 2048
+    },
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000001000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0,
+      "src_addr": "192.0.2.5",
+      "proto": 5,
+      "etype": 2048
+    },
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000001000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0,
+      "src_addr": "192.0.2.6",
+      "proto": 6,
+      "etype": 2048
+    },
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000001000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0,
+      "dst_addr": "198.51.100.1",
+      "src_port": 443,
+      "ip_tos": 184,
+      "etype": 2048
+    },
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000001000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0,
+      "bytes": 1099511627776,
+      "proto": 47
+    },
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000002000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 9,
+      "observation_domain_id": 0,
+      "src_addr": "192.0.2.7",
+      "proto": 7,
+      "etype": 2048
+    },
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000002000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 9,
+      "observation_domain_id": 0,
+      "src_addr": "192.0.2.8",
+      "proto": 8,
+      "etype": 2048
+    }
   ],
   "tshark": {
-    "cflow.flowset_length": ["44", "24", "12", "16", "20", "12", "20", "12", "16"],
-    "cflow.srcaddr": ["192.0.2.1", "192.0.2.2", "192.0.2.3", "192.0.2.4", "192.0.2.5", "192.0.2.6", "192.0.2.7", "192.0.2.8"],
+    "cflow.flowset_length": [
+      "44",
+      "24",
+      "12",
+      "16",
+      "20",
+      "12",
+      "20",
+      "12",
+      "16"
+    ],
+    "cflow.srcaddr": [
+      "192.0.2.1",
+      "192.0.2.2",
+      "192.0.2.3",
+      "192.0.2.4",
+      "192.0.2.5",
+      "192.0.2.6",
+      "192.0.2.7",
+      "192.0.2.8"
+    ],
     "cflow.dstaddr": ["198.51.100.1"]
   }
 }

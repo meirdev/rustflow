@@ -31,3 +31,4 @@ RustFlow supports the following flow protocols:
 ## sFlow v5
 
 - [sFlow Version 5 Specification](https://sflow.org/sflow_version_5.txt)
+- [sFlow Dropped Packet Notification Structures](https://sflow.org/sflow_drops.txt)

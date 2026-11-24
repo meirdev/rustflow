@@ -1,0 +1,86 @@
+{
+  "reference": "RFC 7011 sections 5.2 and 6.1.9",
+  "description": "An NTP timestamp's 32-bit seconds wrap in 2036; the era is implicit. In the packet a value with its top bit clear is after 2036 and one with it set before (the RFC 4330 pivot): seconds 5 is 2036-02-07. A flow takes the era nearest the message's Export Time: seconds 2^31 is 1968-01-20 in the packet, and 2104-02-26 in a flow exported in 2103.",
+  "datagrams": 2,
+  "expected": [
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 48,
+        "export_time": 2100000000,
+        "sequence_number": 0,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [
+                  { "information_element_id": 154, "field_length": 8 },
+                  { "information_element_id": 10, "field_length": 4 }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {
+                "flowStartMicroseconds": "2036-02-07T06:28:21.000000Z",
+                "ingressInterface": 1
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 32,
+        "export_time": 4200000000,
+        "sequence_number": 1,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {
+                "flowStartMicroseconds": "1968-01-20T03:14:08.000000Z",
+                "ingressInterface": 2
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "flows": [
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0,
+      "time_flow_start_ns": 2085978501000000000,
+      "in_if": 1
+    },
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000001000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 1,
+      "observation_domain_id": 0,
+      "time_flow_start_ns": 4233462144000000000,
+      "in_if": 2
+    }
+  ],
+  "tshark": {
+    "cflow.inputint": ["1", "2"]
+  }
+}

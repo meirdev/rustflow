@@ -106,9 +106,11 @@ no change to the cases changes no file.
 | NetFlow v5 (Cisco, NetFlow Export Datagram Format) | header, flow record |
 | RFC 3954, NetFlow v9 | 4, 5.1, 5.2, 5.3, 6.1, 6.2, 7, 8, 9, 11 |
 | RFC 7011, IPFIX | 3.1, 3.2, 3.3.1, 3.3.2, 3.4.1, 3.4.2, 3.4.3, 4.1 to 4.4, 5.1, 5.2, 6.1.1 to 6.1.10, 6.2, 7, 8, 8.1, 8.4, 9, 9.1, appendix A |
-| RFC 6313, IPFIX structured data | 4.5.1, 4.5.2, 4.5.3 |
-| RFC 5610, IPFIX type information | 3 |
-| sFlow Version 5 | section 5, every structure the parser reads |
+| RFC 7012, IPFIX information model | 4 (reserved element 0) |
+| RFC 6313, IPFIX structured data | 4.5.1, 4.5.2, 4.5.3, 5.2, 5.3 |
+| RFC 5610, IPFIX type information | 3, 3.8, 3.9, 3.10 |
+| RFC 7373, IPFIX text types | 4.4 (float values); the text form of every value |
+| sFlow Version 5 | section 5, every structure the parser reads, extended structures |
 | sFlow Dropped Packet Notification Structures | section 2 |
 
 Left out, because a capture cannot show them:

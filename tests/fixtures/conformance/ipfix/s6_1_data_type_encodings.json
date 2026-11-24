@@ -18,22 +18,22 @@
               {
                 "template_id": 256,
                 "fields": [
-                  {"information_element_id": 4, "field_length": 1},
-                  {"information_element_id": 7, "field_length": 2},
-                  {"information_element_id": 10, "field_length": 4},
-                  {"information_element_id": 1, "field_length": 8},
-                  {"information_element_id": 434, "field_length": 4},
-                  {"information_element_id": 56, "field_length": 6},
-                  {"information_element_id": 8, "field_length": 4},
-                  {"information_element_id": 27, "field_length": 16},
-                  {"information_element_id": 311, "field_length": 8},
-                  {"information_element_id": 276, "field_length": 1},
-                  {"information_element_id": 82, "field_length": 4},
-                  {"information_element_id": 90, "field_length": 8},
-                  {"information_element_id": 150, "field_length": 4},
-                  {"information_element_id": 152, "field_length": 8},
-                  {"information_element_id": 154, "field_length": 8},
-                  {"information_element_id": 156, "field_length": 8}
+                  { "information_element_id": 4, "field_length": 1 },
+                  { "information_element_id": 7, "field_length": 2 },
+                  { "information_element_id": 10, "field_length": 4 },
+                  { "information_element_id": 1, "field_length": 8 },
+                  { "information_element_id": 434, "field_length": 4 },
+                  { "information_element_id": 56, "field_length": 6 },
+                  { "information_element_id": 8, "field_length": 4 },
+                  { "information_element_id": 27, "field_length": 16 },
+                  { "information_element_id": 311, "field_length": 8 },
+                  { "information_element_id": 276, "field_length": 1 },
+                  { "information_element_id": 82, "field_length": 4 },
+                  { "information_element_id": 90, "field_length": 8 },
+                  { "information_element_id": 150, "field_length": 4 },
+                  { "information_element_id": 152, "field_length": 8 },
+                  { "information_element_id": 154, "field_length": 8 },
+                  { "information_element_id": 156, "field_length": 8 }
                 ]
               }
             ]
@@ -42,9 +42,60 @@
             "type": "data",
             "template_id": 256,
             "records": [
-              {"protocolIdentifier": 6, "sourceTransportPort": 443, "ingressInterface": 70000, "octetDeltaCount": 1099511627781, "mibObjectValueInteger": -5, "sourceMacAddress": "02:00:00:00:00:aa", "sourceIPv4Address": "192.0.2.1", "sourceIPv6Address": "2001:db8::1", "samplingProbability": 0.5, "dataRecordsReliability": true, "interfaceName": "eth0", "mplsVpnRouteDistinguisher": "0000fde800000064", "flowStartSeconds": "2023-11-14T22:13:20Z", "flowStartMilliseconds": "2012-11-05T18:31:01.135Z", "flowStartMicroseconds": "2023-11-14T22:13:20.500000Z", "flowStartNanoseconds": "2023-11-14T22:13:20.250000000Z"},
-              {"protocolIdentifier": 255, "sourceTransportPort": 65535, "ingressInterface": 4294967295, "octetDeltaCount": 18446744073709551615, "mibObjectValueInteger": -2147483648, "sourceMacAddress": "ff:ff:ff:ff:ff:ff", "sourceIPv4Address": "255.255.255.255", "sourceIPv6Address": "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", "samplingProbability": -2.5, "dataRecordsReliability": false, "interfaceName": "lo00", "mplsVpnRouteDistinguisher": "ffffffffffffffff", "flowStartSeconds": "1970-01-01T00:00:00Z", "flowStartMilliseconds": "1970-01-01T00:00:00.000Z", "flowStartMicroseconds": "2023-11-14T22:13:20.500000Z", "flowStartNanoseconds": "2023-11-14T22:13:20.000000000Z"},
-              {"protocolIdentifier": 0, "sourceTransportPort": 0, "ingressInterface": 0, "octetDeltaCount": 0, "mibObjectValueInteger": 2147483647, "sourceMacAddress": "00:00:00:00:00:00", "sourceIPv4Address": "0.0.0.0", "sourceIPv6Address": "::", "samplingProbability": 0.0, "dataRecordsReliability": true, "interfaceName": "éab", "mplsVpnRouteDistinguisher": "0000000000000000", "flowStartSeconds": "2000-02-29T00:00:00Z", "flowStartMilliseconds": "2000-02-29T00:00:00.999Z", "flowStartMicroseconds": "2000-02-29T00:00:00.750000Z", "flowStartNanoseconds": "2000-02-29T00:00:00.125000000Z"}
+              {
+                "protocolIdentifier": 6,
+                "sourceTransportPort": 443,
+                "ingressInterface": 70000,
+                "octetDeltaCount": 1099511627781,
+                "mibObjectValueInteger": -5,
+                "sourceMacAddress": "02:00:00:00:00:aa",
+                "sourceIPv4Address": "192.0.2.1",
+                "sourceIPv6Address": "2001:db8::1",
+                "samplingProbability": 0.5,
+                "dataRecordsReliability": true,
+                "interfaceName": "eth0",
+                "mplsVpnRouteDistinguisher": "0000fde800000064",
+                "flowStartSeconds": "2023-11-14T22:13:20Z",
+                "flowStartMilliseconds": "2012-11-05T18:31:01.135Z",
+                "flowStartMicroseconds": "2023-11-14T22:13:20.500000Z",
+                "flowStartNanoseconds": "2023-11-14T22:13:20.250000000Z"
+              },
+              {
+                "protocolIdentifier": 255,
+                "sourceTransportPort": 65535,
+                "ingressInterface": 4294967295,
+                "octetDeltaCount": 18446744073709551615,
+                "mibObjectValueInteger": -2147483648,
+                "sourceMacAddress": "ff:ff:ff:ff:ff:ff",
+                "sourceIPv4Address": "255.255.255.255",
+                "sourceIPv6Address": "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+                "samplingProbability": -2.5,
+                "dataRecordsReliability": false,
+                "interfaceName": "lo00",
+                "mplsVpnRouteDistinguisher": "ffffffffffffffff",
+                "flowStartSeconds": "1970-01-01T00:00:00Z",
+                "flowStartMilliseconds": "1970-01-01T00:00:00.000Z",
+                "flowStartMicroseconds": "2023-11-14T22:13:20.500000Z",
+                "flowStartNanoseconds": "2023-11-14T22:13:20.000000000Z"
+              },
+              {
+                "protocolIdentifier": 0,
+                "sourceTransportPort": 0,
+                "ingressInterface": 0,
+                "octetDeltaCount": 0,
+                "mibObjectValueInteger": 2147483647,
+                "sourceMacAddress": "00:00:00:00:00:00",
+                "sourceIPv4Address": "0.0.0.0",
+                "sourceIPv6Address": "::",
+                "samplingProbability": 0.0,
+                "dataRecordsReliability": true,
+                "interfaceName": "éab",
+                "mplsVpnRouteDistinguisher": "0000000000000000",
+                "flowStartSeconds": "2000-02-29T00:00:00Z",
+                "flowStartMilliseconds": "2000-02-29T00:00:00.999Z",
+                "flowStartMicroseconds": "2000-02-29T00:00:00.750000Z",
+                "flowStartNanoseconds": "2000-02-29T00:00:00.125000000Z"
+              }
             ]
           }
         ]
@@ -52,17 +103,67 @@
     }
   ],
   "flows": [
-    {"flow_type": "IPFIX", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "proto": 6, "src_port": 443, "in_if": 70000, "bytes": 1099511627781, "src_mac": "02:00:00:00:00:aa", "src_addr": "2001:db8::1", "time_flow_start_ns": 1700000000250000000, "etype": 34525},
-    {"flow_type": "IPFIX", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "proto": 255, "src_port": 65535, "in_if": 4294967295, "bytes": 18446744073709551615, "src_mac": "ff:ff:ff:ff:ff:ff", "src_addr": "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", "time_flow_start_ns": 1700000000000000000, "etype": 34525},
-    {"flow_type": "IPFIX", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "proto": 0, "src_port": 0, "in_if": 0, "bytes": 0, "src_mac": "00:00:00:00:00:00", "src_addr": "::", "time_flow_start_ns": 951782400125000000, "etype": 34525}
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0,
+      "proto": 6,
+      "src_port": 443,
+      "in_if": 70000,
+      "bytes": 1099511627781,
+      "src_mac": "02:00:00:00:00:aa",
+      "src_addr": "2001:db8::1",
+      "time_flow_start_ns": 1700000000250000000,
+      "etype": 34525
+    },
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0,
+      "proto": 255,
+      "src_port": 65535,
+      "in_if": 4294967295,
+      "bytes": 18446744073709551615,
+      "src_mac": "ff:ff:ff:ff:ff:ff",
+      "src_addr": "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+      "time_flow_start_ns": 1700000000000000000,
+      "etype": 34525
+    },
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0,
+      "proto": 0,
+      "src_port": 0,
+      "in_if": 0,
+      "bytes": 0,
+      "src_mac": "00:00:00:00:00:00",
+      "src_addr": "::",
+      "time_flow_start_ns": 951782400125000000,
+      "etype": 34525
+    }
   ],
   "tshark": {
     "cflow.protocol": ["6", "255", "0"],
     "cflow.srcport": ["443", "65535", "0"],
     "cflow.octets": ["1099511627781", "18446744073709551615", "0"],
-    "cflow.srcmac": ["02:00:00:00:00:aa", "ff:ff:ff:ff:ff:ff", "00:00:00:00:00:00"],
+    "cflow.srcmac": [
+      "02:00:00:00:00:aa",
+      "ff:ff:ff:ff:ff:ff",
+      "00:00:00:00:00:00"
+    ],
     "cflow.srcaddr": ["192.0.2.1", "255.255.255.255", "0.0.0.0"],
-    "cflow.srcaddrv6": ["2001:db8::1", "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", "::"],
+    "cflow.srcaddrv6": [
+      "2001:db8::1",
+      "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+      "::"
+    ],
     "cflow.sampling_probability": ["0.5", "-2.5", "0"]
   }
 }

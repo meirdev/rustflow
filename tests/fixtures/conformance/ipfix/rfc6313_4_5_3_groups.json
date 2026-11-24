@@ -1,0 +1,68 @@
+{
+  "reference": "RFC 6313 section 4.5.3",
+  "description": "subTemplateMultiList groups: two records of template 301, a group of template 302 with no records (a length of 4, its header), a group of template 999, which the collector does not have, and one more record of template 301. The list is reported as the records of its groups in order, an unknown group as null; the empty group adds nothing.",
+  "datagrams": 1,
+  "expected": [
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 82,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 301,
+                "fields": [{ "information_element_id": 7, "field_length": 2 }]
+              },
+              {
+                "template_id": 302,
+                "fields": [{ "information_element_id": 4, "field_length": 1 }]
+              },
+              {
+                "template_id": 256,
+                "fields": [
+                  { "information_element_id": 10, "field_length": 4 },
+                  { "information_element_id": 293, "field_length": 65535 }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {
+                "ingressInterface": 1,
+                "subTemplateMultiList": [
+                  { "sourceTransportPort": 80 },
+                  { "sourceTransportPort": 443 },
+                  null,
+                  { "sourceTransportPort": 8080 }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "flows": [
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0,
+      "in_if": 1
+    }
+  ],
+  "tshark": {
+    "cflow.inputint": ["1"]
+  },
+  "clean": false
+}

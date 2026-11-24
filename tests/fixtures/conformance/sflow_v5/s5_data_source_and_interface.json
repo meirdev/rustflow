@@ -14,92 +14,134 @@
           {
             "type": "flow",
             "sequence_number": 1,
-            "source_id": {"source_id_type": 0, "source_id_index": 2},
+            "source_id": { "source_id_type": 0, "source_id_index": 2 },
             "sampling_rate": 100,
             "sample_pool": 100,
             "drops": 0,
-            "input": {"format": 0, "value": 2},
-            "output": {"format": 0, "value": 0},
+            "input": { "format": 0, "value": 2 },
+            "output": { "format": 0, "value": 0 },
             "records": [
-              {"type": "extended_switch", "src_vlan": 10, "src_priority": 0, "dst_vlan": 20, "dst_priority": 0}
+              {
+                "type": "extended_switch",
+                "src_vlan": 10,
+                "src_priority": 0,
+                "dst_vlan": 20,
+                "dst_priority": 0
+              }
             ]
           },
           {
             "type": "flow",
             "sequence_number": 2,
-            "source_id": {"source_id_type": 1, "source_id_index": 100},
+            "source_id": { "source_id_type": 1, "source_id_index": 100 },
             "sampling_rate": 100,
             "sample_pool": 200,
             "drops": 0,
-            "input": {"format": 0, "value": 3},
-            "output": {"format": 1, "value": 1},
+            "input": { "format": 0, "value": 3 },
+            "output": { "format": 1, "value": 1 },
             "records": [
-              {"type": "extended_switch", "src_vlan": 10, "src_priority": 0, "dst_vlan": 20, "dst_priority": 0}
+              {
+                "type": "extended_switch",
+                "src_vlan": 10,
+                "src_priority": 0,
+                "dst_vlan": 20,
+                "dst_priority": 0
+              }
             ]
           },
           {
             "type": "flow",
             "sequence_number": 3,
-            "source_id": {"source_id_type": 2, "source_id_index": 5000},
+            "source_id": { "source_id_type": 2, "source_id_index": 5000 },
             "sampling_rate": 100,
             "sample_pool": 300,
             "drops": 0,
-            "input": {"format": 0, "value": 4},
-            "output": {"format": 1, "value": 258},
+            "input": { "format": 0, "value": 4 },
+            "output": { "format": 1, "value": 258 },
             "records": [
-              {"type": "extended_switch", "src_vlan": 10, "src_priority": 0, "dst_vlan": 20, "dst_priority": 0}
+              {
+                "type": "extended_switch",
+                "src_vlan": 10,
+                "src_priority": 0,
+                "dst_vlan": 20,
+                "dst_priority": 0
+              }
             ]
           },
           {
             "type": "flow",
             "sequence_number": 4,
-            "source_id": {"source_id_type": 0, "source_id_index": 5},
+            "source_id": { "source_id_type": 0, "source_id_index": 5 },
             "sampling_rate": 100,
             "sample_pool": 400,
             "drops": 0,
-            "input": {"format": 0, "value": 5},
-            "output": {"format": 2, "value": 7},
+            "input": { "format": 0, "value": 5 },
+            "output": { "format": 2, "value": 7 },
             "records": [
-              {"type": "extended_switch", "src_vlan": 10, "src_priority": 0, "dst_vlan": 20, "dst_priority": 0}
+              {
+                "type": "extended_switch",
+                "src_vlan": 10,
+                "src_priority": 0,
+                "dst_vlan": 20,
+                "dst_priority": 0
+              }
             ]
           },
           {
             "type": "flow",
             "sequence_number": 5,
-            "source_id": {"source_id_type": 0, "source_id_index": 6},
+            "source_id": { "source_id_type": 0, "source_id_index": 6 },
             "sampling_rate": 100,
             "sample_pool": 500,
             "drops": 0,
-            "input": {"format": 0, "value": 6},
-            "output": {"format": 2, "value": 0},
+            "input": { "format": 0, "value": 6 },
+            "output": { "format": 2, "value": 0 },
             "records": [
-              {"type": "extended_switch", "src_vlan": 10, "src_priority": 0, "dst_vlan": 20, "dst_priority": 0}
+              {
+                "type": "extended_switch",
+                "src_vlan": 10,
+                "src_priority": 0,
+                "dst_vlan": 20,
+                "dst_priority": 0
+              }
             ]
           },
           {
             "type": "flow",
             "sequence_number": 6,
-            "source_id": {"source_id_type": 0, "source_id_index": 7},
+            "source_id": { "source_id_type": 0, "source_id_index": 7 },
             "sampling_rate": 100,
             "sample_pool": 600,
             "drops": 0,
-            "input": {"format": 0, "value": 1073741823},
-            "output": {"format": 0, "value": 7},
+            "input": { "format": 0, "value": 1073741823 },
+            "output": { "format": 0, "value": 7 },
             "records": [
-              {"type": "extended_switch", "src_vlan": 10, "src_priority": 0, "dst_vlan": 20, "dst_priority": 0}
+              {
+                "type": "extended_switch",
+                "src_vlan": 10,
+                "src_priority": 0,
+                "dst_vlan": 20,
+                "dst_priority": 0
+              }
             ]
           },
           {
             "type": "flow",
             "sequence_number": 7,
-            "source_id": {"source_id_type": 0, "source_id_index": 8},
+            "source_id": { "source_id_type": 0, "source_id_index": 8 },
             "sampling_rate": 100,
             "sample_pool": 700,
             "drops": 0,
-            "input": {"format": 0, "value": 8},
-            "output": {"format": 0, "value": 1073741823},
+            "input": { "format": 0, "value": 8 },
+            "output": { "format": 0, "value": 1073741823 },
             "records": [
-              {"type": "extended_switch", "src_vlan": 10, "src_priority": 0, "dst_vlan": 20, "dst_priority": 0}
+              {
+                "type": "extended_switch",
+                "src_vlan": 10,
+                "src_priority": 0,
+                "dst_vlan": 20,
+                "dst_priority": 0
+              }
             ]
           }
         ],
@@ -108,13 +150,83 @@
     }
   ],
   "flows": [
-    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 100, "in_if": 2, "packets": 1, "src_vlan": 10, "dst_vlan": 20},
-    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 100, "in_if": 3, "packets": 1, "src_vlan": 10, "dst_vlan": 20},
-    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 100, "in_if": 4, "packets": 1, "src_vlan": 10, "dst_vlan": 20},
-    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 100, "in_if": 5, "packets": 1, "src_vlan": 10, "dst_vlan": 20},
-    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 100, "in_if": 6, "packets": 1, "src_vlan": 10, "dst_vlan": 20},
-    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 100, "out_if": 7, "packets": 1, "src_vlan": 10, "dst_vlan": 20},
-    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 100, "in_if": 8, "packets": 1, "src_vlan": 10, "dst_vlan": 20}
+    {
+      "flow_type": "SFLOW_V5",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 1,
+      "sampling_rate": 100,
+      "in_if": 2,
+      "packets": 1,
+      "src_vlan": 10,
+      "dst_vlan": 20
+    },
+    {
+      "flow_type": "SFLOW_V5",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 1,
+      "sampling_rate": 100,
+      "in_if": 3,
+      "packets": 1,
+      "src_vlan": 10,
+      "dst_vlan": 20
+    },
+    {
+      "flow_type": "SFLOW_V5",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 1,
+      "sampling_rate": 100,
+      "in_if": 4,
+      "packets": 1,
+      "src_vlan": 10,
+      "dst_vlan": 20
+    },
+    {
+      "flow_type": "SFLOW_V5",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 1,
+      "sampling_rate": 100,
+      "in_if": 5,
+      "packets": 1,
+      "src_vlan": 10,
+      "dst_vlan": 20
+    },
+    {
+      "flow_type": "SFLOW_V5",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 1,
+      "sampling_rate": 100,
+      "in_if": 6,
+      "packets": 1,
+      "src_vlan": 10,
+      "dst_vlan": 20
+    },
+    {
+      "flow_type": "SFLOW_V5",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 1,
+      "sampling_rate": 100,
+      "out_if": 7,
+      "packets": 1,
+      "src_vlan": 10,
+      "dst_vlan": 20
+    },
+    {
+      "flow_type": "SFLOW_V5",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 1,
+      "sampling_rate": 100,
+      "in_if": 8,
+      "packets": 1,
+      "src_vlan": 10,
+      "dst_vlan": 20
+    }
   ],
   "tshark": {
     "sflow.flow_sample.source_id_class": ["0", "1", "2", "0", "0", "0", "0"],

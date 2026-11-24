@@ -835,4 +835,51 @@ def cases() -> list[Case]:
         )
     )
 
+
+    def extended(pair: Pair, extra: bytes) -> Pair:
+        """A sample or record with `extra` bytes at the end of its
+        structure, as an enterprise may extend it."""
+        length = int.from_bytes(pair.wire[4:8], "big")
+        return Pair(pair.wire[:4] + opaque(pair.wire[8 : 8 + length] + extra), pair.text)
+
+    ipv4 = sampled_ipv4(1500, 6, "192.0.2.1", "198.51.100.1", 51000, 443, 0x1B, 0xB8)
+    switch = extended_switch(10, 0, 20, 0)
+    out.append(
+        case(
+            "s5_extended_structures",
+            "sFlow Version 5, section 5 (data_format)",
+            "An enterprise may extend a structure at its end, the standard "
+            "ones included, and a receiver must use the opaque length so "
+            "that this causes no decoding error: a sampled_ipv4 record "
+            "with 4 bytes past its fields, and a flow sample with 8 bytes "
+            "past its records. Each is read as defined, the extra bytes "
+            "skipped, and what follows it is read.",
+            [
+                datagram([simple_flow(1, [extended(ipv4, u32(7)), switch])]),
+                datagram([extended(simple_flow(2), u32(0xDEAD) + u32(0xBEEF)), simple_flow(3)], sequence_number=2),
+            ],
+            clean=False,
+        )
+    )
+
+    header_45 = sampled_frame(bytes(3))
+    padded = sampled_header(1, 64, 4, header_45)
+    padded = Pair(padded.wire[:-3] + b"\xff\xff\xff", padded.text)
+    bad_router = unknown(0, 1002, u32(3) + u32(0) + u32(24) + u32(24))
+    good, good_text = datagram([simple_flow(4, [bad_router, ipv4, padded])], sequence_number=4)
+    out.append(
+        case(
+            "s5_records_that_do_not_parse",
+            "sFlow Version 5, section 5",
+            "An extended_router record whose next hop has an address type "
+            "the specification does not define (3) is kept as sent, as an "
+            "unknown record, and the records after it are read. A "
+            "sampled_header of 45 bytes whose 3 padding bytes are not zero "
+            "is read, the padding skipped. 8 bytes after the last sample "
+            "of a datagram are left alone.",
+            [(Datagram(good.payload + bytes(8), src=good.src, dst_port=good.dst_port), good_text)],
+            clean=False,
+        )
+    )
+
     return out

@@ -18,12 +18,20 @@
               {
                 "template_id": 256,
                 "fields": [
-                  {"information_element_id": 8, "field_length": 4},
-                  {"information_element_id": 30000, "field_length": 4},
-                  {"information_element_id": 9, "field_length": 2, "enterprise_number": 32473},
-                  {"information_element_id": 30001, "field_length": 65535},
-                  {"information_element_id": 10, "field_length": 65535, "enterprise_number": 32473},
-                  {"information_element_id": 12, "field_length": 4}
+                  { "information_element_id": 8, "field_length": 4 },
+                  { "information_element_id": 30000, "field_length": 4 },
+                  {
+                    "information_element_id": 9,
+                    "field_length": 2,
+                    "enterprise_number": 32473
+                  },
+                  { "information_element_id": 30001, "field_length": 65535 },
+                  {
+                    "information_element_id": 10,
+                    "field_length": 65535,
+                    "enterprise_number": 32473
+                  },
+                  { "information_element_id": 12, "field_length": 4 }
                 ]
               }
             ]
@@ -32,8 +40,22 @@
             "type": "data",
             "template_id": 256,
             "records": [
-              {"sourceIPv4Address": "192.0.2.1", "30000": "deadbeef", "32473/9": "cafe", "30001": "010203", "32473/10": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "destinationIPv4Address": "198.51.100.1"},
-              {"sourceIPv4Address": "192.0.2.2", "30000": "00000000", "32473/9": "0000", "30001": "", "32473/10": "ff", "destinationIPv4Address": "198.51.100.2"}
+              {
+                "sourceIPv4Address": "192.0.2.1",
+                "30000": "deadbeef",
+                "32473/9": "cafe",
+                "30001": "010203",
+                "32473/10": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "destinationIPv4Address": "198.51.100.1"
+              },
+              {
+                "sourceIPv4Address": "192.0.2.2",
+                "30000": "00000000",
+                "32473/9": "0000",
+                "30001": "",
+                "32473/10": "ff",
+                "destinationIPv4Address": "198.51.100.2"
+              }
             ]
           }
         ]
@@ -41,8 +63,26 @@
     }
   ],
   "flows": [
-    {"flow_type": "IPFIX", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "src_addr": "192.0.2.1", "dst_addr": "198.51.100.1", "etype": 2048},
-    {"flow_type": "IPFIX", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "src_addr": "192.0.2.2", "dst_addr": "198.51.100.2", "etype": 2048}
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0,
+      "src_addr": "192.0.2.1",
+      "dst_addr": "198.51.100.1",
+      "etype": 2048
+    },
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0,
+      "src_addr": "192.0.2.2",
+      "dst_addr": "198.51.100.2",
+      "etype": 2048
+    }
   ],
   "tshark": {
     "cflow.srcaddr": ["192.0.2.1", "192.0.2.2"],

@@ -18,10 +18,10 @@
               {
                 "template_id": 256,
                 "fields": [
-                  {"information_element_id": 10, "field_length": 4},
-                  {"information_element_id": 82, "field_length": 4},
-                  {"information_element_id": 83, "field_length": 65535},
-                  {"information_element_id": 14, "field_length": 4}
+                  { "information_element_id": 10, "field_length": 4 },
+                  { "information_element_id": 82, "field_length": 4 },
+                  { "information_element_id": 83, "field_length": 65535 },
+                  { "information_element_id": 14, "field_length": 4 }
                 ]
               }
             ]
@@ -30,9 +30,24 @@
             "type": "data",
             "template_id": 256,
             "records": [
-              {"ingressInterface": 1, "interfaceName": "61628063", "interfaceDescription": "c0af", "egressInterface": 11},
-              {"ingressInterface": 2, "interfaceName": "eth1", "interfaceDescription": "café → 東京", "egressInterface": 12},
-              {"ingressInterface": 3, "interfaceName": "eth2", "interfaceDescription": "616263e69d", "egressInterface": 13}
+              {
+                "ingressInterface": 1,
+                "interfaceName": "61628063",
+                "interfaceDescription": "c0af",
+                "egressInterface": 11
+              },
+              {
+                "ingressInterface": 2,
+                "interfaceName": "eth1",
+                "interfaceDescription": "café → 東京",
+                "egressInterface": 12
+              },
+              {
+                "ingressInterface": 3,
+                "interfaceName": "eth2",
+                "interfaceDescription": "616263e69d",
+                "egressInterface": 13
+              }
             ]
           }
         ]
@@ -40,9 +55,33 @@
     }
   ],
   "flows": [
-    {"flow_type": "IPFIX", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "in_if": 1, "out_if": 11},
-    {"flow_type": "IPFIX", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "in_if": 2, "out_if": 12},
-    {"flow_type": "IPFIX", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "in_if": 3, "out_if": 13}
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0,
+      "in_if": 1,
+      "out_if": 11
+    },
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0,
+      "in_if": 2,
+      "out_if": 12
+    },
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0,
+      "in_if": 3,
+      "out_if": 13
+    }
   ],
   "tshark": {
     "cflow.inputint": ["1", "2", "3"],

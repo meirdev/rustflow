@@ -19,11 +19,11 @@
               {
                 "template_id": 256,
                 "fields": [
-                  {"information_element_id": 8, "field_length": 4},
-                  {"information_element_id": 12, "field_length": 4},
-                  {"information_element_id": 1, "field_length": 8},
-                  {"information_element_id": 2, "field_length": 8},
-                  {"information_element_id": 4, "field_length": 1}
+                  { "information_element_id": 8, "field_length": 4 },
+                  { "information_element_id": 12, "field_length": 4 },
+                  { "information_element_id": 1, "field_length": 8 },
+                  { "information_element_id": 2, "field_length": 8 },
+                  { "information_element_id": 4, "field_length": 1 }
                 ]
               }
             ]
@@ -32,8 +32,20 @@
             "type": "data",
             "template_id": 256,
             "records": [
-              {"sourceIPv4Address": "192.0.2.10", "destinationIPv4Address": "198.51.100.10", "octetDeltaCount": 1500, "packetDeltaCount": 1, "protocolIdentifier": 6},
-              {"sourceIPv4Address": "192.0.2.11", "destinationIPv4Address": "198.51.100.10", "octetDeltaCount": 1500, "packetDeltaCount": 1, "protocolIdentifier": 6}
+              {
+                "sourceIPv4Address": "192.0.2.10",
+                "destinationIPv4Address": "198.51.100.10",
+                "octetDeltaCount": 1500,
+                "packetDeltaCount": 1,
+                "protocolIdentifier": 6
+              },
+              {
+                "sourceIPv4Address": "192.0.2.11",
+                "destinationIPv4Address": "198.51.100.10",
+                "octetDeltaCount": 1500,
+                "packetDeltaCount": 1,
+                "protocolIdentifier": 6
+              }
             ]
           }
         ]
@@ -54,14 +66,12 @@
             "templates": [
               {
                 "template_id": 257,
-                "scope_fields": [
-                  {"field_type": "System", "length": 4}
-                ],
+                "scope_fields": [{ "field_type": "System", "length": 4 }],
                 "option_fields": [
-                  {"information_element_id": 48, "field_length": 4},
-                  {"information_element_id": 84, "field_length": 40},
-                  {"information_element_id": 49, "field_length": 1},
-                  {"information_element_id": 50, "field_length": 2}
+                  { "information_element_id": 48, "field_length": 4 },
+                  { "information_element_id": 84, "field_length": 40 },
+                  { "information_element_id": 49, "field_length": 1 },
+                  { "information_element_id": 50, "field_length": 2 }
                 ]
               }
             ]
@@ -70,7 +80,13 @@
             "type": "options_data",
             "template_id": 257,
             "records": [
-              {"system": 3221225985, "samplerId": 2, "samplerName": "NETFLOW_SAMPLER\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000", "samplerMode": 2, "samplerRandomInterval": 100}
+              {
+                "system": 3221225985,
+                "samplerId": 2,
+                "samplerName": "NETFLOW_SAMPLER\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000",
+                "samplerMode": 2,
+                "samplerRandomInterval": 100
+              }
             ]
           }
         ]
@@ -92,11 +108,11 @@
               {
                 "template_id": 256,
                 "fields": [
-                  {"information_element_id": 8, "field_length": 4},
-                  {"information_element_id": 12, "field_length": 4},
-                  {"information_element_id": 1, "field_length": 8},
-                  {"information_element_id": 2, "field_length": 8},
-                  {"information_element_id": 4, "field_length": 1}
+                  { "information_element_id": 8, "field_length": 4 },
+                  { "information_element_id": 12, "field_length": 4 },
+                  { "information_element_id": 1, "field_length": 8 },
+                  { "information_element_id": 2, "field_length": 8 },
+                  { "information_element_id": 4, "field_length": 1 }
                 ]
               }
             ]
@@ -105,7 +121,13 @@
             "type": "data",
             "template_id": 256,
             "records": [
-              {"sourceIPv4Address": "192.0.2.12", "destinationIPv4Address": "198.51.100.10", "octetDeltaCount": 1500, "packetDeltaCount": 1, "protocolIdentifier": 6}
+              {
+                "sourceIPv4Address": "192.0.2.12",
+                "destinationIPv4Address": "198.51.100.10",
+                "octetDeltaCount": 1500,
+                "packetDeltaCount": 1,
+                "protocolIdentifier": 6
+              }
             ]
           }
         ]
@@ -125,7 +147,13 @@
             "type": "data",
             "template_id": 256,
             "records": [
-              {"sourceIPv4Address": "192.0.2.13", "destinationIPv4Address": "198.51.100.10", "octetDeltaCount": 1500, "packetDeltaCount": 1, "protocolIdentifier": 6}
+              {
+                "sourceIPv4Address": "192.0.2.13",
+                "destinationIPv4Address": "198.51.100.10",
+                "octetDeltaCount": 1500,
+                "packetDeltaCount": 1,
+                "protocolIdentifier": 6
+              }
             ]
           }
         ]
@@ -133,9 +161,59 @@
     }
   ],
   "flows": [
-    {"flow_type": "NETFLOW_V9", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 5146, "observation_domain_id": 16777217, "src_addr": "192.0.2.10", "dst_addr": "198.51.100.10", "bytes": 1500, "packets": 1, "proto": 6, "etype": 2048},
-    {"flow_type": "NETFLOW_V9", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 5146, "observation_domain_id": 16777217, "src_addr": "192.0.2.11", "dst_addr": "198.51.100.10", "bytes": 1500, "packets": 1, "proto": 6, "etype": 2048},
-    {"flow_type": "NETFLOW_V9", "time_received_ns": 1700000002000000000, "sampler_address": "192.0.2.1", "sequence_num": 7299, "observation_domain_id": 16777218, "src_addr": "192.0.2.12", "dst_addr": "198.51.100.10", "bytes": 1500, "packets": 1, "proto": 6, "sampling_rate": 100, "etype": 2048},
-    {"flow_type": "NETFLOW_V9", "time_received_ns": 1700000003000000000, "sampler_address": "192.0.2.1", "sequence_num": 5147, "observation_domain_id": 16777217, "src_addr": "192.0.2.13", "dst_addr": "198.51.100.10", "bytes": 1500, "packets": 1, "proto": 6, "sampling_rate": 100, "etype": 2048}
+    {
+      "flow_type": "NETFLOW_V9",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 5146,
+      "observation_domain_id": 16777217,
+      "src_addr": "192.0.2.10",
+      "dst_addr": "198.51.100.10",
+      "bytes": 1500,
+      "packets": 1,
+      "proto": 6,
+      "etype": 2048
+    },
+    {
+      "flow_type": "NETFLOW_V9",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 5146,
+      "observation_domain_id": 16777217,
+      "src_addr": "192.0.2.11",
+      "dst_addr": "198.51.100.10",
+      "bytes": 1500,
+      "packets": 1,
+      "proto": 6,
+      "etype": 2048
+    },
+    {
+      "flow_type": "NETFLOW_V9",
+      "time_received_ns": 1700000002000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 7299,
+      "observation_domain_id": 16777218,
+      "src_addr": "192.0.2.12",
+      "dst_addr": "198.51.100.10",
+      "bytes": 1500,
+      "packets": 1,
+      "proto": 6,
+      "sampling_rate": 100,
+      "etype": 2048
+    },
+    {
+      "flow_type": "NETFLOW_V9",
+      "time_received_ns": 1700000003000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 5147,
+      "observation_domain_id": 16777217,
+      "src_addr": "192.0.2.13",
+      "dst_addr": "198.51.100.10",
+      "bytes": 1500,
+      "packets": 1,
+      "proto": 6,
+      "sampling_rate": 100,
+      "etype": 2048
+    }
   ]
 }

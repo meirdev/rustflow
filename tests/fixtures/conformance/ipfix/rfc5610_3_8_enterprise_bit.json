@@ -1,0 +1,88 @@
+{
+  "reference": "RFC 5610 section 3.8",
+  "description": "A type record whose informationElementId has the Enterprise bit set (0x8001): the bit is ignored, the enterprise being in privateEnterpriseNumber, so element 1 of enterprise 32473 is described and its value read as an unsigned32.",
+  "datagrams": 2,
+  "expected": [
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 56,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "options_templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "scope_fields": [
+                  { "information_element_id": 303, "field_length": 2 },
+                  { "information_element_id": 346, "field_length": 4 }
+                ],
+                "option_fields": [
+                  { "information_element_id": 339, "field_length": 1 },
+                  { "information_element_id": 344, "field_length": 1 }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "options_data",
+            "template_id": 256,
+            "records": [
+              {
+                "informationElementId": 32769,
+                "privateEnterpriseNumber": 32473,
+                "informationElementDataType": 3,
+                "informationElementSemantics": 4
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 40,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 257,
+                "fields": [
+                  {
+                    "information_element_id": 1,
+                    "field_length": 4,
+                    "enterprise_number": 32473
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 257,
+            "records": [{ "32473/1": 7 }]
+          }
+        ]
+      }
+    }
+  ],
+  "flows": [
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000001000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0
+    }
+  ]
+}

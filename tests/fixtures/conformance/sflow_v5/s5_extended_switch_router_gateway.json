@@ -14,15 +14,26 @@
           {
             "type": "flow",
             "sequence_number": 1,
-            "source_id": {"source_id_type": 0, "source_id_index": 3},
+            "source_id": { "source_id_type": 0, "source_id_index": 3 },
             "sampling_rate": 1000,
             "sample_pool": 1000,
             "drops": 0,
-            "input": {"format": 0, "value": 3},
-            "output": {"format": 0, "value": 4},
+            "input": { "format": 0, "value": 3 },
+            "output": { "format": 0, "value": 4 },
             "records": [
-              {"type": "extended_switch", "src_vlan": 100, "src_priority": 3, "dst_vlan": 200, "dst_priority": 5},
-              {"type": "extended_router", "nexthop": "203.0.113.1", "src_mask_len": 24, "dst_mask_len": 16},
+              {
+                "type": "extended_switch",
+                "src_vlan": 100,
+                "src_priority": 3,
+                "dst_vlan": 200,
+                "dst_priority": 5
+              },
+              {
+                "type": "extended_router",
+                "nexthop": "203.0.113.1",
+                "src_mask_len": 24,
+                "dst_mask_len": 16
+              },
               {
                 "type": "extended_gateway",
                 "nexthop": "203.0.113.254",
@@ -48,14 +59,19 @@
           {
             "type": "flow",
             "sequence_number": 2,
-            "source_id": {"source_id_type": 0, "source_id_index": 3},
+            "source_id": { "source_id_type": 0, "source_id_index": 3 },
             "sampling_rate": 1000,
             "sample_pool": 2000,
             "drops": 0,
-            "input": {"format": 0, "value": 3},
-            "output": {"format": 0, "value": 4},
+            "input": { "format": 0, "value": 3 },
+            "output": { "format": 0, "value": 4 },
             "records": [
-              {"type": "extended_router", "nexthop": "2001:db8:ffff::1", "src_mask_len": 48, "dst_mask_len": 64},
+              {
+                "type": "extended_router",
+                "nexthop": "2001:db8:ffff::1",
+                "src_mask_len": 48,
+                "dst_mask_len": 64
+              },
               {
                 "type": "extended_gateway",
                 "nexthop": "2001:db8:ffff::fe",
@@ -71,14 +87,18 @@
           {
             "type": "flow",
             "sequence_number": 3,
-            "source_id": {"source_id_type": 0, "source_id_index": 3},
+            "source_id": { "source_id_type": 0, "source_id_index": 3 },
             "sampling_rate": 1000,
             "sample_pool": 3000,
             "drops": 0,
-            "input": {"format": 0, "value": 3},
-            "output": {"format": 0, "value": 4},
+            "input": { "format": 0, "value": 3 },
+            "output": { "format": 0, "value": 4 },
             "records": [
-              {"type": "extended_router", "src_mask_len": 0, "dst_mask_len": 0},
+              {
+                "type": "extended_router",
+                "src_mask_len": 0,
+                "dst_mask_len": 0
+              },
               {
                 "type": "extended_gateway",
                 "as": 1,
@@ -103,9 +123,53 @@
     }
   ],
   "flows": [
-    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 1000, "in_if": 3, "out_if": 4, "packets": 1, "src_vlan": 100, "dst_vlan": 200, "next_hop": "203.0.113.1", "src_net": 24, "dst_net": 16, "bgp_next_hop": "203.0.113.254", "src_as": 64497, "dst_as": 4200000000},
-    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 1000, "in_if": 3, "out_if": 4, "packets": 1, "next_hop": "2001:db8:ffff::1", "src_net": 48, "dst_net": 64, "bgp_next_hop": "2001:db8:ffff::fe", "src_as": 0},
-    {"flow_type": "SFLOW_V5", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 1, "sampling_rate": 1000, "in_if": 3, "out_if": 4, "packets": 1, "src_net": 0, "dst_net": 0, "src_as": 2, "dst_as": 64510}
+    {
+      "flow_type": "SFLOW_V5",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 1,
+      "sampling_rate": 1000,
+      "in_if": 3,
+      "out_if": 4,
+      "packets": 1,
+      "src_vlan": 100,
+      "dst_vlan": 200,
+      "next_hop": "203.0.113.1",
+      "src_net": 24,
+      "dst_net": 16,
+      "bgp_next_hop": "203.0.113.254",
+      "src_as": 64497,
+      "dst_as": 4200000000
+    },
+    {
+      "flow_type": "SFLOW_V5",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 1,
+      "sampling_rate": 1000,
+      "in_if": 3,
+      "out_if": 4,
+      "packets": 1,
+      "next_hop": "2001:db8:ffff::1",
+      "src_net": 48,
+      "dst_net": 64,
+      "bgp_next_hop": "2001:db8:ffff::fe",
+      "src_as": 0
+    },
+    {
+      "flow_type": "SFLOW_V5",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 1,
+      "sampling_rate": 1000,
+      "in_if": 3,
+      "out_if": 4,
+      "packets": 1,
+      "src_net": 0,
+      "dst_net": 0,
+      "src_as": 2,
+      "dst_as": 64510
+    }
   ],
   "tshark": {
     "sflow_245.vlan.in": ["100"],
@@ -119,7 +183,18 @@
     "sflow_245.as": ["64496", "64496", "1"],
     "sflow_245.srcAS": ["64497", "0", "2"],
     "sflow_245.peerAS": ["64498", "0", "3"],
-    "sflow_245.dstAS": ["64499", "64500", "64501", "64502", "64503", "4200000000", "4259840100", "4294967041", "64510", "1"],
+    "sflow_245.dstAS": [
+      "64499",
+      "64500",
+      "64501",
+      "64502",
+      "64503",
+      "4200000000",
+      "4259840100",
+      "4294967041",
+      "64510",
+      "1"
+    ],
     "sflow_245.localpref": ["150", "100", "4294967295"]
   }
 }

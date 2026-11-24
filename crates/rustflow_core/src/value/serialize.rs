@@ -21,7 +21,12 @@ impl Serialize for Value {
             Self::Signed64(v) => serializer.serialize_i64(*v),
             Self::Float32(v) if v.is_finite() => serializer.serialize_f32(*v),
             Self::Float64(v) if v.is_finite() => serializer.serialize_f64(*v),
-            Self::Float32(_) | Self::Float64(_) => serializer.serialize_none(),
+            // JSON has no form for these; RFC 7373 §4.4 writes them "NaN",
+            // "+inf" and "-inf".
+            Self::Float32(_) | Self::Float64(_) => match self.to_text() {
+                Ok(text) => serializer.serialize_str(&text),
+                Err(_) => serializer.serialize_none(),
+            },
             Self::Boolean(v) => serializer.serialize_bool(*v),
             Self::MacAddress(v) => v.serialize(serializer),
             Self::OctetArray(v) => hex::serialize(v, serializer),
