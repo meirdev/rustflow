@@ -390,4 +390,22 @@ def cases() -> list[Case]:
         )
     )
 
+
+    head, text = packet(
+        header(1, flow_sequence=1),
+        [record(srcaddr="192.0.2.1", dstaddr="198.51.100.1", d_pkts=1)],
+    )
+    extra = record(srcaddr="192.0.2.2", dstaddr="198.51.100.2", d_pkts=2)[0]
+    out.append(
+        case(
+            "records_after_count",
+            f'{HEADER}, "count"',
+            "A datagram whose count is 1 but which holds a second record: "
+            "count says how many records there are, so one flow is read and "
+            "the bytes after it are left alone.",
+            [(Datagram(head.payload + extra), text)],
+            clean=False,
+        )
+    )
+
     return out

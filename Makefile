@@ -2,6 +2,7 @@
 
 fmt:
 	cargo +nightly fmt
+	bun fmt ./tests/**/*.json
 
 fix:
 	__CARGO_FIX_YOLO=1 cargo +nightly fix

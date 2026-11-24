@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use rustc_hash::FxHashMap;
 use serde::Serialize;
-use serde::ser::{SerializeMap, SerializeSeq, SerializeStruct, Serializer};
+use serde::ser::{SerializeMap, SerializeStruct, Serializer};
 
 use super::{ListRecords, Value};
 use crate::template::{FieldSpecifier, TemplateRef};
@@ -21,53 +21,81 @@ impl Serialize for Value {
             Self::Signed64(v) => serializer.serialize_i64(*v),
             Self::Float32(v) if v.is_finite() => serializer.serialize_f32(*v),
             Self::Float64(v) if v.is_finite() => serializer.serialize_f64(*v),
-            Self::Float32(_) | Self::Float64(_) => serializer.serialize_none(),
+            // JSON has no form for these; RFC 7373 §4.4 writes them "NaN",
+            // "+inf" and "-inf".
+            Self::Float32(_) | Self::Float64(_) => match self.to_text() {
+                Ok(text) => serializer.serialize_str(&text),
+                Err(_) => serializer.serialize_none(),
+            },
             Self::Boolean(v) => serializer.serialize_bool(*v),
             Self::MacAddress(v) => v.serialize(serializer),
             Self::OctetArray(v) => hex::serialize(v, serializer),
             Self::String(v) => serializer.serialize_str(v),
-            Self::DateTimeSeconds(_) => time(serializer, self, 0),
-            Self::DateTimeMilliseconds(_) => time(serializer, self, 3),
-            Self::DateTimeMicroseconds(_) => time(serializer, self, 6),
-            Self::DateTimeNanoseconds(_) => time(serializer, self, 9),
+            // RFC 7373 §4.8: in UTC, without an offset.
+            Self::DateTimeSeconds(_)
+            | Self::DateTimeMilliseconds(_)
+            | Self::DateTimeMicroseconds(_)
+            | Self::DateTimeNanoseconds(_) => match self.to_text() {
+                Ok(text) => serializer.serialize_str(&text),
+                Err(_) => serializer.serialize_none(),
+            },
             Self::Ipv4Address(v) => serializer.collect_str(v),
             Self::Ipv6Address(v) => serializer.collect_str(v),
-            Self::BasicList(list) => serializer.collect_seq(&list.values),
-            Self::SubTemplateList(list) => match &list.records {
-                ListRecords::Decoded { template, records } => Records {
-                    shape: &Shape::new(template_keys(template)),
-                    records,
-                }
-                .serialize(serializer),
-                ListRecords::Undecoded { .. } => serializer.serialize_none(),
-            },
+            Self::BasicList(list) => list.serialize(serializer),
+            Self::SubTemplateList(list) => {
+                let mut map = serializer.serialize_map(Some(3))?;
+                map.serialize_entry("semantic", &list.semantic)?;
+                serialize_group(&mut map, &list.records)?;
+                map.end()
+            }
             Self::SubTemplateMultiList(list) => {
-                let mut seq = serializer.serialize_seq(None)?;
-                for group in &list.groups {
-                    match group {
-                        ListRecords::Decoded { template, records } => {
-                            let shape = Shape::new(template_keys(template));
-                            for values in records {
-                                seq.serialize_element(&Record {
-                                    shape: &shape,
-                                    values,
-                                })?;
-                            }
-                        }
-                        ListRecords::Undecoded { .. } => seq.serialize_element(&())?,
-                    }
-                }
-                seq.end()
+                let mut map = serializer.serialize_map(Some(2))?;
+                map.serialize_entry("semantic", &list.semantic)?;
+                map.serialize_entry("groups", &Groups(&list.groups))?;
+                map.end()
             }
             Self::Null => serializer.serialize_unit(),
         }
     }
 }
 
-fn time<S: Serializer>(serializer: S, value: &Value, precision: usize) -> Result<S::Ok, S::Error> {
-    match value.to_timestamp() {
-        Some(timestamp) => serializer.collect_str(&format_args!("{timestamp:.precision$}")),
-        None => serializer.serialize_none(),
+struct Groups<'a>(&'a [ListRecords]);
+
+impl Serialize for Groups<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(self.0.iter().map(Group))
+    }
+}
+
+struct Group<'a>(&'a ListRecords);
+
+impl Serialize for Group<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut map = serializer.serialize_map(Some(2))?;
+        serialize_group(&mut map, self.0)?;
+        map.end()
+    }
+}
+
+/// The template ID and the records, or for a template the collector does
+/// not have, the octets: RFC 7011 §9 has it note what it cannot read.
+fn serialize_group<M: SerializeMap>(map: &mut M, group: &ListRecords) -> Result<(), M::Error> {
+    match group {
+        ListRecords::Decoded { template, records } => {
+            map.serialize_entry("template_id", &template.template_id())?;
+            let shape = Shape::new(template_keys(template));
+            map.serialize_entry(
+                "records",
+                &Records {
+                    shape: &shape,
+                    records,
+                },
+            )
+        }
+        ListRecords::Undecoded { template_id, data } => {
+            map.serialize_entry("template_id", template_id)?;
+            map.serialize_entry("data", &hex::encode(data))
+        }
     }
 }
 

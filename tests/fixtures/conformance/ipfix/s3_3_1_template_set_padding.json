@@ -1,0 +1,69 @@
+{
+  "reference": "RFC 7011 sections 3.3.1 and 8.4",
+  "description": "Padding after the last record of a Template Set (4 zero octets) and of an Options Template Set (6): padding is shorter than any record the Set may hold, and over UDP, where withdrawals are not sent, a template record is at least 8 octets and an options template record 10. The templates are kept and the Data Sets after them read. Wireshark reads the padding as records of Template ID 0, and calls the capture malformed.",
+  "datagrams": 1,
+  "expected": [
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 76,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [{ "information_element_id": 8, "field_length": 4 }]
+              }
+            ]
+          },
+          {
+            "type": "options_templates",
+            "templates": [
+              {
+                "template_id": 258,
+                "scope_fields": [
+                  { "information_element_id": 149, "field_length": 4 }
+                ],
+                "option_fields": [
+                  { "information_element_id": 41, "field_length": 4 }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [{ "sourceIPv4Address": "192.0.2.1" }]
+          },
+          {
+            "type": "options_data",
+            "template_id": 258,
+            "records": [
+              { "observationDomainId": 0, "exportedMessageTotalCount": 5 }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "flows": [
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0,
+      "src_addr": "192.0.2.1",
+      "etype": 2048
+    }
+  ],
+  "tshark": {
+    "cflow.srcaddr": ["192.0.2.1"]
+  },
+  "clean": false
+}

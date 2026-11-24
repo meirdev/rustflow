@@ -23,7 +23,10 @@ impl Scope for FieldSpecifier {
     fn is_partial(&self) -> bool {
         matches!(
             FieldSpecifier::element_id(self),
-            ElementId::INGRESS_INTERFACE | ElementId::EGRESS_INTERFACE | ElementId::LINE_CARD_ID
+            ElementId::INGRESS_INTERFACE
+                | ElementId::EGRESS_INTERFACE
+                | ElementId::LINE_CARD_ID
+                | ElementId::TEMPLATE_ID
         )
     }
 
@@ -38,7 +41,14 @@ impl Scope for ScopeField {
     }
 
     fn is_partial(&self) -> bool {
-        matches!(self.field_type, ScopeType::Interface | ScopeType::LineCard)
+        // A scope this crate does not know may be any part of the domain.
+        matches!(
+            self.field_type,
+            ScopeType::Interface
+                | ScopeType::LineCard
+                | ScopeType::Template
+                | ScopeType::Unassigned(_)
+        )
     }
 
     fn is_system(&self) -> bool {

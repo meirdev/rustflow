@@ -18,48 +18,48 @@
               {
                 "template_id": 256,
                 "scope_fields": [
-                  {"information_element_id": 149, "field_length": 4},
-                  {"information_element_id": 143, "field_length": 4}
+                  { "information_element_id": 149, "field_length": 4 },
+                  { "information_element_id": 143, "field_length": 4 }
                 ],
                 "option_fields": [
-                  {"information_element_id": 41, "field_length": 8},
-                  {"information_element_id": 42, "field_length": 8},
-                  {"information_element_id": 40, "field_length": 8}
+                  { "information_element_id": 41, "field_length": 8 },
+                  { "information_element_id": 42, "field_length": 8 },
+                  { "information_element_id": 40, "field_length": 8 }
                 ]
               },
               {
                 "template_id": 257,
                 "scope_fields": [
-                  {"information_element_id": 149, "field_length": 4},
-                  {"information_element_id": 143, "field_length": 4}
+                  { "information_element_id": 149, "field_length": 4 },
+                  { "information_element_id": 143, "field_length": 4 }
                 ],
                 "option_fields": [
-                  {"information_element_id": 164, "field_length": 8},
-                  {"information_element_id": 165, "field_length": 8},
-                  {"information_element_id": 322, "field_length": 4},
-                  {"information_element_id": 322, "field_length": 4}
+                  { "information_element_id": 164, "field_length": 8 },
+                  { "information_element_id": 165, "field_length": 8 },
+                  { "information_element_id": 322, "field_length": 4 },
+                  { "information_element_id": 322, "field_length": 4 }
                 ]
               },
               {
                 "template_id": 258,
                 "scope_fields": [
-                  {"information_element_id": 130, "field_length": 4}
+                  { "information_element_id": 130, "field_length": 4 }
                 ],
                 "option_fields": [
-                  {"information_element_id": 166, "field_length": 8},
-                  {"information_element_id": 167, "field_length": 8},
-                  {"information_element_id": 168, "field_length": 8},
-                  {"information_element_id": 323, "field_length": 8},
-                  {"information_element_id": 323, "field_length": 8}
+                  { "information_element_id": 166, "field_length": 8 },
+                  { "information_element_id": 167, "field_length": 8 },
+                  { "information_element_id": 168, "field_length": 8 },
+                  { "information_element_id": 323, "field_length": 8 },
+                  { "information_element_id": 323, "field_length": 8 }
                 ]
               },
               {
                 "template_id": 259,
                 "scope_fields": [
-                  {"information_element_id": 145, "field_length": 2}
+                  { "information_element_id": 145, "field_length": 2 }
                 ],
                 "option_fields": [
-                  {"information_element_id": 173, "field_length": 8}
+                  { "information_element_id": 173, "field_length": 8 }
                 ]
               }
             ]
@@ -80,7 +80,13 @@
             "type": "options_data",
             "template_id": 256,
             "records": [
-              {"observationDomainId": 0, "meteringProcessId": 7, "exportedMessageTotalCount": 1234, "exportedFlowRecordTotalCount": 567890, "exportedOctetTotalCount": 8589934592}
+              {
+                "observationDomainId": 0,
+                "meteringProcessId": 7,
+                "exportedMessageTotalCount": 1234,
+                "exportedFlowRecordTotalCount": 567890,
+                "exportedOctetTotalCount": 8589934592
+              }
             ]
           },
           {
@@ -92,7 +98,10 @@
                 "meteringProcessId": 7,
                 "ignoredPacketTotalCount": 12,
                 "ignoredOctetTotalCount": 3456,
-                "observationTimeSeconds": ["2023-11-14T22:13:20Z", "2023-11-14T22:14:20Z"]
+                "observationTimeSeconds": [
+                  "2023-11-14T22:13:20",
+                  "2023-11-14T22:14:20"
+                ]
               }
             ]
           },
@@ -105,16 +114,17 @@
                 "notSentFlowTotalCount": 3,
                 "notSentPacketTotalCount": 40,
                 "notSentOctetTotalCount": 5000,
-                "observationTimeMilliseconds": ["2023-11-14T22:13:20.250Z", "2023-11-14T22:13:21.750Z"]
+                "observationTimeMilliseconds": [
+                  "2023-11-14T22:13:20.250",
+                  "2023-11-14T22:13:21.750"
+                ]
               }
             ]
           },
           {
             "type": "options_data",
             "template_id": 259,
-            "records": [
-              {"templateId": 256, "flowKeyIndicator": 11}
-            ]
+            "records": [{ "templateId": 256, "flowKeyIndicator": 11 }]
           }
         ]
       }

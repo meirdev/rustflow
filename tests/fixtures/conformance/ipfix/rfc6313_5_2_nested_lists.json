@@ -1,0 +1,106 @@
+{
+  "reference": "RFC 6313 sections 4.5.1, 4.5.2 and 5.2",
+  "description": "Lists inside lists: a basicList of basicLists of ports, and a subTemplateList whose template holds a subTemplateList. The outer basicList's values are the inner lists, each with its own semantic and field; the subTemplateList's records hold the inner one's.",
+  "datagrams": 1,
+  "expected": [
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 96,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 301,
+                "fields": [{ "information_element_id": 7, "field_length": 2 }]
+              },
+              {
+                "template_id": 300,
+                "fields": [
+                  { "information_element_id": 292, "field_length": 65535 }
+                ]
+              },
+              {
+                "template_id": 256,
+                "fields": [
+                  { "information_element_id": 10, "field_length": 4 },
+                  { "information_element_id": 291, "field_length": 65535 },
+                  { "information_element_id": 292, "field_length": 65535 }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {
+                "ingressInterface": 1,
+                "basicList": {
+                  "semantic": "allOf",
+                  "field": {
+                    "information_element_id": 291,
+                    "field_length": 65535
+                  },
+                  "values": [
+                    {
+                      "semantic": "allOf",
+                      "field": {
+                        "information_element_id": 7,
+                        "field_length": 2
+                      },
+                      "values": [80, 443]
+                    },
+                    {
+                      "semantic": "allOf",
+                      "field": {
+                        "information_element_id": 7,
+                        "field_length": 2
+                      },
+                      "values": [53]
+                    }
+                  ]
+                },
+                "subTemplateList": {
+                  "semantic": "allOf",
+                  "template_id": 300,
+                  "records": [
+                    {
+                      "subTemplateList": {
+                        "semantic": "allOf",
+                        "template_id": 301,
+                        "records": [
+                          { "sourceTransportPort": 80 },
+                          { "sourceTransportPort": 443 }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "flows": [
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0,
+      "in_if": 1
+    }
+  ],
+  "tshark": {
+    "cflow.inputint": ["1"]
+  },
+  "clean": false
+}

@@ -1,0 +1,45 @@
+{
+  "reference": "RFC 3954 section 5.2",
+  "description": "A template with a Field Count of 0 defines records of no bytes; the Data FlowSet of that template is reported as its octets.",
+  "datagrams": 2,
+  "expected": [
+    {
+      "protocol": "netflow_v9",
+      "packet": {
+        "version": 9,
+        "count": 1,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "sequence_number": 0,
+        "source_id": 0,
+        "flow_sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": []
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "netflow_v9",
+      "packet": {
+        "version": 9,
+        "count": 1,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "sequence_number": 1,
+        "source_id": 0,
+        "flow_sets": [
+          { "type": "undecoded", "set_id": 256, "body": "0001020304050607" }
+        ]
+      }
+    }
+  ],
+  "flows": [],
+  "clean": false
+}

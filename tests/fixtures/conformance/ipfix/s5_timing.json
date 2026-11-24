@@ -18,11 +18,11 @@
               {
                 "template_id": 256,
                 "fields": [
-                  {"information_element_id": 8, "field_length": 4},
-                  {"information_element_id": 158, "field_length": 4},
-                  {"information_element_id": 159, "field_length": 4},
-                  {"information_element_id": 150, "field_length": 4},
-                  {"information_element_id": 151, "field_length": 4}
+                  { "information_element_id": 8, "field_length": 4 },
+                  { "information_element_id": 158, "field_length": 4 },
+                  { "information_element_id": 159, "field_length": 4 },
+                  { "information_element_id": 150, "field_length": 4 },
+                  { "information_element_id": 151, "field_length": 4 }
                 ]
               }
             ]
@@ -31,8 +31,20 @@
             "type": "data",
             "template_id": 256,
             "records": [
-              {"sourceIPv4Address": "192.0.2.1", "flowStartDeltaMicroseconds": 5000000, "flowEndDeltaMicroseconds": 1, "flowStartSeconds": "2023-11-14T22:13:15Z", "flowEndSeconds": "2023-11-14T22:13:20Z"},
-              {"sourceIPv4Address": "192.0.2.2", "flowStartDeltaMicroseconds": 4294967295, "flowEndDeltaMicroseconds": 0, "flowStartSeconds": "1970-01-01T00:00:00Z", "flowEndSeconds": "2106-02-07T06:28:15Z"}
+              {
+                "sourceIPv4Address": "192.0.2.1",
+                "flowStartDeltaMicroseconds": 5000000,
+                "flowEndDeltaMicroseconds": 1,
+                "flowStartSeconds": "2023-11-14T22:13:15",
+                "flowEndSeconds": "2023-11-14T22:13:20"
+              },
+              {
+                "sourceIPv4Address": "192.0.2.2",
+                "flowStartDeltaMicroseconds": 4294967295,
+                "flowEndDeltaMicroseconds": 0,
+                "flowStartSeconds": "1970-01-01T00:00:00",
+                "flowEndSeconds": "2106-02-07T06:28:15"
+              }
             ]
           }
         ]
@@ -51,7 +63,13 @@
             "type": "data",
             "template_id": 256,
             "records": [
-              {"sourceIPv4Address": "192.0.2.3", "flowStartDeltaMicroseconds": 0, "flowEndDeltaMicroseconds": 0, "flowStartSeconds": "2000-02-29T00:00:00Z", "flowEndSeconds": "2000-02-29T23:59:59Z"}
+              {
+                "sourceIPv4Address": "192.0.2.3",
+                "flowStartDeltaMicroseconds": 0,
+                "flowEndDeltaMicroseconds": 0,
+                "flowStartSeconds": "2000-02-29T00:00:00",
+                "flowEndSeconds": "2000-02-29T23:59:59"
+              }
             ]
           }
         ]
@@ -59,9 +77,39 @@
     }
   ],
   "flows": [
-    {"flow_type": "IPFIX", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "src_addr": "192.0.2.1", "time_flow_start_ns": 1699999995000000000, "time_flow_end_ns": 1700000000000000000, "etype": 2048},
-    {"flow_type": "IPFIX", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "src_addr": "192.0.2.2", "time_flow_start_ns": 0, "time_flow_end_ns": -1000000000, "etype": 2048},
-    {"flow_type": "IPFIX", "time_received_ns": 1700000001000000000, "sampler_address": "192.0.2.1", "sequence_num": 2, "observation_domain_id": 0, "src_addr": "192.0.2.3", "time_flow_start_ns": 5246749696000000000, "time_flow_end_ns": 5246836095000000000, "etype": 2048}
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0,
+      "src_addr": "192.0.2.1",
+      "time_flow_start_ns": 1699999995000000000,
+      "time_flow_end_ns": 1700000000000000000,
+      "etype": 2048
+    },
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0,
+      "src_addr": "192.0.2.2",
+      "time_flow_start_ns": 0,
+      "time_flow_end_ns": -1000000000,
+      "etype": 2048
+    },
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000001000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 2,
+      "observation_domain_id": 0,
+      "src_addr": "192.0.2.3",
+      "time_flow_start_ns": 5246749696000000000,
+      "time_flow_end_ns": 5246836095000000000,
+      "etype": 2048
+    }
   ],
   "tshark": {
     "cflow.srcaddr": ["192.0.2.1", "192.0.2.2", "192.0.2.3"]

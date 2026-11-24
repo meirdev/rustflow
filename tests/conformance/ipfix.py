@@ -1,6 +1,9 @@
 """IPFIX cases, by section of RFC 7011, with RFC 6313 (structured data)
 and RFC 5610 (type information)."""
 
+import struct
+from datetime import datetime, timezone
+
 import netflow_v5
 import netflow_v9
 from values import F32, F64, HEX, IP, MAC, STR, S, U, record
@@ -100,6 +103,40 @@ def spec_text(spec: Spec) -> dict:
     if len(spec) == 3:
         text["enterprise_number"] = spec[2]
     return text
+
+
+# List semantics (RFC 6313 section 4.4), by the name IANA's registry gives.
+SEMANTICS = {0: "noneOf", 1: "exactlyOneOf", 2: "oneOrMoreOf", 3: "allOf", 4: "ordered", 0xFF: "undefined"}
+
+
+def semantic_text(semantic: int):
+    """A semantic IANA has not assigned prints as `unassigned`."""
+    return SEMANTICS.get(semantic, {"unassigned": semantic})
+
+
+def listed(semantic: int, spec: Spec, values: list) -> dict:
+    """A basicList as printed: its semantic, its field specifier and its
+    values (RFC 6313 section 4.5.1)."""
+    return {"semantic": semantic_text(semantic), "field": spec_text(spec), "values": values}
+
+
+def group(template_id: int, records: list | None = None, data: bytes | None = None) -> dict:
+    """Records of a template as a list prints them, or for a template the
+    collector does not have, the octets (RFC 6313 sections 4.5.2 and
+    4.5.3)."""
+    if data is not None:
+        return {"template_id": template_id, "data": data.hex()}
+    return {"template_id": template_id, "records": records}
+
+
+def sub_listed(semantic: int, template_id: int, records: list | None = None, data: bytes | None = None) -> dict:
+    """A subTemplateList as printed: its semantic and its records."""
+    return {"semantic": semantic_text(semantic), **group(template_id, records, data)}
+
+
+def multi_listed(semantic: int, groups: list[dict]) -> dict:
+    """A subTemplateMultiList as printed: its semantic and its groups."""
+    return {"semantic": semantic_text(semantic), "groups": groups}
 
 
 def a_set(set_id: int, body: bytes, padding: bytes = b"") -> bytes:
@@ -574,12 +611,12 @@ def section_4_and_5() -> list[Case]:
                         options_data(
                             257,
                             ["observationDomainId", "meteringProcessId", name((164,)), name((165,)), name((322,)), name((322,))],
-                            [[U(0, 4), U(7, 4), U(12, 8), U(3456, 8), Pair(u32(1_700_000_000), "2023-11-14T22:13:20Z"), Pair(u32(1_700_000_060), "2023-11-14T22:14:20Z")]],
+                            [[U(0, 4), U(7, 4), U(12, 8), U(3456, 8), Pair(u32(1_700_000_000), "2023-11-14T22:13:20"), Pair(u32(1_700_000_060), "2023-11-14T22:14:20")]],
                         ),
                         options_data(
                             258,
                             ["exporterIPv4Address", name((166,)), name((167,)), name((168,)), name((323,)), name((323,))],
-                            [[IP("192.0.2.1"), U(3, 8), U(40, 8), U(5000, 8), Pair((1_700_000_000_250).to_bytes(8, "big"), "2023-11-14T22:13:20.250Z"), Pair((1_700_000_001_750).to_bytes(8, "big"), "2023-11-14T22:13:21.750Z")]],
+                            [[IP("192.0.2.1"), U(3, 8), U(40, 8), U(5000, 8), Pair((1_700_000_000_250).to_bytes(8, "big"), "2023-11-14T22:13:20.250"), Pair((1_700_000_001_750).to_bytes(8, "big"), "2023-11-14T22:13:21.750")]],
                         ),
                         # Fields 0, 1 and 3 of template 256 are flow keys.
                         options_data(259, ["templateId", name((173,))], [[U(256, 2), U(0b1011, 8)]], padding=b"\0\0"),
@@ -607,14 +644,14 @@ def section_4_and_5() -> list[Case]:
                             256,
                             names(delta),
                             [
-                                [IP("192.0.2.1"), U(5_000_000, 4), U(1, 4), Pair(u32(1_699_999_995), "2023-11-14T22:13:15Z"), Pair(u32(1_700_000_000), "2023-11-14T22:13:20Z")],
-                                [IP("192.0.2.2"), U(2**32 - 1, 4), U(0, 4), Pair(u32(0), "1970-01-01T00:00:00Z"), Pair(u32(2**32 - 1), "2106-02-07T06:28:15Z")],
+                                [IP("192.0.2.1"), U(5_000_000, 4), U(1, 4), Pair(u32(1_699_999_995), "2023-11-14T22:13:15"), Pair(u32(1_700_000_000), "2023-11-14T22:13:20")],
+                                [IP("192.0.2.2"), U(2**32 - 1, 4), U(0, 4), Pair(u32(0), "1970-01-01T00:00:00"), Pair(u32(2**32 - 1), "2106-02-07T06:28:15")],
                             ],
                         ),
                     ],
                     export_time=1_700_000_000,
                 ),
-                message([data(256, names(delta), [[IP("192.0.2.3"), U(0, 4), U(0, 4), Pair(u32(951_782_400), "2000-02-29T00:00:00Z"), Pair(u32(951_868_799), "2000-02-29T23:59:59Z")]])], export_time=2**32 - 1, sequence_number=2),
+                message([data(256, names(delta), [[IP("192.0.2.3"), U(0, 4), U(0, 4), Pair(u32(951_782_400), "2000-02-29T00:00:00"), Pair(u32(951_868_799), "2000-02-29T23:59:59")]])], export_time=2**32 - 1, sequence_number=2),
             ],
             tshark={"cflow.srcaddr": ["192.0.2.1", "192.0.2.2", "192.0.2.3"]},
         ),
@@ -633,31 +670,31 @@ def section_6() -> list[Case]:
             U(6, 1), U(443, 2), U(70000, 4), U(2**40 + 5, 8), S(-5, 4),
             MAC("02:00:00:00:00:aa"), IP("192.0.2.1"), IP("2001:db8::1"), F64(0.5),
             Pair(b"\x01", True), STR("eth0"), HEX("0000fde800000064"),
-            Pair(u32(1_700_000_000), "2023-11-14T22:13:20Z"),
+            Pair(u32(1_700_000_000), "2023-11-14T22:13:20"),
             # RFC 7373 section 4.8's example.
-            Pair((1_352_140_261_135).to_bytes(8, "big"), "2012-11-05T18:31:01.135Z"),
-            ntp(1_700_000_000, 0x8000_0000, "2023-11-14T22:13:20.500000Z"),
-            ntp(1_700_000_000, 0x4000_0000, "2023-11-14T22:13:20.250000000Z"),
+            Pair((1_352_140_261_135).to_bytes(8, "big"), "2012-11-05T18:31:01.135"),
+            ntp(1_700_000_000, 0x8000_0000, "2023-11-14T22:13:20.500000"),
+            ntp(1_700_000_000, 0x4000_0000, "2023-11-14T22:13:20.250000000"),
         ],
         [
             U(255, 1), U(65535, 2), U(2**32 - 1, 4), U(2**64 - 1, 8), S(-(2**31), 4),
             MAC("ff:ff:ff:ff:ff:ff"), IP("255.255.255.255"),
             IP("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"), F64(-2.5),
             Pair(b"\x02", False), STR("lo00"), HEX("ffffffffffffffff"),
-            Pair(u32(0), "1970-01-01T00:00:00Z"),
-            Pair((0).to_bytes(8, "big"), "1970-01-01T00:00:00.000Z"),
+            Pair(u32(0), "1970-01-01T00:00:00"),
+            Pair((0).to_bytes(8, "big"), "1970-01-01T00:00:00.000"),
             # The bottom 11 bits of a microsecond fraction are ignored.
-            ntp(1_700_000_000, 0x8000_07FF, "2023-11-14T22:13:20.500000Z"),
-            ntp(1_700_000_000, 0, "2023-11-14T22:13:20.000000000Z"),
+            ntp(1_700_000_000, 0x8000_07FF, "2023-11-14T22:13:20.500000"),
+            ntp(1_700_000_000, 0, "2023-11-14T22:13:20.000000000"),
         ],
         [
             U(0, 1), U(0, 2), U(0, 4), U(0, 8), S(2**31 - 1, 4),
             MAC("00:00:00:00:00:00"), IP("0.0.0.0"), IP("::"), F64(0.0),
             Pair(b"\x01", True), STR("éab"), HEX("0000000000000000"),
-            Pair(u32(951_782_400), "2000-02-29T00:00:00Z"),
-            Pair((951_782_400_999).to_bytes(8, "big"), "2000-02-29T00:00:00.999Z"),
-            ntp(951_782_400, 0xC000_0000, "2000-02-29T00:00:00.750000Z"),
-            ntp(951_782_400, 0x2000_0000, "2000-02-29T00:00:00.125000000Z"),
+            Pair(u32(951_782_400), "2000-02-29T00:00:00"),
+            Pair((951_782_400_999).to_bytes(8, "big"), "2000-02-29T00:00:00.999"),
+            ntp(951_782_400, 0xC000_0000, "2000-02-29T00:00:00.750000"),
+            ntp(951_782_400, 0x2000_0000, "2000-02-29T00:00:00.125000000"),
         ],
     ]
     out.append(
@@ -1062,9 +1099,10 @@ def section_9() -> list[Case]:
 
 
 def structured_data() -> list[Case]:
-    """RFC 6313. A list is printed as an array: a basicList of its values,
-    the other two of their records, each a map as a data record is. The
-    list's semantic is not printed."""
+    """RFC 6313. A list is printed with its semantic: a basicList with its
+    field specifier and its values, a subTemplateList with its Template
+    ID and its records, each a map as a data record is, and a
+    subTemplateMultiList with its groups, each the same."""
     out = []
     all_of, ordered = 3, 4
 
@@ -1083,8 +1121,8 @@ def structured_data() -> list[Case]:
             "enterprise-specific element, of a variable-length element, "
             "and an empty list; in a variable-length field with the one- "
             "and the three-octet length, and in a field of fixed length. "
-            "Each list is reported with its values, and the fields before "
-            "and after it are read.",
+            "Each list is reported with its semantic, its field specifier "
+            "and its values, and the fields before and after it are read.",
             [
                 message(
                     [
@@ -1093,14 +1131,14 @@ def structured_data() -> list[Case]:
                             256,
                             names(with_list),
                             [
-                                [U(1, 4), short(Pair(ports, [80, 443, 8080])), U(11, 4)],
-                                [U(2, 4), long(Pair(enterprise, ["00000001", "00000002"])), U(12, 4)],
-                                [U(3, 4), short(Pair(names_list, ["eth0", "", "eth10"])), U(13, 4)],
-                                [U(4, 4), short(Pair(u8(all_of) + u16(11) + u16(2), [])), U(14, 4)],
+                                [U(1, 4), short(Pair(ports, listed(all_of, (11, 2), [80, 443, 8080]))), U(11, 4)],
+                                [U(2, 4), long(Pair(enterprise, listed(ordered, (5, 4, PEN), ["00000001", "00000002"]))), U(12, 4)],
+                                [U(3, 4), short(Pair(names_list, listed(ordered, (82, VARIABLE), ["eth0", "", "eth10"]))), U(13, 4)],
+                                [U(4, 4), short(Pair(u8(all_of) + u16(11) + u16(2), listed(all_of, (11, 2), []))), U(14, 4)],
                             ],
                             padding=b"\0\0",
                         ),
-                        data(257, names(fixed_list), [[U(5, 4), Pair(ports, [80, 443, 8080]), U(15, 4)]], padding=b"\0"),
+                        data(257, names(fixed_list), [[U(5, 4), Pair(ports, listed(all_of, (11, 2), [80, 443, 8080])), U(15, 4)]], padding=b"\0"),
                     ]
                 )
             ],
@@ -1124,8 +1162,8 @@ def structured_data() -> list[Case]:
             "subTemplateList: a semantic octet, a Template ID and records "
             "of that template. A list of two records, an empty list, and a "
             "list of a template the collector does not have, which is "
-            "reported as null. The fields before and after each list are "
-            "read.",
+            "reported with its Template ID and octets. The fields before "
+            "and after each list are read.",
             [
                 message(
                     [
@@ -1134,9 +1172,9 @@ def structured_data() -> list[Case]:
                             256,
                             names(with_sub),
                             [
-                                [U(1, 4), short(Pair(sub, inner_text)), U(11, 4)],
-                                [U(2, 4), short(Pair(u8(all_of) + u16(300), [])), U(12, 4)],
-                                [U(3, 4), long(Pair(u8(all_of) + u16(999) + inner_rows, None)), U(13, 4)],
+                                [U(1, 4), short(Pair(sub, sub_listed(all_of, 300, inner_text))), U(11, 4)],
+                                [U(2, 4), short(Pair(u8(all_of) + u16(300), sub_listed(all_of, 300, []))), U(12, 4)],
+                                [U(3, 4), long(Pair(u8(all_of) + u16(999) + inner_rows, sub_listed(all_of, 999, data=inner_rows))), U(13, 4)],
                             ],
                             padding=b"\0\0\0",
                         ),
@@ -1170,8 +1208,8 @@ def structured_data() -> list[Case]:
                             256,
                             names(with_multi),
                             [
-                                [U(1, 4), short(Pair(multi, inner_text + [{"protocolIdentifier": p} for p in (6, 17, 1)])), U(11, 4)],
-                                [U(2, 4), short(Pair(u8(all_of), [])), U(12, 4)],
+                                [U(1, 4), short(Pair(multi, multi_listed(all_of, [group(300, inner_text), group(301, [{"protocolIdentifier": p} for p in (6, 17, 1)])]))), U(11, 4)],
+                                [U(2, 4), short(Pair(u8(all_of), multi_listed(all_of, []))), U(12, 4)],
                             ],
                             padding=b"\0\0",
                         ),
@@ -1211,8 +1249,8 @@ def type_information() -> list[Case]:
 
     specs = [(1, 4, PEN), (2, 1, PEN), (3, 2, PEN), (4, 8, PEN), (5, 4, PEN), (6, VARIABLE, PEN), (7, 8, PEN), (8, 4, PEN), (9, 4, PEN)]
     rows = [
-        [U(7, 4), S(-128, 1), S(-2, 2), S(-(2**63), 8), F32(1.5), short(STR("first")), Pair((1_352_140_261_135).to_bytes(8, "big"), "2012-11-05T18:31:01.135Z"), IP("192.0.2.1"), HEX("00000001")],
-        [U(2**32 - 1, 4), S(127, 1), S(32767, 2), S(2**63 - 1, 8), F32(-0.5), short(STR("")), Pair((0).to_bytes(8, "big"), "1970-01-01T00:00:00.000Z"), IP("198.51.100.1"), HEX("ffffffff")],
+        [U(7, 4), S(-128, 1), S(-2, 2), S(-(2**63), 8), F32(1.5), short(STR("first")), Pair((1_352_140_261_135).to_bytes(8, "big"), "2012-11-05T18:31:01.135"), IP("192.0.2.1"), HEX("00000001")],
+        [U(2**32 - 1, 4), S(127, 1), S(32767, 2), S(2**63 - 1, 8), F32(-0.5), short(STR("")), Pair((0).to_bytes(8, "big"), "1970-01-01T00:00:00.000"), IP("198.51.100.1"), HEX("ffffffff")],
     ]
     return [
         case(
@@ -1233,6 +1271,493 @@ def type_information() -> list[Case]:
             ],
         )
     ]
+
+
+def padding_and_malformed_templates() -> list[Case]:
+    """RFC 7011 sections 3.3.1 and 9.1: padding after template records,
+    and messages whose template records do not hold together."""
+    out = []
+
+    domain_options = [(149, 4), (41, 4)]
+    out.append(
+        case(
+            "s3_3_1_template_set_padding",
+            "RFC 7011 sections 3.3.1 and 8.4",
+            "Padding after the last record of a Template Set (4 zero octets) "
+            "and of an Options Template Set (6): padding is shorter than "
+            "any record the Set may hold, and over UDP, where withdrawals "
+            "are not sent, a template record is at least 8 octets and an "
+            "options template record 10. The templates are kept and the "
+            "Data Sets after them read. Wireshark reads the padding as "
+            "records of Template ID 0, and calls the capture malformed.",
+            [
+                message(
+                    [
+                        templates(template(256, [(8, 4)]), padding=b"\0" * 4),
+                        options_templates(options_template(258, domain_options[:1], domain_options[1:]), padding=b"\0" * 6),
+                        data(256, names([(8, 4)]), [[IP("192.0.2.1")]]),
+                        options_data(258, names(domain_options), [[U(0, 4), U(5, 4)]]),
+                    ]
+                )
+            ],
+            tshark={"cflow.srcaddr": ["192.0.2.1"]},
+            clean=False,
+        )
+    )
+
+    good, good_text = message([templates(template(300, V4)), data(300, names(V4), [v4_row("192.0.2.9", "198.51.100.9", 9, 900)])])
+    row = record(names(V4), v4_row("192.0.2.1", "198.51.100.1", 1, 100)).wire
+
+    def message_of(body: bytes) -> tuple[Datagram, None]:
+        return raw(u16(10) + u16(16 + len(body)) + u32(1_700_000_000) + u32(0) + u32(0) + body)
+
+    out.append(
+        case(
+            "s9_1_templates_of_a_discarded_message",
+            "RFC 7011 section 9.1",
+            "A message holding Template 300 and then a Set whose Length (2) "
+            "is shorter than a Set header is discarded whole, the template "
+            "with it: the Data Set of template 300 in the next message is "
+            "not decoded. Once a well-formed message brings the template, "
+            "its data is.",
+            [
+                message_of(templates(template(300, V4)).wire + u16(256) + u16(2)),
+                message([undecoded(300, row)]),
+                (good, good_text),
+            ],
+            clean=False,
+        )
+    )
+
+    out.append(
+        case(
+            "s9_1_template_record_overruns_set",
+            "RFC 7011 sections 3.4.1, 3.4.2.2 and 9.1",
+            "Template records that do not fit their Set: a Field Count of 5 "
+            "with one field specifier, and an options template whose Scope "
+            "Field Count (2) is above its Field Count (1). Each message is "
+            "malformed and discarded; the well-formed message after them "
+            "is read.",
+            [
+                message_of(a_set(2, u16(300) + u16(5) + u16(8) + u16(4))),
+                message_of(a_set(3, u16(301) + u16(1) + u16(2) + u16(149) + u16(4))),
+                (good, good_text),
+            ],
+            clean=False,
+        )
+    )
+
+    only_variable = [(82, VARIABLE)]
+    out.append(
+        case(
+            "s3_3_1_no_padding_after_variable_length_records",
+            "RFC 7011 sections 3.3.1 and 7",
+            "A template of a single variable-length field: its shortest "
+            "record is one octet, the length octet of an empty value, so "
+            "no padding is shorter. The three zero octets after the first "
+            "record are three records of an empty interfaceName. Wireshark "
+            "does not decode Data of such a template.",
+            [
+                message(
+                    [
+                        templates(template(256, only_variable)),
+                        data(256, names(only_variable), [[short(STR("eth0"))], [short(STR(""))], [short(STR(""))], [short(STR(""))]]),
+                    ]
+                )
+            ],
+            clean=False,
+        )
+    )
+
+    return out
+
+
+def encodings() -> list[Case]:
+    """RFC 7011 section 6, RFC 7012 and RFC 7373: values at the edges of
+    their encodings."""
+    out = []
+
+    not_reducible = [(8, 2), (56, 4), (152, 4), (150, 8), (311, 2), (10, 4)]
+    out.append(
+        case(
+            "s6_2_reduced_size_only_for_integers",
+            "RFC 7011 section 6.2",
+            "Reduced-size encoding applies to integers and to float64 as "
+            "float32 only. An ipv4Address in 2 octets, a macAddress in 4, "
+            "a dateTimeMilliseconds in 4, a dateTimeSeconds in 8 and a "
+            "float64 in 2 are not values of their type: each is reported "
+            "as its octets, and the field after them is read. Wireshark "
+            "stops at the first of them.",
+            [
+                message(
+                    [
+                        templates(template(256, not_reducible)),
+                        data(
+                            256,
+                            names(not_reducible),
+                            [[HEX("c000"), HEX("02000000"), HEX("00000001"), HEX("0000000065536f00"), HEX("3ff0"), U(7, 4)]],
+                        ),
+                    ]
+                )
+            ],
+            clean=False,
+        )
+    )
+
+    flag = [(276, 1), (10, 4)]
+    out.append(
+        case(
+            "s6_1_5_boolean_values",
+            "RFC 7011 section 6.1.5",
+            "A boolean is 1 (true) or 2 (false); 0, 3 and 255 are not "
+            "booleans, and are reported as their octets.",
+            [
+                message(
+                    [
+                        templates(template(256, flag)),
+                        data(256, names(flag), [[HEX("00"), U(1, 4)], [HEX("03"), U(2, 4)], [HEX("ff"), U(3, 4)]], padding=b"\0"),
+                    ]
+                )
+            ],
+            tshark={"cflow.inputint": ["1", "2", "3"]},
+        )
+    )
+
+    probability = [(311, 8)]
+    single = [(311, 4)]
+    special = [
+        (float("nan"), "NaN"),
+        (float("inf"), "+inf"),
+        (float("-inf"), "-inf"),
+    ]
+    out.append(
+        case(
+            "rfc7373_4_4_float_values",
+            "RFC 7373 section 4.4; RFC 7011 sections 6.1.3 and 6.2",
+            "Floats JSON has no number for are printed as RFC 7373 writes "
+            "them: \"NaN\", \"+inf\" and \"-inf\", as float64 and as "
+            "float64 sent in 4 octets. The extremes JSON can hold are "
+            "numbers: -0, 1e300 and the smallest subnormal, 5e-324.",
+            [
+                message(
+                    [
+                        templates(template(256, probability), template(257, single)),
+                        data(
+                            256,
+                            names(probability),
+                            [[Pair(struct.pack(">d", value), text)] for value, text in special]
+                            + [[F64(-0.0)], [F64(1e300)], [F64(5e-324)]],
+                        ),
+                        data(257, names(single), [[Pair(struct.pack(">f", value), text)] for value, text in special]),
+                    ]
+                )
+            ],
+        )
+    )
+
+    def ntp_seconds(seconds: int, text: str) -> Pair:
+        return Pair(u32(seconds) + u32(0), text)
+
+    def rfc3339(unix_seconds: int) -> str:
+        moment = datetime.fromtimestamp(unix_seconds, timezone.utc)
+        return moment.strftime("%Y-%m-%dT%H:%M:%S") + ".000000"
+
+    ntp_unix = 2_208_988_800
+    started = [(154, 8), (10, 4)]
+    out.append(
+        case(
+            "s5_2_ntp_era",
+            "RFC 7011 sections 5.2 and 6.1.9",
+            "An NTP timestamp's 32-bit seconds wrap in 2036; the era is "
+            "implicit. In the packet a value with its top bit clear is "
+            "after 2036 and one with it set before (the RFC 4330 pivot): "
+            "seconds 5 is 2036-02-07. A flow takes the era nearest the "
+            "message's Export Time: seconds 2^31 is 1968-01-20 in the "
+            "packet, and 2104-02-26 in a flow exported in 2103.",
+            [
+                message(
+                    [templates(template(256, started)), data(256, names(started), [[ntp_seconds(5, rfc3339(2**32 - ntp_unix + 5)), U(1, 4)]])],
+                    export_time=2_100_000_000,
+                ),
+                message(
+                    [data(256, names(started), [[ntp_seconds(2**31, rfc3339(2**31 - ntp_unix)), U(2, 4)]])],
+                    export_time=4_200_000_000,
+                    sequence_number=1,
+                ),
+            ],
+            tshark={"cflow.inputint": ["1", "2"]},
+        )
+    )
+
+    reserved = [(0, 4), (8, 4)]
+    out.append(
+        case(
+            "rfc7012_4_reserved_element_zero",
+            "RFC 7012 section 4; RFC 7011 section 9",
+            "Information Element 0 is reserved: the collector has no "
+            "definition of it, so its value is reported as octets under "
+            "its number, and the element after it is read.",
+            [message([templates(template(256, reserved)), data(256, names(reserved), [[HEX("01020304"), IP("192.0.2.1")]])])],
+            tshark={"cflow.srcaddr": ["192.0.2.1"]},
+        )
+    )
+
+    return out
+
+
+def more_structured_data() -> list[Case]:
+    """RFC 6313: lists within lists, groups of a subTemplateMultiList, and
+    lists in options records."""
+    out = []
+    all_of = 3
+
+    ports = lambda *numbers: u8(all_of) + u16(7) + u16(2) + b"".join(u16(n) for n in numbers)
+    of_lists = u8(all_of) + u16(291) + u16(VARIABLE) + short(Pair(ports(80, 443), None)).wire + short(Pair(ports(53), None)).wire
+    inner = [(7, 2)]
+    inner_list = u8(all_of) + u16(301) + u16(80) + u16(443)
+    middle = [(292, VARIABLE)]
+    middle_records = short(Pair(inner_list, None)).wire
+    outer_list = u8(all_of) + u16(300) + middle_records
+    nested = [(10, 4), (291, VARIABLE), (292, VARIABLE)]
+    out.append(
+        case(
+            "rfc6313_5_2_nested_lists",
+            "RFC 6313 sections 4.5.1, 4.5.2 and 5.2",
+            "Lists inside lists: a basicList of basicLists of ports, and a "
+            "subTemplateList whose template holds a subTemplateList. The "
+            "outer basicList's values are the inner lists, each with its "
+            "own semantic and field; the subTemplateList's records hold "
+            "the inner one's.",
+            [
+                message(
+                    [
+                        templates(template(301, inner), template(300, middle), template(256, nested)),
+                        data(
+                            256,
+                            names(nested),
+                            [
+                                [
+                                    U(1, 4),
+                                    short(Pair(of_lists, listed(all_of, (291, VARIABLE), [listed(all_of, (7, 2), [80, 443]), listed(all_of, (7, 2), [53])]))),
+                                    short(Pair(outer_list, sub_listed(all_of, 300, [{"subTemplateList": sub_listed(all_of, 301, [{"sourceTransportPort": 80}, {"sourceTransportPort": 443}])}]))),
+                                ]
+                            ],
+                        ),
+                    ]
+                )
+            ],
+            tshark={"cflow.inputint": ["1"]},
+            clean=False,
+        )
+    )
+
+    rows = u16(80) + u16(443)
+    groups = u8(all_of)
+    groups += u16(301) + u16(4 + len(rows)) + rows
+    groups += u16(302) + u16(4)
+    groups += u16(999) + u16(4 + 2) + u16(53)
+    groups += u16(301) + u16(4 + 2) + u16(8080)
+    with_multi = [(10, 4), (293, VARIABLE)]
+    out.append(
+        case(
+            "rfc6313_4_5_3_groups",
+            "RFC 6313 section 4.5.3",
+            "subTemplateMultiList groups: two records of template 301, a "
+            "group of template 302 with no records (a length of 4, its "
+            "header), a group of template 999, which the collector does not "
+            "have, and one more record of template 301. Each group is "
+            "reported in order with its Template ID: the records, none for "
+            "the empty group, and the octets of the unknown one.",
+            [
+                message(
+                    [
+                        templates(template(301, inner), template(302, [(4, 1)]), template(256, with_multi)),
+                        data(
+                            256,
+                            names(with_multi),
+                            [
+                                [
+                                    U(1, 4),
+                                    short(
+                                        Pair(
+                                            groups,
+                                            multi_listed(
+                                                all_of,
+                                                [
+                                                    group(301, [{"sourceTransportPort": 80}, {"sourceTransportPort": 443}]),
+                                                    group(302, []),
+                                                    group(999, data=u16(53)),
+                                                    group(301, [{"sourceTransportPort": 8080}]),
+                                                ],
+                                            ),
+                                        )
+                                    ),
+                                ]
+                            ],
+                        ),
+                    ]
+                )
+            ],
+            tshark={"cflow.inputint": ["1"]},
+            clean=False,
+        )
+    )
+
+    unassigned = [(10, 4), (291, VARIABLE), (292, VARIABLE), (293, VARIABLE)]
+    port_list = lambda semantic: u8(semantic) + u16(7) + u16(2) + u16(80)
+    record_list = lambda semantic: u8(semantic) + u16(301) + u16(443)
+    group_list = lambda semantic: u8(semantic) + u16(301) + u16(4 + 2) + u16(8080)
+    out.append(
+        case(
+            "rfc6313_4_4_unassigned_semantics",
+            "RFC 6313 section 4.4",
+            "List semantics IANA has not assigned (5 and 254) are reported "
+            "as sent, next to the undefined semantic (255), in each kind of "
+            "list.",
+            [
+                message(
+                    [
+                        templates(template(301, inner), template(256, unassigned)),
+                        data(
+                            256,
+                            names(unassigned),
+                            [
+                                [
+                                    U(semantic, 4),
+                                    short(Pair(port_list(semantic), listed(semantic, (7, 2), [80]))),
+                                    short(Pair(record_list(semantic), sub_listed(semantic, 301, [{"sourceTransportPort": 443}]))),
+                                    short(Pair(group_list(semantic), multi_listed(semantic, [group(301, [{"sourceTransportPort": 8080}])]))),
+                                ]
+                                for semantic in (5, 0xFE, 0xFF)
+                            ],
+                            padding=b"\0",
+                        ),
+                    ]
+                )
+            ],
+            tshark={"cflow.inputint": ["5", "254", "255"]},
+        )
+    )
+
+    interfaces = u8(all_of) + u16(10) + u16(4) + u32(1) + u32(2)
+    empty_elements = u8(all_of) + u16(10) + u16(0)
+    scoped = [(291, VARIABLE)]
+    counted = [(41, 4)]
+    out.append(
+        case(
+            "rfc6313_5_3_lists_in_options_records",
+            "RFC 6313 sections 4.5.1 and 5.3",
+            "A basicList as the scope of an options template: the options "
+            "records are reported with the list as their scope value. The "
+            "second record's list has an element length of 0, which holds "
+            "no values.",
+            [
+                message(
+                    [
+                        options_templates(options_template(256, scoped, counted)),
+                        options_data(
+                            256,
+                            names(scoped + counted),
+                            [[short(Pair(interfaces, listed(all_of, (10, 4), [1, 2]))), U(5, 4)], [short(Pair(empty_elements, listed(all_of, (10, 0), []))), U(6, 4)]],
+                        ),
+                    ]
+                )
+            ],
+            clean=False,
+        )
+    )
+
+    return out
+
+
+def more_type_information() -> list[Case]:
+    """RFC 5610: what a type record may and may not change."""
+    UNSIGNED32, STRING, IPV4 = 3, 13, 18
+    DEFAULT, QUANTITY, IDENTIFIER = 0, 1, 4
+    scope = [(303, 2), (346, 4)]
+    options = [(339, 1), (344, 1)]
+    keys = names(scope + options)
+    type_template = options_templates(options_template(256, scope, options), padding=b"\0\0")
+
+    def described(element_id: int, enterprise: int, data_type: int, semantics: int) -> list[Pair]:
+        return [U(element_id, 2), U(enterprise, 4), U(data_type, 1), U(semantics, 1)]
+
+    out = []
+    enterprise_bit = [(1, 4, PEN)]
+    out.append(
+        case(
+            "rfc5610_3_8_enterprise_bit",
+            "RFC 5610 section 3.8",
+            "A type record whose informationElementId has the Enterprise "
+            "bit set (0x8001): the bit is ignored, the enterprise being in "
+            "privateEnterpriseNumber, so element 1 of enterprise 32473 is "
+            "described and its value read as an unsigned32.",
+            [
+                message([type_template, options_data(256, keys, [described(0x8001, PEN, UNSIGNED32, IDENTIFIER)])]),
+                message([templates(template(257, enterprise_bit)), data(257, names(enterprise_bit), [[U(7, 4)]])]),
+            ],
+        )
+    )
+
+    used = [(8, 4), (2, 4, PEN), (3, 4, PEN), (600, 4)]
+    out.append(
+        case(
+            "rfc5610_3_9_what_a_type_record_may_change",
+            "RFC 5610 sections 3.9 and 3.10",
+            "Type records that must not take effect: one giving IANA's "
+            "sourceIPv4Address (8) the type string, which may not override "
+            "the collector's definition; two describing element 2 of "
+            "enterprise 32473 differently, which conflict; and an "
+            "ipv4Address with the semantics quantity, which is not a valid "
+            "combination. Their values keep their octets, the IP address "
+            "its type. A record for element 600, which IANA has not "
+            "assigned, does take effect.",
+            [
+                message(
+                    [
+                        type_template,
+                        options_data(
+                            256,
+                            keys,
+                            [
+                                described(8, 0, STRING, DEFAULT),
+                                described(2, PEN, UNSIGNED32, QUANTITY),
+                                described(2, PEN, STRING, DEFAULT),
+                                described(3, PEN, IPV4, QUANTITY),
+                                described(600, 0, UNSIGNED32, QUANTITY),
+                            ],
+                        ),
+                    ]
+                ),
+                message([templates(template(257, used)), data(257, names(used), [[IP("192.0.2.1"), HEX("00000002"), HEX("c0000203"), U(42, 4)]])]),
+            ],
+        )
+    )
+
+    late = [(9, 4, PEN)]
+    out.append(
+        case(
+            "rfc5610_3_9_described_after_its_template",
+            "RFC 5610 section 3.9",
+            "One message: a template using element 9 of enterprise 32473, "
+            "a record of it, the type record describing the element, and "
+            "another record. The first record is read before the element "
+            "is described and keeps its octets; the second is read as an "
+            "unsigned32.",
+            [
+                message(
+                    [
+                        type_template,
+                        templates(template(257, late)),
+                        data(257, names(late), [[HEX("00000001")]]),
+                        options_data(256, keys, [described(9, PEN, UNSIGNED32, QUANTITY)]),
+                        data(257, names(late), [[U(2, 4)]]),
+                    ]
+                )
+            ],
+        )
+    )
+    return out
 
 
 def versions() -> list[Case]:
@@ -1279,4 +1804,8 @@ def cases() -> list[Case]:
         *section_9(),
         *structured_data(),
         *type_information(),
+        *padding_and_malformed_templates(),
+        *encodings(),
+        *more_structured_data(),
+        *more_type_information(),
     ]

@@ -1,0 +1,128 @@
+{
+  "reference": "RFC 5610 sections 3.9 and 3.10",
+  "description": "Type records that must not take effect: one giving IANA's sourceIPv4Address (8) the type string, which may not override the collector's definition; two describing element 2 of enterprise 32473 differently, which conflict; and an ipv4Address with the semantics quantity, which is not a valid combination. Their values keep their octets, the IP address its type. A record for element 600, which IANA has not assigned, does take effect.",
+  "datagrams": 2,
+  "expected": [
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 88,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "options_templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "scope_fields": [
+                  { "information_element_id": 303, "field_length": 2 },
+                  { "information_element_id": 346, "field_length": 4 }
+                ],
+                "option_fields": [
+                  { "information_element_id": 339, "field_length": 1 },
+                  { "information_element_id": 344, "field_length": 1 }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "options_data",
+            "template_id": 256,
+            "records": [
+              {
+                "informationElementId": 8,
+                "privateEnterpriseNumber": 0,
+                "informationElementDataType": 13,
+                "informationElementSemantics": 0
+              },
+              {
+                "informationElementId": 2,
+                "privateEnterpriseNumber": 32473,
+                "informationElementDataType": 3,
+                "informationElementSemantics": 1
+              },
+              {
+                "informationElementId": 2,
+                "privateEnterpriseNumber": 32473,
+                "informationElementDataType": 13,
+                "informationElementSemantics": 0
+              },
+              {
+                "informationElementId": 3,
+                "privateEnterpriseNumber": 32473,
+                "informationElementDataType": 18,
+                "informationElementSemantics": 1
+              },
+              {
+                "informationElementId": 600,
+                "privateEnterpriseNumber": 0,
+                "informationElementDataType": 3,
+                "informationElementSemantics": 1
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "ipfix",
+      "packet": {
+        "version": 10,
+        "length": 68,
+        "export_time": 1700000000,
+        "sequence_number": 0,
+        "observation_domain_id": 0,
+        "sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 257,
+                "fields": [
+                  { "information_element_id": 8, "field_length": 4 },
+                  {
+                    "information_element_id": 2,
+                    "field_length": 4,
+                    "enterprise_number": 32473
+                  },
+                  {
+                    "information_element_id": 3,
+                    "field_length": 4,
+                    "enterprise_number": 32473
+                  },
+                  { "information_element_id": 600, "field_length": 4 }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "data",
+            "template_id": 257,
+            "records": [
+              {
+                "sourceIPv4Address": "192.0.2.1",
+                "32473/2": "00000002",
+                "32473/3": "c0000203",
+                "600": 42
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "flows": [
+    {
+      "flow_type": "IPFIX",
+      "time_received_ns": 1700000001000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0,
+      "src_addr": "192.0.2.1",
+      "etype": 2048
+    }
+  ]
+}

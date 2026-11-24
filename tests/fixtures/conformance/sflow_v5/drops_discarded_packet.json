@@ -14,51 +14,78 @@
           {
             "type": "discarded",
             "sequence_number": 16909060,
-            "source_id": {"source_id_type": 0, "source_id_index": 84281096},
+            "source_id": { "source_id_type": 0, "source_id_index": 84281096 },
             "drops": 151653132,
             "input_if_index": 219025168,
             "output_if_index": 286397204,
-            "reason": "Acl",
+            "reason": "acl",
             "records": [
-              {"type": "sampled_header", "protocol": "EthernetIso88023", "frame_length": 50, "stripped": 4, "header": "0200000000020200000000010800450000200000400040114e66c0000232c63364019c40c350000cdffa64726f70"},
-              {"type": "extended_acl", "number": 101, "name": "edge-in", "direction": "Ingress"},
-              {"type": "extended_egress_queue", "queue": 3}
+              {
+                "type": "sampled_header",
+                "protocol": "ethernet_iso88023",
+                "frame_length": 50,
+                "stripped": 4,
+                "header": "0200000000020200000000010800450000200000400040114e66c0000232c63364019c40c350000cdffa64726f70"
+              },
+              {
+                "type": "extended_acl",
+                "number": 101,
+                "name": "edge-in",
+                "direction": "ingress"
+              },
+              { "type": "extended_egress_queue", "queue": 3 }
             ]
           },
           {
             "type": "discarded",
             "sequence_number": 2,
-            "source_id": {"source_id_type": 0, "source_id_index": 7},
+            "source_id": { "source_id_type": 0, "source_id_index": 7 },
             "drops": 0,
             "input_if_index": 7,
             "output_if_index": 0,
-            "reason": "TtlExceeded",
+            "reason": "ttl_exceeded",
             "records": [
-              {"type": "sampled_header", "protocol": "EthernetIso88023", "frame_length": 50, "stripped": 4, "header": "0200000000020200000000010800450000200000400040114e66c0000232c63364019c40c350000cdffa64726f70"},
-              {"type": "extended_function", "symbol": "ip_forward"}
+              {
+                "type": "sampled_header",
+                "protocol": "ethernet_iso88023",
+                "frame_length": 50,
+                "stripped": 4,
+                "header": "0200000000020200000000010800450000200000400040114e66c0000232c63364019c40c350000cdffa64726f70"
+              },
+              { "type": "extended_function", "symbol": "ip_forward" }
             ]
           },
           {
             "type": "discarded",
             "sequence_number": 3,
-            "source_id": {"source_id_type": 0, "source_id_index": 8},
+            "source_id": { "source_id_type": 0, "source_id_index": 8 },
             "drops": 0,
             "input_if_index": 0,
             "output_if_index": 8,
-            "reason": "NetUnreachable",
+            "reason": "net_unreachable",
             "records": [
-              {"type": "extended_acl", "number": 0, "name": "", "direction": "Unknown"},
-              {"type": "extended_acl", "number": 2, "name": "out", "direction": "Egress"}
+              {
+                "type": "extended_acl",
+                "number": 0,
+                "name": "",
+                "direction": "unknown"
+              },
+              {
+                "type": "extended_acl",
+                "number": 2,
+                "name": "out",
+                "direction": "egress"
+              }
             ]
           },
           {
             "type": "discarded",
             "sequence_number": 4,
-            "source_id": {"source_id_type": 0, "source_id_index": 9},
+            "source_id": { "source_id_type": 0, "source_id_index": 9 },
             "drops": 1,
             "input_if_index": 9,
             "output_if_index": 0,
-            "reason": {"Unassigned": 9999},
+            "reason": { "unassigned": 9999 },
             "records": []
           }
         ],

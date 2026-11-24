@@ -3,9 +3,9 @@ exporter sends and as the text the collector is expected to print.
 
 The text follows RFC 7373: integers, floats and booleans as JSON's own,
 addresses and timestamps as strings (sections 4.8 to 4.11), octet arrays
-as hexadecimal (section 4.1). rustflow ends a timestamp with `Z`, which
-RFC 7373 leaves implicit. Element names are IANA's, from the IPFIX
-Information Elements registry.
+as hexadecimal (section 4.1), timestamps in UTC without an offset
+(section 4.8). Element names are IANA's, from the IPFIX Information
+Elements registry.
 """
 
 import ipaddress

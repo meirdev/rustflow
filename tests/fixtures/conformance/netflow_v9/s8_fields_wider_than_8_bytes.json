@@ -1,0 +1,89 @@
+{
+  "reference": "RFC 3954 sections 6.1 and 8",
+  "description": "A System scope of 16 bytes and an IN_BYTES of 16: no integer is that wide, so each is reported as its octets, and the fields after them are read.",
+  "datagrams": 2,
+  "expected": [
+    {
+      "protocol": "netflow_v9",
+      "packet": {
+        "version": 9,
+        "count": 2,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "sequence_number": 0,
+        "source_id": 0,
+        "flow_sets": [
+          {
+            "type": "templates",
+            "templates": [
+              {
+                "template_id": 256,
+                "fields": [
+                  { "information_element_id": 1, "field_length": 16 },
+                  { "information_element_id": 10, "field_length": 2 }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "options_templates",
+            "templates": [
+              {
+                "template_id": 302,
+                "scope_fields": [{ "field_type": "system", "length": 16 }],
+                "option_fields": [
+                  { "information_element_id": 41, "field_length": 4 }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "protocol": "netflow_v9",
+      "packet": {
+        "version": 9,
+        "count": 2,
+        "sys_uptime": 3600000,
+        "unix_secs": 1700000000,
+        "sequence_number": 1,
+        "source_id": 0,
+        "flow_sets": [
+          {
+            "type": "data",
+            "template_id": 256,
+            "records": [
+              {
+                "octetDeltaCount": "00000000000000000000000000000005",
+                "ingressInterface": 3
+              }
+            ]
+          },
+          {
+            "type": "options_data",
+            "template_id": 302,
+            "records": [
+              {
+                "system": "00000000000000000000000000000001",
+                "exportedMessageTotalCount": 7
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "flows": [
+    {
+      "flow_type": "NETFLOW_V9",
+      "time_received_ns": 1700000001000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 1,
+      "observation_domain_id": 0,
+      "in_if": 3,
+      "etype": 2048
+    }
+  ],
+  "clean": false
+}

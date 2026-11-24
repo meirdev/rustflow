@@ -80,17 +80,17 @@ pub enum Semantic {
     Debug,
     Clone,
     Copy,
-    Default,
     PartialEq,
     Eq,
     Hash,
     strum::Display,
     strum::EnumString,
     strum::IntoStaticStr,
-    num_enum::TryFromPrimitive,
+    num_enum::FromPrimitive,
     num_enum::IntoPrimitive,
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 #[strum(serialize_all = "camelCase")]
 #[repr(u8)]
 #[non_exhaustive]
@@ -105,9 +105,12 @@ pub enum ListSemantic {
     AllOf = 0x03,
     /// The elements are ordered.
     Ordered = 0x04,
+    /// A value IANA has not assigned, as sent.
+    #[num_enum(catch_all)]
+    #[strum(to_string = "{0}")]
+    Unassigned(u8),
     /// The semantic is not specified; the Collecting Process draws its own
-    /// conclusions. This is the default.
-    #[default]
+    /// conclusions.
     Undefined = 0xff,
 }
 

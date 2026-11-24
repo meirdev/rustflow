@@ -102,6 +102,11 @@ fn set_field(flow: &mut CommonFlow, export: &ExportTime, id: ElementId, value: &
         }
         ElementId::SOURCE_MAC_ADDRESS => set(&mut flow.src_mac, mac_address(value)),
         ElementId::DESTINATION_MAC_ADDRESS => set(&mut flow.dst_mac, mac_address(value)),
+        // NetFlow v9's OUT_SRC_MAC and DST_MAC, the outgoing frame's.
+        ElementId::POST_SOURCE_MAC_ADDRESS => fallback(&mut flow.src_mac, mac_address(value)),
+        ElementId::POST_DESTINATION_MAC_ADDRESS => {
+            fallback(&mut flow.dst_mac, mac_address(value));
+        }
 
         ElementId::ETHERNET_TYPE => set(&mut flow.etype, narrow(number)),
         ElementId::IP_VERSION => set(&mut flow.etype, number.and_then(ether_type)),

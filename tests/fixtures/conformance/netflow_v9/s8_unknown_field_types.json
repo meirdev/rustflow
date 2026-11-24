@@ -19,10 +19,10 @@
               {
                 "template_id": 256,
                 "fields": [
-                  {"information_element_id": 8, "field_length": 4},
-                  {"information_element_id": 32769, "field_length": 4},
-                  {"information_element_id": 40001, "field_length": 2},
-                  {"information_element_id": 1, "field_length": 4}
+                  { "information_element_id": 8, "field_length": 4 },
+                  { "information_element_id": 32769, "field_length": 4 },
+                  { "information_element_id": 40001, "field_length": 2 },
+                  { "information_element_id": 1, "field_length": 4 }
                 ]
               }
             ]
@@ -31,8 +31,18 @@
             "type": "data",
             "template_id": 256,
             "records": [
-              {"sourceIPv4Address": "192.0.2.1", "32769": "deadbeef", "40001": "cafe", "octetDeltaCount": 1000},
-              {"sourceIPv4Address": "192.0.2.2", "32769": "00000001", "40001": "0002", "octetDeltaCount": 2000}
+              {
+                "sourceIPv4Address": "192.0.2.1",
+                "32769": "deadbeef",
+                "40001": "cafe",
+                "octetDeltaCount": 1000
+              },
+              {
+                "sourceIPv4Address": "192.0.2.2",
+                "32769": "00000001",
+                "40001": "0002",
+                "octetDeltaCount": 2000
+              }
             ]
           }
         ]
@@ -40,8 +50,26 @@
     }
   ],
   "flows": [
-    {"flow_type": "NETFLOW_V9", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "src_addr": "192.0.2.1", "bytes": 1000, "etype": 2048},
-    {"flow_type": "NETFLOW_V9", "time_received_ns": 1700000000000000000, "sampler_address": "192.0.2.1", "sequence_num": 0, "observation_domain_id": 0, "src_addr": "192.0.2.2", "bytes": 2000, "etype": 2048}
+    {
+      "flow_type": "NETFLOW_V9",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0,
+      "src_addr": "192.0.2.1",
+      "bytes": 1000,
+      "etype": 2048
+    },
+    {
+      "flow_type": "NETFLOW_V9",
+      "time_received_ns": 1700000000000000000,
+      "sampler_address": "192.0.2.1",
+      "sequence_num": 0,
+      "observation_domain_id": 0,
+      "src_addr": "192.0.2.2",
+      "bytes": 2000,
+      "etype": 2048
+    }
   ],
   "tshark": {
     "cflow.srcaddr": ["192.0.2.1", "192.0.2.2"],

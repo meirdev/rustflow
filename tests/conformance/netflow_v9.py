@@ -3,16 +3,9 @@
 from values import HEX, IP, MAC, STR, U, record
 from wire import Case, Datagram, Pair, case, u16, u32
 
-# Scope field types (section 6.1) and the element each is printed as.
 SYSTEM, INTERFACE, LINE_CARD, CACHE, TEMPLATE = 1, 2, 3, 4, 5
-SCOPE_TYPES = {
-    SYSTEM: "System",
-    INTERFACE: "Interface",
-    LINE_CARD: "LineCard",
-    CACHE: "Cache",
-    TEMPLATE: "Template",
-}
-# The key a scope value is printed under.
+# Scope field types (section 6.1) by the name they print as, in a template
+# and as the key of a scope value.
 SCOPE_NAMES = {
     SYSTEM: "system",
     INTERFACE: "interface",
@@ -43,11 +36,14 @@ NAMES = {
     18: "bgpNextHopIPv4Address",
     21: "flowEndSysUpTime",
     22: "flowStartSysUpTime",
+    23: "postOctetDeltaCount",
+    24: "postPacketDeltaCount",
     27: "sourceIPv6Address",
     28: "destinationIPv6Address",
     29: "sourceIPv6PrefixLength",
     30: "destinationIPv6PrefixLength",
     31: "flowLabelIPv6",
+    32: "icmpTypeCodeIPv4",
     34: "samplingInterval",
     35: "samplingAlgorithm",
     36: "flowActiveTimeout",
@@ -55,12 +51,14 @@ NAMES = {
     41: "exportedMessageTotalCount",
     42: "exportedFlowRecordTotalCount",
     56: "sourceMacAddress",
+    57: "postDestinationMacAddress",
     58: "vlanId",
     60: "ipVersion",
     61: "flowDirection",
     62: "ipNextHopIPv6Address",
     70: "mplsTopLabelStackSection",
     80: "destinationMacAddress",
+    81: "postSourceMacAddress",
     82: "interfaceName",
     83: "interfaceDescription",
 }
@@ -83,7 +81,12 @@ def fields_text(fields: list[tuple[int, int]]) -> list[dict]:
 
 
 def scopes_text(scopes: list[tuple[int, int]]) -> list[dict]:
-    return [{"field_type": SCOPE_TYPES[t], "length": length} for t, length in scopes]
+    """A scope type section 6.1 does not define prints as `unassigned`."""
+    return [{"field_type": SCOPE_NAMES.get(t, {"unassigned": t}), "length": length} for t, length in scopes]
+
+
+def scope_name(scope_type: int) -> str:
+    return SCOPE_NAMES.get(scope_type, str(scope_type))
 
 
 def flow_set(flow_set_id: int, body: bytes, padding: bytes = b"") -> bytes:
@@ -189,6 +192,133 @@ V4_NAMES = [name(t) for t, _ in V4]
 
 def v4_row(src: str, dst: str, packets: int, octets: int) -> list[Pair]:
     return [IP(src), IP(dst), U(packets, 4), U(octets, 4)]
+
+
+def more_cases() -> list[Case]:
+    out = []
+
+    # Section 8: field types no other case uses, in records without
+    # addresses.
+    icmp = [(32, 2), (23, 4), (24, 4), (34, 4), (57, 6), (81, 6), (10, 2)]
+    both_macs = [(8, 4), (80, 6), (57, 6), (56, 6), (81, 6)]
+    version_6 = [(60, 1), (1, 4)]
+    out.append(
+        case(
+            "s8_more_field_types",
+            "RFC 3954 section 8",
+            "ICMP_TYPE (type in the high byte, code in the low), OUT_BYTES "
+            "and OUT_PKTS (used for the flow's counts when IN_BYTES and "
+            "IN_PKTS are absent), SAMPLING_INTERVAL in a data record (the "
+            "record's own rate), and DST_MAC and OUT_SRC_MAC, the outgoing "
+            "frame's (used when IN_DST_MAC and SRC_MAC are absent). A "
+            "record with no IP_PROTOCOL_VERSION is IPv4, which section 8 "
+            "assumes; one with version 6 is IPv6.",
+            [
+                packet(3, [templates(template(256, icmp), template(257, both_macs), template(258, version_6))]),
+                packet(
+                    3,
+                    [
+                        data(256, [name(t) for t, _ in icmp], [[U(0x0303, 2), U(1500, 4), U(3, 4), U(100, 4), MAC("02:00:00:00:00:bb"), MAC("02:00:00:00:00:aa"), U(5, 2)]]),
+                        data(257, [name(t) for t, _ in both_macs], [[IP("192.0.2.1"), MAC("02:00:00:00:00:01"), MAC("02:00:00:00:00:02"), MAC("02:00:00:00:00:03"), MAC("02:00:00:00:00:04")]], padding=b"\0\0"),
+                        data(258, [name(t) for t, _ in version_6], [[U(6, 1), U(80, 4)]], padding=b"\0\0\0"),
+                    ],
+                    sequence_number=1,
+                ),
+            ],
+            tshark={"cflow.icmp_type_code_ipv4": ["0x0303"]},
+        )
+    )
+
+    flows = data(256, V4_NAMES, [v4_row("192.0.2.1", "198.51.100.1", 1, 100)])
+    counted, counted_text = packet(99, [templates(template(256, V4)), flows])
+    trailing, trailing_text = packet(1, [flows], sequence_number=1)
+    out.append(
+        case(
+            "s5_1_count_and_trailing_bytes",
+            "RFC 3954 sections 5 and 5.1",
+            "Count is the exporter's tally of records, not a length: a "
+            "packet whose Count is 99 holds a template and one record, both "
+            "read, and the Count is reported as sent. A packet with 2 "
+            "bytes after its last FlowSet, fewer than a FlowSet header, is "
+            "read whole.",
+            [(counted, counted_text), (Datagram(trailing.payload + b"\0\0", src=trailing.src), trailing_text)],
+            clean=False,
+        )
+    )
+
+    out.append(
+        case(
+            "s5_2_template_without_fields",
+            "RFC 3954 section 5.2",
+            "A template with a Field Count of 0 defines records of no "
+            "bytes; the Data FlowSet of that template is reported as its "
+            "octets.",
+            [
+                packet(1, [templates(template(256, []))]),
+                packet(1, [undecoded(256, bytes(range(8)))], sequence_number=1),
+            ],
+            clean=False,
+        )
+    )
+
+    rate = [(34, 4)]
+    out.append(
+        case(
+            "s6_1_options_of_part_of_the_exporter",
+            "RFC 3954 section 6.1",
+            "Options records whose scope is a Template (5) and a scope "
+            "type section 6.1 does not define (7): the record applies to "
+            "something the collector cannot place, so the sampling rate it "
+            "states (100) is not the source ID's. The unknown scope is "
+            "printed under its number. The flow after them has no "
+            "sampling rate.",
+            [
+                packet(
+                    4,
+                    [
+                        options_templates(options_template(300, [(TEMPLATE, 2)], rate), options_template(301, [(7, 4)], rate), padding=b"\0\0"),
+                        templates(template(256, V4)),
+                    ],
+                ),
+                packet(
+                    3,
+                    [
+                        options_data(300, [scope_name(TEMPLATE), name(34)], [[U(256, 2), U(100, 4)]], padding=b"\0\0"),
+                        options_data(301, [scope_name(7), name(34)], [[U(1, 4), U(100, 4)]]),
+                        data(256, V4_NAMES, [v4_row("192.0.2.1", "198.51.100.1", 1, 100)]),
+                    ],
+                    sequence_number=1,
+                ),
+            ],
+            clean=False,
+        )
+    )
+
+    wide = [(1, 16), (10, 2)]
+    system_scope = options_template(302, [(SYSTEM, 16)], [(41, 4)])
+    out.append(
+        case(
+            "s8_fields_wider_than_8_bytes",
+            "RFC 3954 sections 6.1 and 8",
+            "A System scope of 16 bytes and an IN_BYTES of 16: no integer "
+            "is that wide, so each is reported as its octets, and the "
+            "fields after them are read.",
+            [
+                packet(2, [templates(template(256, wide)), options_templates(system_scope, padding=b"\0\0")]),
+                packet(
+                    2,
+                    [
+                        data(256, [name(t) for t, _ in wide], [[HEX("00" * 15 + "05"), U(3, 2)]], padding=b"\0\0"),
+                        options_data(302, [scope_name(SYSTEM), name(41)], [[HEX("00" * 15 + "01"), U(7, 4)]]),
+                    ],
+                    sequence_number=1,
+                ),
+            ],
+            clean=False,
+        )
+    )
+
+    return out
 
 
 def cases() -> list[Case]:
@@ -717,4 +847,4 @@ def cases() -> list[Case]:
         )
     )
 
-    return out
+    return out + more_cases()
