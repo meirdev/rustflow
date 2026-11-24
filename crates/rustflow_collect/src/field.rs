@@ -1,29 +1,38 @@
-//! The fields added to a flow, by `--extra-field` from its record or by
-//! `--enrich` from a table: a name, a kind, and the values of that kind.
+//! The kinds of the output's columns and their values, and the fields
+//! that `--extra-field` and `--enrich` add to a flow.
 
 use std::io::Write;
 use std::net::IpAddr;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use rustflow_core::common_flow::FlowType;
 use rustflow_core::information_element::DataType;
 use rustflow_core::mac_address::MacAddress;
 use rustflow_core::value;
 
 use crate::sink::encoder::text::Text;
 
-/// How a field's values are written.
+/// The kind of a column's values, which is how they are written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
-    Unsigned,
-    Signed,
-    Float,
+    U8,
+    U16,
+    U32,
+    U64,
+    I64,
+    F64,
     Boolean,
-    /// Unix time in nanoseconds, like the flow's own times.
+    /// Unix time in nanoseconds.
     Timestamp,
-    /// Strings as they are, addresses and MAC addresses in their usual
-    /// notation, octet arrays in hex.
     Text,
+    FlowType,
+    /// An IP address: text in its usual notation, octets in protobuf.
+    Address,
+    /// A MAC address: text in its usual notation, octets in protobuf.
+    Mac,
+    /// Text in hex, octets in protobuf.
+    Octets,
 }
 
 impl Kind {
@@ -32,17 +41,18 @@ impl Kind {
     pub fn of(data_type: DataType) -> Option<Self> {
         use DataType as D;
         Some(match data_type {
-            D::Unsigned8 | D::Unsigned16 | D::Unsigned32 | D::Unsigned64 => Self::Unsigned,
-            D::Signed8 | D::Signed16 | D::Signed32 | D::Signed64 => Self::Signed,
-            D::Float32 | D::Float64 => Self::Float,
+            D::Unsigned8 | D::Unsigned16 | D::Unsigned32 | D::Unsigned64 => Self::U64,
+            D::Signed8 | D::Signed16 | D::Signed32 | D::Signed64 => Self::I64,
+            D::Float32 | D::Float64 => Self::F64,
             D::Boolean => Self::Boolean,
             D::DateTimeSeconds
             | D::DateTimeMilliseconds
             | D::DateTimeMicroseconds
             | D::DateTimeNanoseconds => Self::Timestamp,
-            D::MacAddress | D::Ipv4Address | D::Ipv6Address | D::String | D::OctetArray => {
-                Self::Text
-            }
+            D::Ipv4Address | D::Ipv6Address => Self::Address,
+            D::MacAddress => Self::Mac,
+            D::OctetArray => Self::Octets,
+            D::String => Self::Text,
             _ => return None,
         })
     }
@@ -50,25 +60,29 @@ impl Kind {
     /// The type of a field of this kind in a `.proto` file.
     pub fn proto_type(self) -> &'static str {
         match self {
-            Self::Unsigned => "uint64",
-            Self::Signed => "sint64",
-            Self::Float => "double",
+            Self::U8 | Self::U16 | Self::U32 => "uint32",
+            Self::U64 => "uint64",
+            Self::I64 => "sint64",
+            Self::F64 => "double",
             Self::Boolean => "bool",
             Self::Timestamp => "int64",
             Self::Text => "string",
+            Self::FlowType => "FlowType",
+            Self::Address | Self::Mac | Self::Octets => "bytes",
         }
     }
 
     /// The value a table holds for `text`; `None` when it is not of this
-    /// kind.
+    /// kind, or the kind is not one a table column can have.
     pub fn parse(self, text: &str) -> Option<Value> {
         Some(match self {
-            Self::Unsigned => Value::Unsigned(text.parse().ok()?),
-            Self::Signed => Value::Signed(text.parse().ok()?),
-            Self::Float => Value::Float(text.parse().ok()?),
+            Self::U64 => Value::Unsigned(text.parse().ok()?),
+            Self::I64 => Value::Signed(text.parse().ok()?),
+            Self::F64 => Value::Float(text.parse().ok()?),
             Self::Boolean => Value::Boolean(text.parse().ok()?),
             Self::Timestamp => Value::Timestamp(text.parse().ok()?),
             Self::Text => Value::Text(text.into()),
+            _ => return None,
         })
     }
 }
@@ -80,9 +94,9 @@ impl FromStr for Kind {
     fn from_str(name: &str) -> Result<Self, ()> {
         Ok(match name {
             "string" => Self::Text,
-            "unsigned" => Self::Unsigned,
-            "signed" => Self::Signed,
-            "float" => Self::Float,
+            "unsigned" => Self::U64,
+            "signed" => Self::I64,
+            "float" => Self::F64,
             "boolean" => Self::Boolean,
             "timestamp" => Self::Timestamp,
             _ => return Err(()),
@@ -90,7 +104,7 @@ impl FromStr for Kind {
     }
 }
 
-/// A field added to the flow.
+/// A field added to the flow, by `--extra-field` or `--enrich`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Field {
     pub name: String,
@@ -110,7 +124,7 @@ pub enum Value {
     Text(Arc<str>),
 }
 
-/// A field's value, as an encoder is given it.
+/// A column's value for one flow, as an encoder is given it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Scalar<'a> {
     Unsigned(u64),
@@ -119,34 +133,35 @@ pub enum Scalar<'a> {
     Boolean(bool),
     Timestamp(i64),
     String(&'a str),
+    FlowType(FlowType),
     Address(IpAddr),
     Mac(MacAddress),
     Octets(&'a [u8]),
 }
 
 impl<'a> Scalar<'a> {
-    /// A record's value as a field of `kind`; `None` when it is not of
+    /// A record's value as a column of `kind`; `None` when it is not of
     /// that kind.
     pub fn of_record(value: &'a value::Value, kind: Kind) -> Option<Self> {
         use value::Value as V;
         Some(match (kind, value) {
-            (Kind::Unsigned, value) => Self::Unsigned(value.as_u64()?),
-            (Kind::Signed, V::Signed8(v)) => Self::Signed((*v).into()),
-            (Kind::Signed, V::Signed16(v)) => Self::Signed((*v).into()),
-            (Kind::Signed, V::Signed32(v)) => Self::Signed((*v).into()),
-            (Kind::Signed, V::Signed64(v)) => Self::Signed(*v),
-            (Kind::Float, V::Float32(v)) => Self::Float((*v).into()),
-            (Kind::Float, V::Float64(v)) => Self::Float(*v),
+            (Kind::U64, value) => Self::Unsigned(value.as_u64()?),
+            (Kind::I64, V::Signed8(v)) => Self::Signed((*v).into()),
+            (Kind::I64, V::Signed16(v)) => Self::Signed((*v).into()),
+            (Kind::I64, V::Signed32(v)) => Self::Signed((*v).into()),
+            (Kind::I64, V::Signed64(v)) => Self::Signed(*v),
+            (Kind::F64, V::Float32(v)) => Self::Float((*v).into()),
+            (Kind::F64, V::Float64(v)) => Self::Float(*v),
             (Kind::Boolean, V::Boolean(v)) => Self::Boolean(*v),
             (Kind::Timestamp, value) => {
                 let nanos = value.to_timestamp()?.as_nanosecond();
                 Self::Timestamp(i64::try_from(nanos).ok()?)
             }
             (Kind::Text, V::String(v)) => Self::String(v),
-            (Kind::Text, V::Ipv4Address(v)) => Self::Address((*v).into()),
-            (Kind::Text, V::Ipv6Address(v)) => Self::Address((*v).into()),
-            (Kind::Text, V::MacAddress(v)) => Self::Mac(*v),
-            (Kind::Text, V::OctetArray(v)) => Self::Octets(v),
+            (Kind::Address, V::Ipv4Address(v)) => Self::Address((*v).into()),
+            (Kind::Address, V::Ipv6Address(v)) => Self::Address((*v).into()),
+            (Kind::Mac, V::MacAddress(v)) => Self::Mac(*v),
+            (Kind::Octets, V::OctetArray(v)) => Self::Octets(v),
             _ => return None,
         })
     }
@@ -169,6 +184,7 @@ impl<'a> Scalar<'a> {
             Self::Float(v) => write!(out, "{v}").expect("writing to a Vec cannot fail"),
             Self::Boolean(v) => out.extend_from_slice(if v { b"true" } else { b"false" }),
             Self::String(v) => out.extend_from_slice(v.as_bytes()),
+            Self::FlowType(v) => v.write_text(out),
             Self::Address(v) => v.write_text(out),
             Self::Mac(v) => v.write_text(out),
             Self::Octets(v) => {
@@ -195,12 +211,9 @@ mod tests {
         use value::Value as V;
 
         let record = |value: &V, kind| text(Scalar::of_record(value, kind));
+        assert_eq!(record(&V::Unsigned16(7), Kind::U64).as_deref(), Some("7"));
         assert_eq!(
-            record(&V::Unsigned16(7), Kind::Unsigned).as_deref(),
-            Some("7")
-        );
-        assert_eq!(
-            record(&V::OctetArray(vec![0xab, 0x01]), Kind::Text).as_deref(),
+            record(&V::OctetArray(vec![0xab, 0x01]), Kind::Octets).as_deref(),
             Some("ab01")
         );
         assert_eq!(
@@ -208,16 +221,16 @@ mod tests {
             Some("1000000000")
         );
         // A value not of its field's kind is left out.
-        assert_eq!(record(&V::String("x".into()), Kind::Unsigned), None);
+        assert_eq!(record(&V::String("x".into()), Kind::U64), None);
     }
 
     #[test]
     fn a_table_cell_parses_as_the_kind_of_its_column() {
-        assert_eq!(Kind::Unsigned.parse("64512"), Some(Value::Unsigned(64512)));
-        assert_eq!(Kind::Signed.parse("-3"), Some(Value::Signed(-3)));
+        assert_eq!(Kind::U64.parse("64512"), Some(Value::Unsigned(64512)));
+        assert_eq!(Kind::I64.parse("-3"), Some(Value::Signed(-3)));
         assert_eq!(Kind::Boolean.parse("true"), Some(Value::Boolean(true)));
         assert_eq!(Kind::Text.parse("a b"), Some(Value::Text("a b".into())));
-        assert_eq!(Kind::Unsigned.parse("-3"), None);
-        assert_eq!(Kind::Float.parse("x"), None);
+        assert_eq!(Kind::U64.parse("-3"), None);
+        assert_eq!(Kind::F64.parse("x"), None);
     }
 }

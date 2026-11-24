@@ -126,6 +126,9 @@ as in `vrf=ingressVRFID@1000`, gives the field its [protobuf field number](outpu
 | string                                  | string                                          |
 | octetArray                              | string, in hex                                  |
 
+In protobuf, addresses, MAC addresses and octet arrays are `bytes`, like the flow's own
+addresses.
+
 Lists and unsigned256 cannot be columns. A record without the element leaves its column empty,
 and so do NetFlow v5 and sFlow flows. If a template lists an element twice, the first value is
 used. The extra columns come after the flow's fields and before the enrichment fields, and a name
@@ -145,9 +148,8 @@ rustflow collect \
   --fields time_received_ns,src_addr,dst_addr,bytes,packets,direction
 ```
 
-The columns keep their usual order, whatever the order of the list: the flow's fields, then the
-extra fields, then the enrichment fields. In protobuf the fields left out are unset, and the
-numbers of the others do not change. An enrichment lookup can still use a flow field that is
+The columns are written in the order of the list. In protobuf the fields left out are unset, and
+the numbers of the others do not change. An enrichment lookup can still use a flow field that is
 not written as its key. `--fields` requires `--format common`.
 
 ## Template Cache

@@ -6,7 +6,6 @@ pub mod layout;
 pub mod metrics;
 pub mod pipeline;
 pub mod rotating;
-pub mod schema;
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -20,7 +19,8 @@ pub use layout::{LEVEL_3_MINUTES, Layout, MAX_PARTITION_LEVEL, Partitioning};
 use log::warn;
 pub use metrics::OutputMetrics;
 pub use rotating::RotatingSink;
-pub use schema::Schema;
+
+use crate::schema::Schema;
 
 /// The original packet structure, or the normalized flow.
 #[derive(

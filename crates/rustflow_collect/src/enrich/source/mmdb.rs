@@ -74,14 +74,16 @@ impl Source for MmdbSource {
 /// of that kind. Any value has a text form.
 fn value_of(value: Value, kind: Kind) -> Option<field::Value> {
     Some(match (kind, value) {
-        (Kind::Unsigned, value) => field::Value::Unsigned(value.as_u64()?),
-        (Kind::Signed, value) => field::Value::Signed(value.as_i64()?),
+        (Kind::U64, value) => field::Value::Unsigned(value.as_u64()?),
+        (Kind::I64, value) => field::Value::Signed(value.as_i64()?),
         (Kind::Timestamp, value) => field::Value::Timestamp(value.as_i64()?),
-        (Kind::Float, value) => field::Value::Float(value.as_f64()?),
+        (Kind::F64, value) => field::Value::Float(value.as_f64()?),
         (Kind::Boolean, value) => field::Value::Boolean(value.as_bool()?),
         (Kind::Text, Value::Null) => return None,
         (Kind::Text, Value::String(text)) if text.is_empty() => return None,
         (Kind::Text, Value::String(text)) => field::Value::Text(text.into()),
         (Kind::Text, value) => field::Value::Text(value.to_string().into()),
+        // Not the kinds a table column can have.
+        _ => return None,
     })
 }

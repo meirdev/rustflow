@@ -4,7 +4,7 @@ use rustflow_core::common_flow::CommonFlow;
 
 use super::{Encoder, Writer};
 use crate::enrich::Enriched;
-use crate::sink::schema::Schema;
+use crate::schema::Schema;
 
 /// Writes nothing; the load-testing baseline.
 pub struct Discard;

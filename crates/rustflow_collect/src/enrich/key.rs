@@ -1,10 +1,9 @@
 use std::net::IpAddr;
 
 use ipnet::IpNet;
-use rustflow_core::information_element::DataType;
-use rustflow_core::value::Value;
 
 use crate::enrich::{Error, Result};
+use crate::field::{Kind, Scalar};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Key {
@@ -13,13 +12,13 @@ pub enum Key {
 }
 
 impl Key {
-    /// A record's value as a key: an address, or an unsigned number.
-    pub fn of_record(value: &Value) -> Option<Self> {
-        Some(match value {
-            Value::Ipv4Address(address) => Self::Ip((*address).into()),
-            Value::Ipv6Address(address) => Self::Ip((*address).into()),
-            value => Self::Number(value.as_u64()?),
-        })
+    /// A column's value as a key: an address, or an unsigned number.
+    pub fn of(value: Scalar<'_>) -> Option<Self> {
+        match value {
+            Scalar::Address(address) => Some(Self::Ip(address)),
+            Scalar::Unsigned(number) => Some(Self::Number(number)),
+            _ => None,
+        }
     }
 }
 
@@ -30,13 +29,12 @@ pub enum KeyType {
 }
 
 impl KeyType {
-    /// The type of the keys that values of `data_type` make; `None` when
-    /// they cannot be keys.
-    pub fn of(data_type: DataType) -> Option<Self> {
-        use DataType as D;
-        match data_type {
-            D::Ipv4Address | D::Ipv6Address => Some(Self::Ip),
-            D::Unsigned8 | D::Unsigned16 | D::Unsigned32 | D::Unsigned64 => Some(Self::Number),
+    /// The type of the keys that the values of a column of `kind` make;
+    /// `None` when they cannot be keys.
+    pub fn of(kind: Kind) -> Option<Self> {
+        match kind {
+            Kind::Address => Some(Self::Ip),
+            Kind::U8 | Kind::U16 | Kind::U32 | Kind::U64 => Some(Self::Number),
             _ => None,
         }
     }

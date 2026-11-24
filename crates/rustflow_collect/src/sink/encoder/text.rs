@@ -4,9 +4,6 @@ use rustflow_core::common_flow::FlowType;
 use rustflow_core::mac_address::MacAddress;
 
 pub trait Text {
-    /// Written as a JSON number rather than a string.
-    const NUMERIC: bool;
-
     fn write_text(&self, out: &mut Vec<u8>);
 }
 
@@ -14,8 +11,6 @@ macro_rules! integer {
     ($($type:ty),*) => {
         $(
             impl Text for $type {
-                const NUMERIC: bool = true;
-
                 fn write_text(&self, out: &mut Vec<u8>) {
                     out.extend_from_slice(itoa::Buffer::new().format(*self).as_bytes());
                 }
@@ -26,8 +21,6 @@ macro_rules! integer {
 integer!(u8, u16, u32, u64, i64);
 
 impl Text for FlowType {
-    const NUMERIC: bool = false;
-
     fn write_text(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(<&str>::from(self).as_bytes());
     }
@@ -36,8 +29,6 @@ impl Text for FlowType {
 const HEX: &[u8; 16] = b"0123456789abcdef";
 
 impl Text for IpAddr {
-    const NUMERIC: bool = false;
-
     fn write_text(&self, out: &mut Vec<u8>) {
         match self {
             IpAddr::V4(ip) => write_ipv4(*ip, out),
@@ -93,8 +84,6 @@ fn write_segments(segments: &[u16], out: &mut Vec<u8>) {
 }
 
 impl Text for MacAddress {
-    const NUMERIC: bool = false;
-
     fn write_text(&self, out: &mut Vec<u8>) {
         for (i, octet) in self.octets().into_iter().enumerate() {
             if i > 0 {

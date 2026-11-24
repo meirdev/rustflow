@@ -1,64 +1,28 @@
 use std::io::{self, BufWriter, Write};
 
 use rustflow_core::common_flow::CommonFlow;
-use rustflow_core::for_each_flow_field;
 
-use super::text::Text;
 use super::{Encoder, WRITE_BUFFER_BYTES, Writer};
 use crate::enrich::Enriched;
-use crate::sink::schema::{Added, FlowFields, Schema};
+use crate::field::Scalar;
+use crate::schema::{Column, Schema};
 
 /// Comma-separated values with a header row, one column for each of the
 /// schema's.
 pub struct Csv {
     out: BufWriter<Writer>,
-    flow: FlowFields,
-    /// The columns after the flow's fields.
-    added: Vec<Added>,
+    columns: Vec<Column>,
     /// One record, written in a single call so a failed write leaves no
     /// partial record behind.
     record: Vec<u8>,
-    /// A text value, before it is quoted into `record`.
-    text: Vec<u8>,
 }
-
-macro_rules! field {
-    ($record:ident, required, $value:expr) => {
-        $value.write_text($record);
-    };
-    ($record:ident, optional, $value:expr) => {
-        if let Some(value) = $value {
-            value.write_text($record);
-        }
-    };
-}
-
-macro_rules! flow_fields {
-    ($( $name:ident : $kind:ident $presence:ident ),* $(,)?) => {
-        /// Writes the selected fields of the flow, each followed by a
-        /// comma.
-        fn write_flow(record: &mut Vec<u8>, flow: &CommonFlow, selected: FlowFields) {
-            let [ $( $name, )* ] = selected;
-            $(
-                if $name {
-                    field!(record, $presence, &flow.$name);
-                    record.push(b',');
-                }
-            )*
-        }
-    };
-}
-for_each_flow_field!(flow_fields);
 
 /// Writes `value` followed by a comma, quoted when it holds a delimiter, a
 /// quote or a line break.
-fn write_field(record: &mut Vec<u8>, value: &[u8]) {
-    if value
-        .iter()
-        .any(|byte| matches!(byte, b',' | b'"' | b'\n' | b'\r'))
-    {
+fn write_field(record: &mut Vec<u8>, value: &str) {
+    if value.contains([',', '"', '\n', '\r']) {
         record.push(b'"');
-        for &byte in value {
+        for byte in value.bytes() {
             if byte == b'"' {
                 record.push(b'"');
             }
@@ -66,7 +30,7 @@ fn write_field(record: &mut Vec<u8>, value: &[u8]) {
         }
         record.push(b'"');
     } else {
-        record.extend_from_slice(value);
+        record.extend_from_slice(value.as_bytes());
     }
     record.push(b',');
 }
@@ -75,13 +39,11 @@ impl Csv {
     pub fn open(out: Writer, schema: &Schema) -> io::Result<Self> {
         let mut csv = Self {
             out: BufWriter::with_capacity(WRITE_BUFFER_BYTES, out),
-            flow: schema.flow_fields(),
-            added: schema.added().map(|(_, added)| added).collect(),
+            columns: schema.columns().to_vec(),
             record: Vec::with_capacity(1024),
-            text: Vec::new(),
         };
-        for (name, _) in schema.columns() {
-            write_field(&mut csv.record, name.as_bytes());
+        for column in schema.columns() {
+            write_field(&mut csv.record, &column.name);
         }
         csv.write_record()?;
         Ok(csv)
@@ -102,14 +64,16 @@ impl Csv {
 impl Encoder for Csv {
     fn encode(&mut self, flow: &CommonFlow, enriched: &Enriched) -> io::Result<()> {
         let record = &mut self.record;
-        write_flow(record, flow, self.flow);
-        for added in &self.added {
-            let text = &mut self.text;
-            text.clear();
-            if let Some(value) = added.value(flow, enriched) {
-                value.write_text(text);
+        for column in &self.columns {
+            match column.value(flow, enriched) {
+                // Only a string can hold what needs quoting.
+                Some(Scalar::String(value)) => write_field(record, value),
+                Some(value) => {
+                    value.write_text(record);
+                    record.push(b',');
+                }
+                None => record.push(b','),
             }
-            write_field(record, text);
         }
         self.write_record()
     }
@@ -173,7 +137,7 @@ mod tests {
         let written = disk.written.lock().unwrap();
         assert_eq!(
             std::str::from_utf8(&written).unwrap(),
-            "flow_type,sequence_num,bytes,site\nIPFIX,7,,lab\n"
+            "site,sequence_num,flow_type,bytes\nlab,7,IPFIX,\n"
         );
     }
 

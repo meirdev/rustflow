@@ -8,12 +8,10 @@ use arrow_array::types::{Float64Type, Int64Type, UInt8Type, UInt16Type, UInt32Ty
 use arrow_array::{ArrayRef, RecordBatch};
 use arrow_schema::{DataType, Field, Schema as ArrowSchema, TimeUnit};
 use rustflow_core::common_flow::CommonFlow;
-use rustflow_core::for_each_flow_field;
 
-use super::text::Text;
 use crate::enrich::Enriched;
 use crate::field::{Kind, Scalar};
-use crate::sink::schema::{Added, FlowFields, Schema};
+use crate::schema::{Column, Schema};
 
 /// Rows per record batch when nothing flushes earlier.
 pub const BATCH_ROWS: usize = 32_768;
@@ -24,144 +22,11 @@ fn timestamp_type() -> DataType {
     DataType::Timestamp(TimeUnit::Nanosecond, Some(UTC.into()))
 }
 
-macro_rules! builder {
-    (Protocol) => { StringBuilder };
-    (Timestamp) => { TimestampNanosecondBuilder };
-    (U8) => { PrimitiveBuilder<UInt8Type> };
-    (U16) => { PrimitiveBuilder<UInt16Type> };
-    (U32) => { PrimitiveBuilder<UInt32Type> };
-    (U64) => { PrimitiveBuilder<UInt64Type> };
-    (Ip) => { StringBuilder };
-    (Mac) => { StringBuilder };
-}
-
-macro_rules! new_builder {
-    (Timestamp) => {
-        TimestampNanosecondBuilder::new().with_timezone(UTC)
-    };
-    ($kind:ident) => {
-        <builder!($kind)>::new()
-    };
-}
-
-macro_rules! data_type {
-    (Protocol) => {
-        DataType::Utf8
-    };
-    (Timestamp) => {
-        timestamp_type()
-    };
-    (U8) => {
-        DataType::UInt8
-    };
-    (U16) => {
-        DataType::UInt16
-    };
-    (U32) => {
-        DataType::UInt32
-    };
-    (U64) => {
-        DataType::UInt64
-    };
-    (Ip) => {
-        DataType::Utf8
-    };
-    (Mac) => {
-        DataType::Utf8
-    };
-}
-
-macro_rules! nullable {
-    (required) => {
-        false
-    };
-    (optional) => {
-        true
-    };
-}
-
-macro_rules! append {
-    ($b:expr, $text:expr, Protocol required, $v:expr) => {
-        append_text($b, $text, $v)
-    };
-    ($b:expr, $text:expr, Ip required, $v:expr) => {
-        append_text($b, $text, $v)
-    };
-    ($b:expr, $text:expr, Ip optional, $v:expr) => {
-        append_text_option($b, $text, $v)
-    };
-    ($b:expr, $text:expr, Mac optional, $v:expr) => {
-        append_text_option($b, $text, $v)
-    };
-    ($b:expr, $text:expr, $kind:ident optional, $v:expr) => {
-        $b.append_option($v)
-    };
-    ($b:expr, $text:expr, $kind:ident required, $v:expr) => {
-        $b.append_value($v)
-    };
-}
-
-fn append_text(b: &mut StringBuilder, text: &mut Vec<u8>, v: impl Text) {
-    text.clear();
-    v.write_text(text);
-    b.append_value(std::str::from_utf8(text).expect("text is ASCII"));
-}
-
-fn append_text_option(b: &mut StringBuilder, text: &mut Vec<u8>, v: Option<impl Text>) {
-    match v {
-        Some(v) => append_text(b, text, v),
-        None => b.append_null(),
-    }
-}
-
-macro_rules! flow_columns {
-    ($( $name:ident : $kind:ident $presence:ident ),* $(,)?) => {
-        struct FlowColumns {
-            $( $name: builder!($kind), )*
-        }
-
-        impl FlowColumns {
-            fn new() -> Self {
-                Self {
-                    $( $name: new_builder!($kind), )*
-                }
-            }
-
-            fn fields(selected: FlowFields) -> Vec<Field> {
-                let fields = [ $( Field::new(stringify!($name), data_type!($kind), nullable!($presence)), )* ];
-                let selected = fields.into_iter().zip(selected).filter(|(_, selected)| *selected);
-                selected.map(|(field, _)| field).collect()
-            }
-
-            /// Appends to the builders of the selected fields; the others
-            /// stay empty.
-            fn append(&mut self, text: &mut Vec<u8>, flow: &CommonFlow, selected: FlowFields) {
-                let [ $( $name, )* ] = selected;
-                $(
-                    if $name {
-                        append!(&mut self.$name, text, $kind $presence, flow.$name);
-                    }
-                )*
-            }
-
-            fn finish(&mut self, selected: FlowFields) -> Vec<ArrayRef> {
-                let mut arrays: Vec<ArrayRef> = Vec::new();
-                let [ $( $name, )* ] = selected;
-                $(
-                    if $name {
-                        arrays.push(Arc::new(self.$name.finish()));
-                    }
-                )*
-                arrays
-            }
-        }
-    };
-}
-for_each_flow_field!(flow_columns);
-
-/// The values of a column after the flow's fields, until taken as an
-/// array.
+/// The values of one column, until taken as an array.
 enum Builder {
+    U8(PrimitiveBuilder<UInt8Type>),
+    U16(PrimitiveBuilder<UInt16Type>),
+    U32(PrimitiveBuilder<UInt32Type>),
     U64(PrimitiveBuilder<UInt64Type>),
     I64(PrimitiveBuilder<Int64Type>),
     F64(PrimitiveBuilder<Float64Type>),
@@ -173,21 +38,31 @@ enum Builder {
 impl Builder {
     fn new(kind: Kind) -> (DataType, Self) {
         match kind {
-            Kind::Unsigned => (DataType::UInt64, Self::U64(PrimitiveBuilder::new())),
-            Kind::Signed => (DataType::Int64, Self::I64(PrimitiveBuilder::new())),
-            Kind::Float => (DataType::Float64, Self::F64(PrimitiveBuilder::new())),
+            Kind::U8 => (DataType::UInt8, Self::U8(PrimitiveBuilder::new())),
+            Kind::U16 => (DataType::UInt16, Self::U16(PrimitiveBuilder::new())),
+            Kind::U32 => (DataType::UInt32, Self::U32(PrimitiveBuilder::new())),
+            Kind::U64 => (DataType::UInt64, Self::U64(PrimitiveBuilder::new())),
+            Kind::I64 => (DataType::Int64, Self::I64(PrimitiveBuilder::new())),
+            Kind::F64 => (DataType::Float64, Self::F64(PrimitiveBuilder::new())),
             Kind::Boolean => (DataType::Boolean, Self::Boolean(BooleanBuilder::new())),
             Kind::Timestamp => (
                 timestamp_type(),
                 Self::Timestamp(TimestampNanosecondBuilder::new().with_timezone(UTC)),
             ),
-            Kind::Text => (DataType::Utf8, Self::Utf8(StringBuilder::new())),
+            Kind::Text | Kind::FlowType | Kind::Address | Kind::Mac | Kind::Octets => {
+                (DataType::Utf8, Self::Utf8(StringBuilder::new()))
+            }
         }
     }
 
-    /// `value` as its column holds it; null when there is none.
+    /// `value` as its column holds it; null when there is none, or it is
+    /// not of the column's kind.
     fn append(&mut self, text: &mut Vec<u8>, value: Option<Scalar<'_>>) {
         match (self, value) {
+            // A column narrower than 64 bits is of a flow field that wide.
+            (Self::U8(b), Some(Scalar::Unsigned(v))) => b.append_value(v as u8),
+            (Self::U16(b), Some(Scalar::Unsigned(v))) => b.append_value(v as u16),
+            (Self::U32(b), Some(Scalar::Unsigned(v))) => b.append_value(v as u32),
             (Self::U64(b), Some(Scalar::Unsigned(v))) => b.append_value(v),
             (Self::I64(b), Some(Scalar::Signed(v))) => b.append_value(v),
             (Self::F64(b), Some(Scalar::Float(v))) => b.append_value(v),
@@ -199,6 +74,9 @@ impl Builder {
                 value.write_text(text);
                 b.append_value(std::str::from_utf8(text).expect("text is ASCII"));
             }
+            (Self::U8(b), _) => b.append_null(),
+            (Self::U16(b), _) => b.append_null(),
+            (Self::U32(b), _) => b.append_null(),
             (Self::U64(b), _) => b.append_null(),
             (Self::I64(b), _) => b.append_null(),
             (Self::F64(b), _) => b.append_null(),
@@ -210,6 +88,9 @@ impl Builder {
 
     fn finish(&mut self) -> ArrayRef {
         match self {
+            Self::U8(b) => Arc::new(b.finish()),
+            Self::U16(b) => Arc::new(b.finish()),
+            Self::U32(b) => Arc::new(b.finish()),
             Self::U64(b) => Arc::new(b.finish()),
             Self::I64(b) => Arc::new(b.finish()),
             Self::F64(b) => Arc::new(b.finish()),
@@ -223,29 +104,23 @@ impl Builder {
 /// Rows accumulating in per-column builders until taken as a batch.
 pub struct Columns {
     schema: Arc<ArrowSchema>,
-    flow: FlowColumns,
-    selected: FlowFields,
-    /// The columns after the flow's fields.
-    added: Vec<(Added, Builder)>,
+    columns: Vec<(Column, Builder)>,
     text: Vec<u8>,
     rows: usize,
 }
 
 impl Columns {
     pub fn new(schema: &Schema) -> Self {
-        let selected = schema.flow_fields();
-        let mut fields = FlowColumns::fields(selected);
+        let mut fields = Vec::new();
         let mut columns = Vec::new();
-        for (name, added) in schema.added() {
-            let (data_type, builder) = Builder::new(added.kind);
-            fields.push(Field::new(name, data_type, true));
-            columns.push((added, builder));
+        for column in schema.columns() {
+            let (data_type, builder) = Builder::new(column.kind);
+            fields.push(Field::new(&column.name, data_type, !column.required));
+            columns.push((column.clone(), builder));
         }
         Self {
             schema: Arc::new(ArrowSchema::new(fields)),
-            flow: FlowColumns::new(),
-            selected,
-            added: columns,
+            columns,
             text: Vec::new(),
             rows: 0,
         }
@@ -260,10 +135,8 @@ impl Columns {
     }
 
     pub fn append(&mut self, flow: &CommonFlow, enriched: &Enriched) {
-        let text = &mut self.text;
-        self.flow.append(text, flow, self.selected);
-        for (added, builder) in &mut self.added {
-            builder.append(text, added.value(flow, enriched));
+        for (column, builder) in &mut self.columns {
+            builder.append(&mut self.text, column.value(flow, enriched));
         }
         self.rows += 1;
     }
@@ -275,8 +148,9 @@ impl Columns {
             return Ok(None);
         }
         self.rows = 0;
-        let mut columns = self.flow.finish(self.selected);
-        columns.extend(self.added.iter_mut().map(|(_, builder)| builder.finish()));
+        let columns = (self.columns.iter_mut())
+            .map(|(_, builder)| builder.finish())
+            .collect();
         RecordBatch::try_new(Arc::clone(&self.schema), columns)
             .map(Some)
             .map_err(io::Error::other)
@@ -302,11 +176,11 @@ mod tests {
         };
         let schema = Schema::new(
             &[
-                field("count", Kind::Unsigned),
+                field("count", Kind::U64),
                 field("start", Kind::Timestamp),
                 field("host", Kind::Text),
             ],
-            &[field("site", Kind::Text), field("asn", Kind::Unsigned)],
+            &[field("site", Kind::Text), field("asn", Kind::U64)],
         )
         .unwrap();
         let mut columns = Columns::new(&schema);

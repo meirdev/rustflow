@@ -3,7 +3,6 @@ use std::str::FromStr;
 use anyhow::{Context, Result, anyhow};
 use rustflow_core::information_element::{ElementId, Registry};
 
-use crate::enrich::KeyType;
 use crate::field::{Field, Kind};
 
 /// `--extra-field NAME=ELEMENT[@NUMBER]`, before the element is looked up.
@@ -46,9 +45,6 @@ impl FromStr for ExtraFieldArg {
 pub struct ExtraField {
     pub id: ElementId,
     pub field: Field,
-    /// The type of key its values make for an enrichment lookup, if they
-    /// can be keys.
-    pub key_type: Option<KeyType>,
 }
 
 impl ExtraFieldArg {
@@ -82,7 +78,6 @@ impl ExtraFieldArg {
                 kind,
                 number: *number,
             },
-            key_type: KeyType::of(element.data_type),
         })
     }
 }
@@ -136,7 +131,7 @@ mod tests {
         let by_name = resolve("phys=ingressPhysicalInterface").unwrap();
         assert_eq!(by_name.id, ElementId::INGRESS_PHYSICAL_INTERFACE);
         assert_eq!(by_name.field.name, "phys");
-        assert_eq!(by_name.field.kind, Kind::Unsigned);
+        assert_eq!(by_name.field.kind, Kind::U64);
         assert_eq!(by_name.field.number, None);
 
         assert_eq!(resolve("phys = 252").unwrap(), by_name);
@@ -145,7 +140,7 @@ mod tests {
         assert_eq!(resolve("cisco=ciscoExample").unwrap(), enterprise);
         assert_eq!(
             resolve("host=sourceIPv4Address").unwrap().field.kind,
-            Kind::Text
+            Kind::Address
         );
         assert_eq!(resolve("phys=252@1007").unwrap().field.number, Some(1007));
     }

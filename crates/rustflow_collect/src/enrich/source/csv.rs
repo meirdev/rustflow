@@ -161,7 +161,7 @@ mod tests {
     #[test]
     fn cells_are_values_of_the_kind_of_their_column() {
         let lookup = CsvLookup::Exact(vec![KeyType::Number]);
-        let schema = Schema::new([("speed", Kind::Unsigned), ("name", Kind::Text)]);
+        let schema = Schema::new([("speed", Kind::U64), ("name", Kind::Text)]);
         let open = |rows: &str| {
             let csv = format!("ifindex,speed,name\n{rows}");
             open(csv.as_bytes(), &["ifindex".into()], &lookup, &schema)

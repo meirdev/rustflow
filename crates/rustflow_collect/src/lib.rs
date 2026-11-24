@@ -4,6 +4,7 @@ mod extra_field;
 mod field;
 mod ie_mapping;
 mod metrics;
+mod schema;
 mod sink;
 
 use std::path::Path;
@@ -15,15 +16,14 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 pub use args::CollectArgs;
 use args::{FlowType, Input};
-use enrich::config::LookupKey;
 use enrich::{EnrichmentEngine, parse_enrich_arg};
-use extra_field::ExtraField;
 use log::{error, info, warn};
 use rustflow_core::common_flow::ExtraFields;
 use rustflow_core::information_element::Registry;
 use rustflow_core::reader::{
     NetflowProcessor, PcapSource, Processor, ReadError, Recv, SflowProcessor, Source, UdpSource,
 };
+use schema::{Column, Schema};
 use serde::Serialize;
 use sink::OutputFormat;
 use sink::pipeline::{CHUNK_FLUSH_TIMEOUT, EncoderGone, Pipeline, Producer};
@@ -208,24 +208,17 @@ fn load_ie_registry(path: Option<&Path>) -> Result<Registry> {
     Ok(registry)
 }
 
-/// Loads the tables of the `--enrich` arguments. Their lookup keys are the
-/// flow's fields and the extra fields whose values can be keys.
+/// Loads the tables of the `--enrich` arguments. Their lookup keys are
+/// among `columns`, the flow's fields and the extra fields.
 fn load_enrichment(
     args: &[String],
-    extra_fields: &[ExtraField],
+    columns: &[Column],
     metrics: &metrics::Metrics,
 ) -> Result<EnrichmentEngine> {
-    let extra_keys: Vec<_> = extra_fields
-        .iter()
-        .enumerate()
-        .filter_map(|(index, extra)| {
-            Some(LookupKey::extra(&extra.field.name, index, extra.key_type?))
-        })
-        .collect();
     let mut engine = EnrichmentEngine::new(metrics.enrichment.clone());
     for arg in args {
-        let config = parse_enrich_arg(arg, &extra_keys)
-            .with_context(|| format!("Invalid --enrich '{arg}'"))?;
+        let config =
+            parse_enrich_arg(arg, columns).with_context(|| format!("Invalid --enrich '{arg}'"))?;
         let source = config.source.source().display().to_string();
         let count = engine
             .add(config)
@@ -260,12 +253,13 @@ pub fn run(cli: CollectArgs) -> Result<()> {
         .iter()
         .map(|arg| arg.resolve(&registry))
         .collect::<Result<Vec<_>>>()?;
-    let enrichment = load_enrichment(&cli.enrich, &extra_fields, &metrics)?;
     let fields: Vec<_> = extra_fields
         .iter()
         .map(|extra| extra.field.clone())
         .collect();
-    let mut schema = sink::Schema::new(&fields, enrichment.output_fields())?;
+    let keys = Schema::new(&fields, &[])?;
+    let enrichment = load_enrichment(&cli.enrich, keys.columns(), &metrics)?;
+    let mut schema = Schema::new(&fields, enrichment.output_fields())?;
     if !cli.fields.is_empty() {
         schema = schema.select(&cli.fields)?;
     }

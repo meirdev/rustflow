@@ -124,7 +124,7 @@ pub struct CollectArgs {
     pub(crate) extra_fields: Vec<ExtraFieldArg>,
 
     /// Write only these columns, by name: common flow fields, extra
-    /// fields and enrichment outputs. They keep their usual order
+    /// fields and enrichment outputs, in this order
     #[arg(long, value_name = "NAME,...", value_delimiter = ',')]
     pub(crate) fields: Vec<String>,
 

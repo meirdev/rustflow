@@ -60,5 +60,6 @@ message CommonFlow {
   //   optional string src_country = 1001;
   //
   // Unsigned values are uint64, signed sint64, floats double, booleans
-  // bool, timestamps int64 (Unix nanoseconds) and everything else string.
+  // bool, timestamps int64 (Unix nanoseconds), strings string, and
+  // addresses, MAC addresses and octet arrays bytes.
 }

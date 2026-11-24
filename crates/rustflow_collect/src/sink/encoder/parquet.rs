@@ -11,7 +11,7 @@ use rustflow_core::common_flow::CommonFlow;
 use super::columns::{BATCH_ROWS, Columns};
 use super::{Encoder, Writer};
 use crate::enrich::Enriched;
-use crate::sink::schema::Schema;
+use crate::schema::Schema;
 
 /// Nearly every value is unique here, so a dictionary only costs time and
 /// delta encoding compresses far better.

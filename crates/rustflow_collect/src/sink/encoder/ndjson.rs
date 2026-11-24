@@ -1,65 +1,24 @@
 use std::io::{self, BufWriter, Write};
 
 use rustflow_core::common_flow::CommonFlow;
-use rustflow_core::for_each_flow_field;
 
-use super::text::Text;
 use super::{Encoder, WRITE_BUFFER_BYTES, Writer};
 use crate::enrich::Enriched;
 use crate::field::Scalar;
-use crate::sink::schema::{Added, FlowFields, Schema};
+use crate::schema::{Column, Schema};
 
 /// Newline-delimited JSON, one object per record, with a member for each
 /// of the schema's columns that has a value.
 pub struct Ndjson {
     out: BufWriter<Writer>,
-    flow: FlowFields,
-    /// The columns after the flow's fields, each with its `,"name":`.
-    added: Vec<(Vec<u8>, Added)>,
+    /// The columns, each with its `,"name":`.
+    columns: Vec<(Vec<u8>, Column)>,
     /// One record, written in a single call so a failed write leaves no
     /// partial line in the buffer.
     line: Vec<u8>,
 }
 
-fn write_value<T: Text>(line: &mut Vec<u8>, value: &T) {
-    if T::NUMERIC {
-        value.write_text(line);
-    } else {
-        line.push(b'"');
-        value.write_text(line);
-        line.push(b'"');
-    }
-}
-
-macro_rules! member {
-    ($line:ident, $name:ident, required, $value:expr) => {
-        $line.extend_from_slice(concat!(",\"", stringify!($name), "\":").as_bytes());
-        write_value($line, $value);
-    };
-    ($line:ident, $name:ident, optional, $value:expr) => {
-        if let Some(value) = $value {
-            member!($line, $name, required, value);
-        }
-    };
-}
-
-macro_rules! flow_fields {
-    ($( $name:ident : $kind:ident $presence:ident ),* $(,)?) => {
-        /// Writes the selected members of the flow, each preceded by a
-        /// comma.
-        fn write_flow(line: &mut Vec<u8>, flow: &CommonFlow, selected: FlowFields) {
-            let [ $( $name, )* ] = selected;
-            $(
-                if $name {
-                    member!(line, $name, $presence, &flow.$name);
-                }
-            )*
-        }
-    };
-}
-for_each_flow_field!(flow_fields);
-
-fn write_added(line: &mut Vec<u8>, key: &[u8], value: Scalar<'_>) -> io::Result<()> {
+fn write_member(line: &mut Vec<u8>, key: &[u8], value: Scalar<'_>) -> io::Result<()> {
     match value {
         // JSON has no NaN or infinity.
         Scalar::Float(v) if !v.is_finite() => return Ok(()),
@@ -75,8 +34,8 @@ fn write_added(line: &mut Vec<u8>, key: &[u8], value: Scalar<'_>) -> io::Result<
             line.extend_from_slice(key);
             value.write_text(line);
         }
-        // Addresses and hex need no escaping.
-        Scalar::Address(_) | Scalar::Mac(_) | Scalar::Octets(_) => {
+        // These need no escaping.
+        Scalar::FlowType(_) | Scalar::Address(_) | Scalar::Mac(_) | Scalar::Octets(_) => {
             line.extend_from_slice(key);
             line.push(b'"');
             value.write_text(line);
@@ -88,17 +47,17 @@ fn write_added(line: &mut Vec<u8>, key: &[u8], value: Scalar<'_>) -> io::Result<
 
 impl Ndjson {
     pub fn open(out: Writer, schema: &Schema) -> io::Result<Self> {
-        let added = schema
-            .added()
-            .map(|(name, added)| {
-                let key = format!(",{}:", serde_json::to_string(name)?).into_bytes();
-                Ok((key, added))
+        let columns = schema
+            .columns()
+            .iter()
+            .map(|column| {
+                let key = format!(",{}:", serde_json::to_string(&column.name)?).into_bytes();
+                Ok((key, column.clone()))
             })
             .collect::<io::Result<_>>()?;
         Ok(Self {
             out: BufWriter::with_capacity(WRITE_BUFFER_BYTES, out),
-            flow: schema.flow_fields(),
-            added,
+            columns,
             line: Vec::with_capacity(1024),
         })
     }
@@ -108,14 +67,13 @@ impl Encoder for Ndjson {
     fn encode(&mut self, flow: &CommonFlow, enriched: &Enriched) -> io::Result<()> {
         let line = &mut self.line;
         line.clear();
-        write_flow(line, flow, self.flow);
-        for (key, added) in &self.added {
-            if let Some(value) = added.value(flow, enriched) {
-                write_added(line, key, value)?;
+        for (key, column) in &self.columns {
+            if let Some(value) = column.value(flow, enriched) {
+                write_member(line, key, value)?;
             }
         }
         // Every member starts with a comma; the first one's opens the
-        // object. A flow with none of the selected fields is empty.
+        // object. A flow with none of the columns is empty.
         match line.first_mut() {
             Some(first) => *first = b'{',
             None => line.push(b'{'),
@@ -175,11 +133,11 @@ mod tests {
         let schema = Schema::new(
             &[
                 field("name", Kind::Text),
-                field("ratio", Kind::Float),
-                field("missing", Kind::Unsigned),
-                field("host", Kind::Text),
+                field("ratio", Kind::F64),
+                field("missing", Kind::U64),
+                field("host", Kind::Address),
             ],
-            &[field("asn", Kind::Unsigned), field("site", Kind::Text)],
+            &[field("asn", Kind::U64), field("site", Kind::Text)],
         )
         .unwrap();
         let memory = Memory::default();

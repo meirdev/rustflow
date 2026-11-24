@@ -1,278 +1,65 @@
 use std::io::{self, BufWriter, Write};
 use std::net::IpAddr;
 
-use prost::Message;
 use prost::encoding::{WireType, encode_key, encode_varint};
-use rustflow_core::common_flow::{self, CommonFlow};
-use rustflow_core::for_each_flow_field;
+use rustflow_core::common_flow::{CommonFlow, FlowType};
 
 use super::{Encoder, WRITE_BUFFER_BYTES, Writer};
 use crate::enrich::Enriched;
 use crate::field::Scalar;
-use crate::sink::schema::{Added, FlowFields, Schema};
+use crate::schema::{Column, Schema};
 
-/// `rustflow.FlowType` of `proto/rustflow.proto`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ::prost::Enumeration)]
-#[repr(i32)]
-pub enum FlowType {
-    Unspecified = 0,
-    NetflowV5 = 1,
-    NetflowV9 = 2,
-    Ipfix = 3,
-    SflowV5 = 4,
-}
-
-impl From<common_flow::FlowType> for FlowType {
-    fn from(flow_type: common_flow::FlowType) -> Self {
-        match flow_type {
-            common_flow::FlowType::NetflowV5 => Self::NetflowV5,
-            common_flow::FlowType::NetflowV9 => Self::NetflowV9,
-            common_flow::FlowType::Ipfix => Self::Ipfix,
-            common_flow::FlowType::SflowV5 => Self::SflowV5,
-        }
+/// The value of `rustflow.FlowType` in `proto/rustflow.proto`.
+fn flow_type_number(flow_type: FlowType) -> u64 {
+    match flow_type {
+        FlowType::NetflowV5 => 1,
+        FlowType::NetflowV9 => 2,
+        FlowType::Ipfix => 3,
+        FlowType::SflowV5 => 4,
     }
 }
 
-/// `rustflow.CommonFlow` of `proto/rustflow.proto`: the fields of
-/// `CommonFlow`, tagged in its order.
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct FlowMessage {
-    #[prost(enumeration = "FlowType", tag = "1")]
-    pub flow_type: i32,
-    #[prost(int64, tag = "2")]
-    pub time_received_ns: i64,
-    #[prost(bytes = "vec", tag = "3")]
-    pub sampler_address: Vec<u8>,
-    #[prost(uint32, tag = "4")]
-    pub sequence_num: u32,
-    #[prost(uint32, optional, tag = "5")]
-    pub sampling_rate: Option<u32>,
-    #[prost(int64, optional, tag = "6")]
-    pub time_flow_start_ns: Option<i64>,
-    #[prost(int64, optional, tag = "7")]
-    pub time_flow_end_ns: Option<i64>,
-    #[prost(uint64, optional, tag = "8")]
-    pub bytes: Option<u64>,
-    #[prost(uint64, optional, tag = "9")]
-    pub packets: Option<u64>,
-    #[prost(bytes = "vec", optional, tag = "10")]
-    pub src_addr: Option<Vec<u8>>,
-    #[prost(bytes = "vec", optional, tag = "11")]
-    pub dst_addr: Option<Vec<u8>>,
-    #[prost(bytes = "vec", optional, tag = "12")]
-    pub src_mac: Option<Vec<u8>>,
-    #[prost(bytes = "vec", optional, tag = "13")]
-    pub dst_mac: Option<Vec<u8>>,
-    #[prost(uint32, optional, tag = "14")]
-    pub etype: Option<u32>,
-    #[prost(uint32, optional, tag = "15")]
-    pub proto: Option<u32>,
-    #[prost(uint32, optional, tag = "16")]
-    pub src_port: Option<u32>,
-    #[prost(uint32, optional, tag = "17")]
-    pub dst_port: Option<u32>,
-    #[prost(uint32, optional, tag = "18")]
-    pub in_if: Option<u32>,
-    #[prost(uint32, optional, tag = "19")]
-    pub out_if: Option<u32>,
-    #[prost(uint32, optional, tag = "20")]
-    pub ip_tos: Option<u32>,
-    #[prost(uint32, optional, tag = "21")]
-    pub ip_ttl: Option<u32>,
-    #[prost(uint32, optional, tag = "22")]
-    pub tcp_flags: Option<u32>,
-    #[prost(uint32, optional, tag = "23")]
-    pub icmp_type: Option<u32>,
-    #[prost(uint32, optional, tag = "24")]
-    pub icmp_code: Option<u32>,
-    #[prost(uint32, optional, tag = "25")]
-    pub ipv6_flow_label: Option<u32>,
-    #[prost(uint32, optional, tag = "26")]
-    pub fragment_id: Option<u32>,
-    #[prost(uint32, optional, tag = "27")]
-    pub fragment_offset: Option<u32>,
-    #[prost(uint32, optional, tag = "28")]
-    pub src_as: Option<u32>,
-    #[prost(uint32, optional, tag = "29")]
-    pub dst_as: Option<u32>,
-    #[prost(bytes = "vec", optional, tag = "30")]
-    pub next_hop: Option<Vec<u8>>,
-    #[prost(uint32, optional, tag = "31")]
-    pub src_net: Option<u32>,
-    #[prost(uint32, optional, tag = "32")]
-    pub dst_net: Option<u32>,
-    #[prost(bytes = "vec", optional, tag = "33")]
-    pub bgp_next_hop: Option<Vec<u8>>,
-    #[prost(uint32, optional, tag = "34")]
-    pub src_vlan: Option<u32>,
-    #[prost(uint32, optional, tag = "35")]
-    pub dst_vlan: Option<u32>,
-    #[prost(uint32, optional, tag = "36")]
-    pub observation_domain_id: Option<u32>,
-    #[prost(uint32, optional, tag = "37")]
-    pub forwarding_status: Option<u32>,
+fn encode_number(buf: &mut Vec<u8>, number: u32, value: u64) {
+    encode_key(number, WireType::Varint, buf);
+    encode_varint(value, buf);
 }
 
-/// An address on the wire: 4 bytes for IPv4, 16 for IPv6.
-fn ip_bytes(addr: IpAddr) -> Vec<u8> {
-    match addr {
-        IpAddr::V4(v4) => v4.octets().to_vec(),
-        IpAddr::V6(v6) => v6.octets().to_vec(),
-    }
+fn encode_bytes(buf: &mut Vec<u8>, number: u32, value: &[u8]) {
+    encode_key(number, WireType::LengthDelimited, buf);
+    encode_varint(value.len() as u64, buf);
+    buf.extend_from_slice(value);
 }
 
-/// The `CommonFlow` fields that [`FlowMessage::from_flow`] maps: a field
-/// added to the core fails this check until it is mapped there.
-const MAPPED_FIELDS: usize = 37;
-const _: () = assert!(CommonFlow::FIELD_NAMES.len() == MAPPED_FIELDS);
-
-impl FlowMessage {
-    pub fn from_flow(flow: &CommonFlow) -> Self {
-        let CommonFlow {
-            flow_type,
-            time_received_ns,
-            sequence_num,
-            sampling_rate,
-            sampler_address,
-            time_flow_start_ns,
-            time_flow_end_ns,
-            bytes,
-            packets,
-            src_addr,
-            dst_addr,
-            src_mac,
-            dst_mac,
-            etype,
-            proto,
-            src_port,
-            dst_port,
-            in_if,
-            out_if,
-            ip_tos,
-            ip_ttl,
-            tcp_flags,
-            icmp_type,
-            icmp_code,
-            ipv6_flow_label,
-            fragment_id,
-            fragment_offset,
-            src_as,
-            dst_as,
-            next_hop,
-            src_net,
-            dst_net,
-            bgp_next_hop,
-            src_vlan,
-            dst_vlan,
-            observation_domain_id,
-            forwarding_status,
-            ..
-        } = flow;
-        Self {
-            flow_type: FlowType::from(*flow_type).into(),
-            time_received_ns: *time_received_ns,
-            sequence_num: *sequence_num,
-            sampling_rate: *sampling_rate,
-            sampler_address: ip_bytes(*sampler_address),
-            time_flow_start_ns: *time_flow_start_ns,
-            time_flow_end_ns: *time_flow_end_ns,
-            bytes: *bytes,
-            packets: *packets,
-            src_addr: src_addr.map(ip_bytes),
-            dst_addr: dst_addr.map(ip_bytes),
-            src_mac: src_mac.map(|m| m.octets().to_vec()),
-            dst_mac: dst_mac.map(|m| m.octets().to_vec()),
-            etype: etype.map(u32::from),
-            proto: proto.map(u32::from),
-            src_port: src_port.map(u32::from),
-            dst_port: dst_port.map(u32::from),
-            in_if: *in_if,
-            out_if: *out_if,
-            ip_tos: ip_tos.map(u32::from),
-            ip_ttl: ip_ttl.map(u32::from),
-            tcp_flags: tcp_flags.map(u32::from),
-            icmp_type: icmp_type.map(u32::from),
-            icmp_code: icmp_code.map(u32::from),
-            ipv6_flow_label: *ipv6_flow_label,
-            fragment_id: *fragment_id,
-            fragment_offset: fragment_offset.map(u32::from),
-            src_as: *src_as,
-            dst_as: *dst_as,
-            next_hop: next_hop.map(ip_bytes),
-            src_net: src_net.map(u32::from),
-            dst_net: dst_net.map(u32::from),
-            bgp_next_hop: bgp_next_hop.map(ip_bytes),
-            src_vlan: src_vlan.map(u32::from),
-            dst_vlan: dst_vlan.map(u32::from),
-            observation_domain_id: *observation_domain_id,
-            forwarding_status: *forwarding_status,
-        }
-    }
-}
-
-macro_rules! unselected {
-    ($( $name:ident : $kind:ident $presence:ident ),* $(,)?) => {
-        impl FlowMessage {
-            /// Leaves the fields that are not selected unset, so that they
-            /// are not written.
-            fn clear_unselected(&mut self, selected: FlowFields) {
-                let [ $( $name, )* ] = selected;
-                $(
-                    if !$name {
-                        self.$name = Default::default();
-                    }
-                )*
-            }
-        }
-    };
-}
-for_each_flow_field!(unselected);
-
-/// Appends `value` as the protobuf field `number`, in the wire form of
-/// its kind's type in `rustflow.proto`.
-fn encode_added(buf: &mut Vec<u8>, text: &mut Vec<u8>, number: u32, value: Scalar<'_>) {
+/// Appends `value` as the field `number`, in the wire form of its type in
+/// `rustflow.proto`.
+fn encode_field(buf: &mut Vec<u8>, number: u32, value: Scalar<'_>) {
     match value {
-        Scalar::Unsigned(v) => {
-            encode_key(number, WireType::Varint, buf);
-            encode_varint(v, buf);
-        }
-        Scalar::Signed(v) => {
-            encode_key(number, WireType::Varint, buf);
-            // sint64: zigzag, so that small negative numbers stay short.
-            encode_varint(((v << 1) ^ (v >> 63)) as u64, buf);
-        }
-        Scalar::Timestamp(v) => {
-            encode_key(number, WireType::Varint, buf);
-            encode_varint(v as u64, buf);
-        }
-        Scalar::Boolean(v) => {
-            encode_key(number, WireType::Varint, buf);
-            encode_varint(v.into(), buf);
-        }
+        Scalar::Unsigned(v) => encode_number(buf, number, v),
+        // int64: negative values as their two's complement.
+        Scalar::Timestamp(v) => encode_number(buf, number, v as u64),
+        // sint64: zigzag, so that small negative numbers stay short.
+        Scalar::Signed(v) => encode_number(buf, number, ((v << 1) ^ (v >> 63)) as u64),
+        Scalar::Boolean(v) => encode_number(buf, number, v.into()),
+        Scalar::FlowType(v) => encode_number(buf, number, flow_type_number(v)),
         Scalar::Float(v) => {
             encode_key(number, WireType::SixtyFourBit, buf);
             buf.extend_from_slice(&v.to_le_bytes());
         }
-        Scalar::String(_) | Scalar::Address(_) | Scalar::Mac(_) | Scalar::Octets(_) => {
-            text.clear();
-            value.write_text(text);
-            encode_key(number, WireType::LengthDelimited, buf);
-            encode_varint(text.len() as u64, buf);
-            buf.extend_from_slice(text);
-        }
+        Scalar::String(v) => encode_bytes(buf, number, v.as_bytes()),
+        Scalar::Octets(v) => encode_bytes(buf, number, v),
+        Scalar::Address(IpAddr::V4(v)) => encode_bytes(buf, number, &v.octets()),
+        Scalar::Address(IpAddr::V6(v)) => encode_bytes(buf, number, &v.octets()),
+        Scalar::Mac(v) => encode_bytes(buf, number, &v.octets()),
     }
 }
 
-/// Length-delimited protobuf, one [`FlowMessage`] per record, followed in
-/// the same message by the added fields, each under its own number.
+/// Length-delimited protobuf, one `rustflow.CommonFlow` per record: each
+/// column that has a value, under its field number.
 pub struct Protobuf {
     out: BufWriter<Writer>,
-    /// The selected fields of the flow, unless they are all selected.
-    flow: Option<FlowFields>,
-    added: Vec<Added>,
+    columns: Vec<Column>,
     /// One message, written in a single call.
     buf: Vec<u8>,
-    text: Vec<u8>,
     length: Vec<u8>,
 }
 
@@ -280,10 +67,8 @@ impl Protobuf {
     pub fn open(out: Writer, schema: &Schema) -> io::Result<Self> {
         Ok(Self {
             out: BufWriter::with_capacity(WRITE_BUFFER_BYTES, out),
-            flow: Some(schema.flow_fields()).filter(|fields| fields.contains(&false)),
-            added: schema.added().map(|(_, added)| added).collect(),
+            columns: schema.columns().to_vec(),
             buf: Vec::with_capacity(512),
-            text: Vec::new(),
             length: Vec::with_capacity(4),
         })
     }
@@ -292,14 +77,13 @@ impl Protobuf {
 impl Encoder for Protobuf {
     fn encode(&mut self, flow: &CommonFlow, enriched: &Enriched) -> io::Result<()> {
         self.buf.clear();
-        let mut message = FlowMessage::from_flow(flow);
-        if let Some(selected) = self.flow {
-            message.clear_unselected(selected);
-        }
-        message.encode(&mut self.buf).map_err(io::Error::other)?;
-        for added in &self.added {
-            if let Some(value) = added.value(flow, enriched) {
-                encode_added(&mut self.buf, &mut self.text, added.number, value);
+        for column in &self.columns {
+            match column.value(flow, enriched) {
+                // The required fields have no presence in proto3: a zero
+                // is the default, and is not written.
+                Some(Scalar::Unsigned(0) | Scalar::Timestamp(0)) if column.required => {}
+                Some(value) => encode_field(&mut self.buf, column.number, value),
+                None => {}
             }
         }
         self.length.clear();
@@ -321,17 +105,28 @@ impl Encoder for Protobuf {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use rustflow_core::common_flow::FlowType as CoreFlowType;
+    use prost::Message;
     use rustflow_core::value::Value;
 
     use super::*;
     use crate::field::{self, Field, Kind};
 
-    /// The added fields of the test, as a consumer would declare them.
+    /// Some of the flow's fields and the added fields of the test, as a
+    /// consumer would declare them.
     #[derive(Clone, PartialEq, ::prost::Message)]
     struct Consumer {
+        #[prost(int32, tag = "1")]
+        flow_type: i32,
+        #[prost(int64, tag = "2")]
+        time_received_ns: i64,
+        #[prost(bytes = "vec", tag = "3")]
+        sampler_address: Vec<u8>,
         #[prost(uint32, tag = "4")]
         sequence_num: u32,
+        #[prost(uint32, optional, tag = "16")]
+        src_port: Option<u32>,
+        #[prost(uint32, optional, tag = "17")]
+        dst_port: Option<u32>,
         #[prost(uint64, optional, tag = "1000")]
         count: Option<u64>,
         #[prost(sint64, optional, tag = "1001")]
@@ -342,8 +137,8 @@ mod tests {
         ok: Option<bool>,
         #[prost(int64, optional, tag = "2000")]
         start: Option<i64>,
-        #[prost(string, optional, tag = "1004")]
-        host: Option<String>,
+        #[prost(bytes = "vec", optional, tag = "1004")]
+        host: Option<Vec<u8>>,
         #[prost(string, optional, tag = "1005")]
         missing: Option<String>,
         #[prost(string, optional, tag = "1006")]
@@ -373,12 +168,12 @@ mod tests {
         };
         let schema = Schema::new(
             &[
-                field("count", Kind::Unsigned, None),
-                field("delta", Kind::Signed, None),
-                field("ratio", Kind::Float, None),
+                field("count", Kind::U64, None),
+                field("delta", Kind::I64, None),
+                field("ratio", Kind::F64, None),
                 field("ok", Kind::Boolean, None),
                 field("start", Kind::Timestamp, Some(2000)),
-                field("host", Kind::Text, None),
+                field("host", Kind::Address, None),
                 field("missing", Kind::Text, None),
             ],
             &[field("site", Kind::Text, None)],
@@ -386,7 +181,8 @@ mod tests {
         .unwrap();
         let memory = Memory::default();
         let mut protobuf = Protobuf::open(Box::new(memory.clone()), &schema).unwrap();
-        let mut flow = CommonFlow::new(CoreFlowType::Ipfix, 0, [192, 0, 2, 1].into(), 9);
+        let mut flow = CommonFlow::new(FlowType::Ipfix, 0, [192, 0, 2, 1].into(), 9);
+        flow.src_port = Some(0);
         flow.extra = vec![
             Some(Value::Unsigned32(7)),
             Some(Value::Signed32(-3)),
@@ -406,13 +202,18 @@ mod tests {
         assert_eq!(
             message,
             Consumer {
+                flow_type: 3,
+                time_received_ns: 0,
+                sampler_address: vec![192, 0, 2, 1],
                 sequence_num: 9,
+                src_port: Some(0),
+                dst_port: None,
                 count: Some(7),
                 delta: Some(-3),
                 ratio: Some(0.5),
                 ok: Some(true),
                 start: Some(2_000_000_000),
-                host: Some("192.0.2.7".into()),
+                host: Some(vec![192, 0, 2, 7]),
                 missing: None,
                 site: Some("lab".into()),
             }

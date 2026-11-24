@@ -6,7 +6,7 @@ use rustflow_core::common_flow::CommonFlow;
 use super::columns::{BATCH_ROWS, Columns};
 use super::{Encoder, Writer};
 use crate::enrich::Enriched;
-use crate::sink::schema::Schema;
+use crate::schema::Schema;
 
 /// Apache ArrowIpc IPC streaming format. A record batch goes out on every
 /// pipeline flush and whenever `BATCH_ROWS` accumulate, so a reader on

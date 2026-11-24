@@ -3,13 +3,14 @@ use std::io;
 use chrono::{DateTime, Utc};
 use rustflow_core::common_flow::CommonFlow;
 
+use super::Serialization;
 use super::destination::{Destination, Opened, PendingRename};
 use super::encoder::Encoder;
 use super::expire::Expirer;
 use super::hook::{FileHook, Job};
 use super::metrics::{CountingWriter, OutputMetrics};
-use super::{Schema, Serialization};
 use crate::enrich::Enriched;
+use crate::schema::Schema;
 
 /// A [`Destination`] plus the encoder for its current window.
 pub struct RotatingSink {

@@ -157,7 +157,8 @@ Add to CommonFlow in rustflow.proto: optional string src_country = 1001;
 ```
 
 A reader without them still reads the flow's own fields. Unsigned values are `uint64`, signed
-`sint64`, floats `double`, booleans `bool`, timestamps `int64` and everything else `string`.
+`sint64`, floats `double`, booleans `bool`, timestamps `int64`, strings `string`, and addresses,
+MAC addresses and octet arrays `bytes`.
 
 ## Discard
 
