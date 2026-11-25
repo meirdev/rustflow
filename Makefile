@@ -1,4 +1,4 @@
-.PHONY: fmt fix compile-musl compile-musl-pcap
+.PHONY: fmt fix fuzz fuzz-corpus compile-musl compile-musl-pcap
 
 fmt:
 	cargo +nightly fmt
@@ -6,6 +6,13 @@ fmt:
 
 fix:
 	__CARGO_FIX_YOLO=1 cargo +nightly fix
+
+fuzz-corpus:
+	cargo run -p rustflow_core --features pcap --example fuzz_corpus
+
+TARGET ?= netflow
+fuzz:
+	cargo +nightly fuzz run $(TARGET) -- $(FUZZ_ARGS)
 
 compile-musl:
 	cargo build --release --target x86_64-unknown-linux-musl
