@@ -43,7 +43,7 @@ macro_rules! flow_fields {
     ($( $name:ident : $kind:ident $presence:ident ),* $(,)?) => {
         /// Writes the flow's members, each preceded by a comma.
         fn write_flow(line: &mut Vec<u8>, flow: &CommonFlow) {
-            let CommonFlow { $( $name, )* } = flow;
+            let CommonFlow { $( $name, )* .. } = flow;
             $( member!(line, $name, $presence, $name); )*
         }
     };
