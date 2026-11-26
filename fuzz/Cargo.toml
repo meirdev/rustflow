@@ -1,0 +1,53 @@
+[package]
+name = "rustflow_fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+jiff = "0.2"
+libfuzzer-sys = "0.4"
+rustflow_core = { path = "../crates/rustflow_core", features = ["pcap", "serde"] }
+serde_json = "1"
+
+# Not a member of the repository's workspace: it builds only with nightly
+# and the sanitizers.
+[workspace]
+
+[[bin]]
+name = "netflow"
+path = "fuzz_targets/netflow.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sflow"
+path = "fuzz_targets/sflow.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pcap"
+path = "fuzz_targets/pcap.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "roundtrip_netflow"
+path = "fuzz_targets/roundtrip_netflow.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "roundtrip_sflow"
+path = "fuzz_targets/roundtrip_sflow.rs"
+test = false
+doc = false
+bench = false

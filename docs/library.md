@@ -6,7 +6,7 @@ application.
 
 ```toml
 [dependencies]
-rustflow_core = "0.21"
+rustflow_core = "0.22"
 ```
 
 Heavier dependencies are behind features: `pcap` for reading capture files, `tokio` for
@@ -143,7 +143,7 @@ of a socket instead of blocking on them:
 
 ```toml
 [dependencies]
-rustflow_core = { version = "0.21", features = ["tokio"] }
+rustflow_core = { version = "0.22", features = ["tokio"] }
 tokio = { version = "1", features = ["full"] }
 ```
 

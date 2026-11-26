@@ -6,6 +6,7 @@ use winnow::error::{StrContext, StrContextValue};
 use winnow::{Parser as _, Result};
 
 use super::*;
+use crate::ParseError;
 
 impl From<u16> for Sampling {
     fn from(field: u16) -> Self {
@@ -16,12 +17,15 @@ impl From<u16> for Sampling {
     }
 }
 
-pub fn parse(input: &[u8]) -> Result<Packet> {
-    let mut input = input;
-    let header = parse_header(&mut input)?;
+pub fn parse(mut input: &[u8]) -> Result<Packet, ParseError> {
+    parse_packet.parse_next(&mut input).map_err(ParseError)
+}
+
+fn parse_packet(input: &mut &[u8]) -> Result<Packet> {
+    let header = parse_header(input)?;
     let flow_records = repeat(usize::from(header.count), parse_flow_record)
         .context(StrContext::Label("flow records"))
-        .parse_next(&mut input)?;
+        .parse_next(input)?;
 
     Ok(Packet {
         header,

@@ -24,3 +24,7 @@ socket2.workspace = true
 strum.workspace = true
 tokio = { version = "1.54.1", features = ["net"], optional = true }
 winnow = "1.0.5"
+
+[[example]]
+name = "fuzz_corpus"
+required-features = ["pcap"]

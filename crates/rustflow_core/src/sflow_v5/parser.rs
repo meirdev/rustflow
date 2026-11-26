@@ -7,12 +7,16 @@ use winnow::token::take;
 use winnow::{Parser as _, Result};
 
 use super::*;
+use crate::ParseError;
 use crate::mac_address::{MacAddress, mac_address};
 
-pub fn parse(input: &[u8]) -> Result<Packet> {
-    let mut input = input;
-    let header = parse_header(&mut input)?;
-    let samples = parse_array(&mut input, parse_sample)?;
+pub fn parse(mut input: &[u8]) -> Result<Packet, ParseError> {
+    parse_packet.parse_next(&mut input).map_err(ParseError)
+}
+
+fn parse_packet(input: &mut &[u8]) -> Result<Packet> {
+    let header = parse_header(input)?;
+    let samples = parse_array(input, parse_sample)?;
 
     Ok(Packet { header, samples })
 }

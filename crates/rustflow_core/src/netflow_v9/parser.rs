@@ -8,6 +8,7 @@ use winnow::token::take;
 use winnow::{Parser as _, Result};
 
 use super::*;
+use crate::ParseError;
 use crate::information_element::{DataType, Registry};
 use crate::set::DataSet;
 use crate::template::{FieldSpecifier, OptionsTemplate, ResolvedTemplate, Template};
@@ -36,19 +37,21 @@ impl Parser {
         }
     }
 
-    pub fn parse(&mut self, input: &[u8]) -> Result<Packet> {
+    pub fn parse(&mut self, input: &[u8]) -> Result<Packet, ParseError> {
         self.parse_at(input, Instant::now())
     }
 
-    pub fn parse_at(&mut self, input: &[u8], now: Instant) -> Result<Packet> {
+    pub fn parse_at(&mut self, mut input: &[u8], now: Instant) -> Result<Packet, ParseError> {
         self.now = now;
+        self.parse_packet(&mut input).map_err(ParseError)
+    }
 
-        let mut input = input;
-        let header = parse_header(&mut input)?;
+    fn parse_packet(&mut self, input: &mut &[u8]) -> Result<Packet> {
+        let header = parse_header(input)?;
 
         let mut flow_sets = Vec::new();
         while input.len() >= usize::from(FLOW_SET_HEADER_LENGTH) {
-            flow_sets.push(self.parse_flow_set(&mut input, header.source_id)?);
+            flow_sets.push(self.parse_flow_set(input, header.source_id)?);
         }
 
         Ok(Packet { header, flow_sets })

@@ -45,7 +45,8 @@ impl ExportTime {
 
     fn delta_ns(&self, value: &Value) -> Option<i64> {
         let micros = i64::try_from(value.as_u64()?).ok()?;
-        Some(self.time_ns - micros * NANOS_PER_MICRO)
+        self.time_ns
+            .checked_sub(micros.checked_mul(NANOS_PER_MICRO)?)
     }
 }
 

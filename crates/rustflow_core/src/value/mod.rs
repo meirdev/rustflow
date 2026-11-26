@@ -12,7 +12,8 @@ use jiff::Timestamp;
 pub use self::display::TextError;
 pub use self::encoder::{EncodeError, check_value, encode_value, natural_length};
 pub use self::list::{BasicList, ListRecords, SubTemplateList, SubTemplateMultiList};
-pub use self::parser::{DecodeError, parse_value};
+pub use self::parser::DecodeError;
+pub(crate) use self::parser::parse_value;
 #[cfg(feature = "serde")]
 pub(crate) use self::serialize::{field_keys, serialize_data_set};
 pub use crate::mac_address::MacAddress;

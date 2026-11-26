@@ -40,7 +40,6 @@ use std::time::Duration;
 use std::{fmt, io};
 
 use jiff::Timestamp;
-use winnow::error::ContextError;
 
 #[cfg(feature = "tokio")]
 pub use self::async_socket::{
@@ -52,6 +51,7 @@ pub use self::processor::{
     NetflowPacket, NetflowProcessor, Processor, SflowPacket, SflowProcessor, Summary,
 };
 pub use self::source::{Datagram, Recv, Source, StopHandle, UdpSource};
+use crate::ParseError;
 use crate::common_flow::{CommonFlow, FlowType};
 
 pub type NetflowReader = Reader<UdpSource, NetflowProcessor>;
@@ -70,7 +70,7 @@ pub enum ReadError {
     UnknownVersion(u32),
     Parse {
         flow_type: FlowType,
-        error: ContextError,
+        error: ParseError,
     },
 }
 
@@ -80,19 +80,20 @@ impl fmt::Display for ReadError {
             Self::Truncated => f.write_str("the datagram is too short to hold a version"),
             Self::UnknownVersion(version) => write!(f, "unknown version {version}"),
             Self::Parse { flow_type, error } => {
-                // winnow puts the label and the expectation on separate
-                // lines, and says nothing where no parser labelled it.
-                let context = error.to_string().replace('\n', "; ");
-                match context.as_str() {
-                    "" => write!(f, "the {flow_type} packet does not parse"),
-                    context => write!(f, "the {flow_type} packet does not parse: {context}"),
-                }
+                error.write_message(f, format_args!("{flow_type} packet"))
             }
         }
     }
 }
 
-impl std::error::Error for ReadError {}
+impl std::error::Error for ReadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Parse { error, .. } => error.source(),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Debug)]
 pub enum Read<T> {
