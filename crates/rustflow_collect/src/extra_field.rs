@@ -2,42 +2,18 @@ use std::str::FromStr;
 
 use anyhow::{Context, Result, anyhow};
 use rustflow_core::information_element::{ElementId, Registry};
+use serde::Deserialize;
 
 use crate::field::{Field, Kind};
 
-/// `--extra-field NAME=ELEMENT[@NUMBER]`, before the element is looked up.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExtraFieldArg {
+/// An `[[extra_field]]` of the configuration file, before its element is
+/// looked up.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtraFieldSpec {
     name: String,
     element: String,
     number: Option<u32>,
-}
-
-impl FromStr for ExtraFieldArg {
-    type Err = String;
-
-    fn from_str(value: &str) -> Result<Self, String> {
-        let (name, element) = value
-            .split_once('=')
-            .map(|(name, element)| (name.trim(), element.trim()))
-            .filter(|(name, element)| !name.is_empty() && !element.is_empty())
-            .ok_or("expected NAME=ELEMENT[@NUMBER], e.g. vrf=ingressVRFID")?;
-        let (element, number) = match element.split_once('@') {
-            None => (element, None),
-            Some((element, number)) => {
-                let number = number
-                    .trim()
-                    .parse()
-                    .map_err(|_| format!("'{number}' is not a protobuf field number"))?;
-                (element.trim(), Some(number))
-            }
-        };
-        Ok(Self {
-            name: name.into(),
-            element: element.into(),
-            number,
-        })
-    }
 }
 
 /// An extra field with its element found in the registry.
@@ -47,7 +23,7 @@ pub struct ExtraField {
     pub field: Field,
 }
 
-impl ExtraFieldArg {
+impl ExtraFieldSpec {
     /// The element is a name, an ID, or `enterprise/ID`. It must be in
     /// the registry, which gives it the data type its values decode as.
     pub fn resolve(&self, registry: &Registry) -> Result<ExtraField> {
@@ -110,7 +86,19 @@ mod tests {
 
     use super::*;
 
-    fn resolve(arg: &str) -> Result<ExtraField> {
+    /// The extra field `name` of `element`, with the number after `@`, if
+    /// any.
+    fn resolve(field: &str) -> Result<ExtraField> {
+        let (name, element) = field.split_once('=').unwrap();
+        let (element, number) = match element.split_once('@') {
+            Some((element, number)) => (element, Some(number.parse().unwrap())),
+            None => (element, None),
+        };
+        let spec = ExtraFieldSpec {
+            name: name.into(),
+            element: element.into(),
+            number,
+        };
         let mut registry = Registry::iana();
         registry
             .insert(InformationElement {
@@ -123,7 +111,7 @@ mod tests {
                 description: None,
             })
             .unwrap();
-        arg.parse::<ExtraFieldArg>().unwrap().resolve(&registry)
+        spec.resolve(&registry)
     }
 
     #[test]
@@ -134,7 +122,7 @@ mod tests {
         assert_eq!(by_name.field.kind, Kind::U64);
         assert_eq!(by_name.field.number, None);
 
-        assert_eq!(resolve("phys = 252").unwrap(), by_name);
+        assert_eq!(resolve("phys=252").unwrap(), by_name);
         let enterprise = resolve("cisco=9/1").unwrap();
         assert_eq!(enterprise.id, ElementId::new(Some(9), 1).unwrap());
         assert_eq!(resolve("cisco=ciscoExample").unwrap(), enterprise);
@@ -151,12 +139,5 @@ mod tests {
         assert!(resolve("x=9/2").is_err());
         assert!(resolve("x=40000").is_err());
         assert!(resolve("x=basicList").is_err());
-    }
-
-    #[test]
-    fn the_argument_is_a_name_and_an_element() {
-        for arg in ["vrf", "=ingressVRFID", "vrf=", "", "vrf=234@x"] {
-            assert!(arg.parse::<ExtraFieldArg>().is_err(), "{arg}");
-        }
     }
 }

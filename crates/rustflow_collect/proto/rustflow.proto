@@ -51,8 +51,8 @@ message CommonFlow {
   optional uint32 observation_domain_id = 36;
   optional uint32 forwarding_status = 37;
 
-  // Field numbers from 1000 are the fields added by --extra-field and
-  // --enrich, each under its own number: the one given with the field, or
+  // Field numbers from 1000 are the extra fields and the enrichment
+  // fields, each under its own number: the one given with the field, or
   // else the next free one, in the order of the columns. The collector
   // logs the lines to add here when it starts, e.g.
   //

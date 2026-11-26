@@ -5,36 +5,51 @@ use anyhow::{Context, Result};
 use rustflow_core::information_element::{DataType, ElementId, InformationElement, Registry};
 use serde::Deserialize;
 
-#[derive(Deserialize)]
-struct Row {
+/// A custom element: a row of the `--ie-mapping` CSV, or an `[[element]]`
+/// of the configuration file, which has shorter names for two of the keys.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Element {
     id: u16,
+    #[serde(alias = "enterprise")]
     enterprise_number: Option<u32>,
     name: String,
+    #[serde(alias = "type")]
     data_type: String,
 }
 
-pub fn load(registry: &mut Registry, path: &Path) -> Result<usize> {
-    let mut reader = csv::Reader::from_path(path)?;
-    let mut count = 0;
-    for row in reader.deserialize() {
-        let row: Row = row?;
-        let data_type: DataType = row.data_type.parse().with_context(|| {
-            format!(
-                "element {}: unknown data type '{}'",
-                row.name, row.data_type
-            )
-        })?;
-        let id = ElementId::new(row.enterprise_number, row.id)
-            .with_context(|| format!("element {}", row.name))?;
+impl Element {
+    pub fn insert(&self, registry: &mut Registry) -> Result<()> {
+        let Self {
+            id,
+            enterprise_number,
+            name,
+            data_type,
+        } = self;
+        let data_type: DataType = data_type
+            .parse()
+            .with_context(|| format!("element {name}: unknown data type '{data_type}'"))?;
+        let id =
+            ElementId::new(*enterprise_number, *id).with_context(|| format!("element {name}"))?;
         registry.insert(InformationElement {
             id,
-            name: Cow::Owned(row.name),
+            name: Cow::Owned(name.clone()),
             data_type,
             semantic: None,
             unit: None,
             range: None,
             description: None,
         })?;
+        Ok(())
+    }
+}
+
+pub fn load(registry: &mut Registry, path: &Path) -> Result<usize> {
+    let mut reader = csv::Reader::from_path(path)?;
+    let mut count = 0;
+    for row in reader.deserialize() {
+        let element: Element = row?;
+        element.insert(registry)?;
         count += 1;
     }
     Ok(count)

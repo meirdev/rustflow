@@ -3,39 +3,44 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
 
-use anyhow::{Result, bail};
 use clap::builder::PossibleValue;
 use clap::{Args as ClapArgs, ValueEnum};
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer};
 use strum::VariantArray;
 
-use crate::extra_field::ExtraFieldArg;
-use crate::sink::{
-    LEVEL_3_MINUTES, MAX_PARTITION_LEVEL, OutputFormat, Partitioning, Serialization, SinkConfig,
-};
+use crate::sink::{OutputFormat, Serialization};
 
-/// Arguments for the `collect` subcommand.
+/// Arguments for the `collect` subcommand. Each can also be set in the
+/// configuration file, and wins over it when given.
 #[derive(ClapArgs)]
 pub struct CollectArgs {
+    /// A TOML configuration file, which can set what the flags set, and
+    /// also extra fields, enrichment and custom elements; see
+    /// docs/configuration.md
+    #[arg(short, long, value_name = "FILE")]
+    pub(crate) config: Option<PathBuf>,
+
     /// Where flow data comes from: `netflow://[host]:port` or
     /// `sflow://[host]:port` listens on UDP, `netflow+pcap://capture.pcap`
     /// or `sflow+pcap://capture.pcap` reads a capture file. Repeat to
     /// combine several
-    #[arg(short = 'I', long, value_name = "URL", required = true)]
+    #[arg(short = 'I', long, value_name = "URL")]
     pub(crate) input: Vec<Input>,
 
-    /// Socket receive buffer size in bytes
-    #[arg(long, default_value = "4194304", value_name = "BYTES")]
-    pub(crate) recv_buffer: usize,
+    /// Socket receive buffer size in bytes [default: 4194304]
+    #[arg(long, value_name = "BYTES")]
+    pub(crate) recv_buffer: Option<usize>,
 
     /// Output format: raw (original packet structure) or common (normalized
-    /// flow)
-    #[arg(short, long, value_enum, default_value = "raw")]
-    pub(crate) format: OutputFormat,
+    /// flow) [default: raw]
+    #[arg(short, long, value_enum)]
+    pub(crate) format: Option<OutputFormat>,
 
     /// Serialization format for output; `parquet` requires `--format
-    /// common` and `--output`, `discard` writes nothing
-    #[arg(short, long, value_enum, default_value = "ndjson")]
-    pub(crate) serialization: Serialization,
+    /// common` and `--output`, `discard` writes nothing [default: ndjson]
+    #[arg(short, long, value_enum)]
+    pub(crate) serialization: Option<Serialization>,
 
     /// Output path (stdout if not specified). Without `--interval` this is a
     /// single file; with `--interval` it is the root directory of the
@@ -49,7 +54,6 @@ pub struct CollectArgs {
         short = 'i',
         long,
         value_name = "DURATION",
-        requires = "output",
         value_parser = |value: &str| duration_str::parse(value.trim())
     )]
     pub(crate) interval: Option<Duration>,
@@ -57,71 +61,53 @@ pub struct CollectArgs {
     /// Directory partitioning of the output tree: 1 = `%Y/%m/%d`,
     /// 2 = `%Y/%m/%d/%H`, 3 = `%Y/%m/%d/%H` plus a 5 minute bucket. Without
     /// it, files sit directly in the output directory. Requires `--interval`.
-    #[arg(
-        short = 'l',
-        long,
-        value_parser = clap::value_parser!(u8).range(1..=MAX_PARTITION_LEVEL as i64),
-        requires = "interval"
-    )]
+    #[arg(short = 'l', long)]
     pub(crate) level: Option<u8>,
 
     /// Name partition directories the Hive way,
     /// `date=2026-08-27/hour=12/minute=00`, which query engines read as
     /// columns and prune by. Requires `--level`.
-    #[arg(long, requires = "level")]
+    #[arg(long)]
     pub(crate) hive: bool,
 
     /// File name prefix inside the output tree, e.g. `flows` produces
-    /// `flows-20240102T150500Z.parquet`. Requires `--interval`.
-    #[arg(long, default_value = "flows", requires = "interval")]
-    pub(crate) prefix: String,
+    /// `flows-20240102T150500Z.parquet`. Requires `--interval`
+    /// [default: flows]
+    #[arg(long)]
+    pub(crate) prefix: Option<String>,
 
     /// Run a command after each rotated file is complete. `%f` is the file,
     /// `%p` its path below the output directory, `%t` the window start as
     /// in the file name, `%u` the same as Unix time; without a placeholder
     /// the file is appended. Requires `--interval`.
-    #[arg(
-        short = 'x',
-        long = "exec",
-        value_name = "COMMAND",
-        requires = "interval"
-    )]
+    #[arg(short = 'x', long = "exec", value_name = "COMMAND")]
     pub(crate) exec: Option<String>,
 
-    /// Remove rotated files older than this age (e.g. `7d`, `30d`)
+    /// Remove rotated files older than this age (e.g. `7d`, `30d`).
+    /// Requires `--interval`
     #[arg(
         long,
         value_name = "DURATION",
-        requires = "interval",
         value_parser = |value: &str| duration_str::parse(value.trim())
     )]
     pub(crate) expire: Option<Duration>,
 
     /// Run a command after `--expire` removes a file, with the same
     /// placeholders as `-x`; the file is already gone when it runs.
-    #[arg(long, value_name = "COMMAND", requires = "expire")]
+    #[arg(long, value_name = "COMMAND")]
     pub(crate) expire_exec: Option<String>,
 
-    /// Host address for Prometheus metrics HTTP server
-    #[arg(long, default_value = "0.0.0.0")]
-    pub(crate) metrics_host: IpAddr,
+    /// Host address for Prometheus metrics HTTP server [default: 0.0.0.0]
+    #[arg(long)]
+    pub(crate) metrics_host: Option<IpAddr>,
 
-    /// Port for Prometheus metrics HTTP server
-    #[arg(long, default_value = "9090")]
-    pub(crate) metrics_port: u16,
+    /// Port for Prometheus metrics HTTP server [default: 9090]
+    #[arg(long)]
+    pub(crate) metrics_port: Option<u16>,
 
     /// Path to a CSV file with custom IE (Information Element) mappings
     #[arg(long)]
     pub(crate) ie_mapping: Option<PathBuf>,
-
-    /// Copy an element of every NetFlow v9 and IPFIX data record into a
-    /// column of its own. ELEMENT is a name (`ingressVRFID`), an ID (`234`)
-    /// or `enterprise/ID` (`9/12232`), and must be known, from IANA or from
-    /// --ie-mapping. `@NUMBER` gives the field its protobuf field number,
-    /// 1000 or more; without it, the next free one. Repeat for several
-    /// fields.
-    #[arg(long = "extra-field", value_name = "NAME=ELEMENT[@NUMBER]")]
-    pub(crate) extra_fields: Vec<ExtraFieldArg>,
 
     /// Write only these columns, by name: common flow fields, extra
     /// fields and enrichment outputs, in this order
@@ -129,27 +115,38 @@ pub struct CollectArgs {
     pub(crate) fields: Vec<String>,
 
     /// Template cache timeout, in seconds or with a unit (e.g. `20m`)
+    /// [default: 600]
     #[arg(
         long,
-        default_value = "600",
         value_name = "DURATION",
         value_parser = |value: &str| duration_str::parse(value.trim())
     )]
-    pub(crate) template_timeout: Duration,
+    pub(crate) template_timeout: Option<Duration>,
+}
 
-    /// Flow enrichment configuration.
-    ///
-    /// Format: `type=prefix_lookup|exact,source=file.csv,key_column=col,
-    /// fields=<key>@col:output|col2:output2;<key2>@col:output3[,
-    /// reload=30s|watch]`. An output may be followed by `:type` (string,
-    /// unsigned, signed, float, boolean or timestamp; string by default)
-    /// and by `:number`, its protobuf field number. key_column names the CSV
-    /// column holding the prefixes or keys; omit it for MMDB sources. An
-    /// exact lookup can combine several keys with `+`, e.g.
-    /// key_column=exporter+ifindex and fields=sampler_address+in_if@name:
-    /// in_if_name
-    #[arg(long = "enrich")]
-    pub(crate) enrich: Vec<String>,
+/// In the configuration file, by the name the flag takes.
+impl<'de> Deserialize<'de> for OutputFormat {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        ValueEnum::from_str(&name, false).map_err(D::Error::custom)
+    }
+}
+
+/// In the configuration file, by the name the flag takes.
+impl<'de> Deserialize<'de> for Serialization {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        ValueEnum::from_str(&name, false).map_err(D::Error::custom)
+    }
+}
+
+/// In the configuration file, as the URL `--input` takes.
+impl<'de> Deserialize<'de> for Input {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(D::Error::custom)
+    }
 }
 
 impl ValueEnum for OutputFormat {
@@ -246,89 +243,6 @@ impl FromStr for Input {
     }
 }
 
-impl CollectArgs {
-    pub(crate) fn sink_config(&self) -> Result<SinkConfig> {
-        let serialization = self.serialization;
-        if self.format == OutputFormat::Raw && !serialization.takes_raw() {
-            bail!("--serialization {serialization} requires --format common");
-        }
-        if self.format == OutputFormat::Raw && !self.extra_fields.is_empty() {
-            bail!("--extra-field requires --format common");
-        }
-        if self.format == OutputFormat::Raw && !self.fields.is_empty() {
-            bail!("--fields requires --format common");
-        }
-        if let Some(interval) = self.interval {
-            check_interval(interval, self.level)?;
-        }
-        if let (Some(expire), Some(interval)) = (self.expire, self.interval)
-            && expire < interval
-        {
-            bail!("--expire must be at least as long as --interval");
-        }
-
-        Ok(SinkConfig {
-            path: self.output.clone(),
-            serialization: self.serialization,
-            interval: self.interval,
-            level: self.level.unwrap_or(0),
-            partitioning: if self.hive {
-                Partitioning::Hive
-            } else {
-                Partitioning::Plain
-            },
-            prefix: self.prefix.clone(),
-            exec: self.exec.clone(),
-            expire: self.expire,
-            expire_exec: self.expire_exec.clone(),
-        })
-    }
-}
-
-/// A window must be whole seconds and sit inside one partition directory,
-/// so the directory means what it says: every file under hour 13 holds
-/// flows received in hour 13. That takes an interval dividing the
-/// directory's period.
-fn check_interval(interval: Duration, level: Option<u8>) -> Result<()> {
-    if interval.is_zero() || interval.subsec_nanos() != 0 {
-        bail!("--interval must be whole seconds");
-    }
-    let Some(level) = level else {
-        return Ok(());
-    };
-    let (period, name) = match level {
-        1 => (86400, "a day"),
-        2 => (3600, "an hour"),
-        _ => (u64::from(LEVEL_3_MINUTES) * 60, "5 minutes"),
-    };
-    if !period.is_multiple_of(interval.as_secs()) {
-        bail!(
-            "--interval must divide {name} at --level {level}, e.g. {}",
-            examples(period)
-        );
-    }
-    Ok(())
-}
-
-/// A few intervals dividing `period`, largest first.
-fn examples(period: u64) -> String {
-    [3600, 1800, 600, 300, 60, 30, 10]
-        .into_iter()
-        .filter(|candidate| period.is_multiple_of(*candidate) && *candidate <= period)
-        .take(3)
-        .map(|secs| {
-            if secs >= 3600 {
-                format!("{}h", secs / 3600)
-            } else if secs >= 60 {
-                format!("{}m", secs / 60)
-            } else {
-                format!("{secs}s")
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
 #[cfg(test)]
 mod tests {
     use clap::Parser;
@@ -388,79 +302,7 @@ mod tests {
     }
 
     #[test]
-    fn intervals_must_fit_their_partition() {
-        let s = Duration::from_secs;
-        let ok = |interval, level| check_interval(interval, level).is_ok();
-
-        assert!(ok(s(7 * 60), None));
-        assert!(ok(s(7 * 3600), None));
-        assert!(ok(s(8 * 3600), Some(1)));
-        assert!(!ok(s(7 * 3600), Some(1)));
-        assert!(ok(s(5 * 60), Some(2)));
-        assert!(ok(s(3600), Some(2)));
-        assert!(!ok(s(7 * 60), Some(2)));
-        assert!(!ok(s(2 * 3600), Some(2)));
-        assert!(ok(s(60), Some(3)));
-        assert!(ok(s(300), Some(3)));
-        assert!(!ok(s(120), Some(3)));
-        assert!(!ok(s(600), Some(3)));
-        assert!(!ok(Duration::from_millis(1500), None));
-        assert!(!ok(Duration::ZERO, None));
-
-        let error = check_interval(s(7 * 60), Some(2)).unwrap_err().to_string();
-        assert_eq!(
-            error,
-            "--interval must divide an hour at --level 2, e.g. 1h, 30m, 10m"
-        );
-        let error = check_interval(s(600), Some(3)).unwrap_err().to_string();
-        assert_eq!(
-            error,
-            "--interval must divide 5 minutes at --level 3, e.g. 5m, 1m, 30s"
-        );
-    }
-
-    #[test]
-    fn hive_needs_a_partition_level() {
-        let base = ["-I", "netflow://:9995", "-o", "out", "-i", "1m"];
-        let parse_with = |extra: &[&str]| {
-            let args: Vec<_> = base.iter().chain(extra).copied().collect();
-            parse(&args)
-        };
-        assert!(parse_with(&["--hive"]).is_err());
-        assert_eq!(parse_with(&["--hive", "-l", "1"]).unwrap().level, Some(1));
-        assert_eq!(parse_with(&[]).unwrap().level, None);
-    }
-
-    #[test]
-    fn output_flags_are_checked_against_each_other() {
-        let error = |args: &[&str]| {
-            let base = ["-I", "netflow://:9995", "-o", "out"];
-            let args: Vec<_> = base.iter().chain(args).copied().collect();
-            parse(&args)
-                .unwrap()
-                .sink_config()
-                .err()
-                .map(|e| e.to_string())
-        };
-
-        assert_eq!(
-            error(&["-s", "parquet"]).as_deref(),
-            Some("--serialization parquet requires --format common")
-        );
-        assert_eq!(error(&["-s", "ndjson"]), None);
-        assert_eq!(
-            error(&["-i", "1m", "--expire", "30s"]).as_deref(),
-            Some("--expire must be at least as long as --interval")
-        );
-        assert_eq!(
-            error(&["-i", "1m", "-l", "3", "--hive", "--expire", "1h"]),
-            None
-        );
-    }
-
-    #[test]
-    fn an_input_is_required_and_malformed_urls_are_rejected() {
-        assert!(parse(&[]).is_err());
+    fn malformed_urls_are_rejected() {
         assert_eq!(
             parse(&["-I", "sflow://:6343"]).unwrap().input,
             [listen(FlowType::Sflow, "0.0.0.0:6343")]

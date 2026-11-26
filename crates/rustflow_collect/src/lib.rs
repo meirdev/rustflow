@@ -1,4 +1,5 @@
 mod args;
+mod config;
 mod enrich;
 mod extra_field;
 mod field;
@@ -16,7 +17,9 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 pub use args::CollectArgs;
 use args::{FlowType, Input};
-use enrich::{EnrichmentEngine, parse_enrich_arg};
+use enrich::EnrichmentEngine;
+use enrich::config::EnrichSpec;
+use ie_mapping::Element;
 use log::{error, info, warn};
 use rustflow_core::common_flow::ExtraFields;
 use rustflow_core::information_element::Registry;
@@ -194,7 +197,9 @@ fn open(input: &Input, recv_buffer: usize) -> Result<Feed> {
     }
 }
 
-fn load_ie_registry(path: Option<&Path>) -> Result<Registry> {
+/// The IANA elements, with those of the `--ie-mapping` file and then the
+/// configuration file's own over them.
+fn load_ie_registry(path: Option<&Path>, elements: &[Element]) -> Result<Registry> {
     let mut registry = Registry::iana();
     if let Some(path) = path {
         let count = ie_mapping::load(&mut registry, path)
@@ -205,21 +210,28 @@ fn load_ie_registry(path: Option<&Path>) -> Result<Registry> {
             path.display()
         );
     }
+    for element in elements {
+        element.insert(&mut registry)?;
+    }
     Ok(registry)
 }
 
-/// Loads the tables of the `--enrich` arguments. Their lookup keys are
+/// Loads the tables of the enrichments. Their lookup keys are
 /// among `columns`, the flow's fields and the extra fields.
 fn load_enrichment(
-    args: &[String],
+    specs: &[EnrichSpec],
     columns: &[Column],
     metrics: &metrics::Metrics,
 ) -> Result<EnrichmentEngine> {
     let mut engine = EnrichmentEngine::new(metrics.enrichment.clone());
-    for arg in args {
-        let config =
-            parse_enrich_arg(arg, columns).with_context(|| format!("Invalid --enrich '{arg}'"))?;
-        let source = config.source.source().display().to_string();
+    for spec in specs {
+        let origin = spec.source.as_ref().or(spec.command.as_ref());
+        let source = origin
+            .map(|path| path.display().to_string())
+            .unwrap_or_default();
+        let config = spec
+            .resolve(columns)
+            .with_context(|| format!("Invalid enrichment from '{source}'"))?;
         let count = engine
             .add(config)
             .with_context(|| format!("Failed to load enrichment from {source}"))?;
@@ -243,11 +255,12 @@ fn install_shutdown_handler(shutdown: Shutdown) {
 }
 
 pub fn run(cli: CollectArgs) -> Result<()> {
+    let cli = cli.settings()?;
     let sink_config = cli.sink_config()?;
     let metrics = Arc::new(metrics::Metrics::new());
     let shutdown = Shutdown::default();
 
-    let registry = load_ie_registry(cli.ie_mapping.as_deref())?;
+    let registry = load_ie_registry(cli.ie_mapping.as_deref(), &cli.elements)?;
     let extra_fields = cli
         .extra_fields
         .iter()
@@ -272,12 +285,12 @@ pub fn run(cli: CollectArgs) -> Result<()> {
     // Everything that can fail opens before the sink, which creates its
     // first output file right away.
     let feeds = cli
-        .input
+        .inputs
         .iter()
         .map(|input| open(input, cli.recv_buffer))
         .collect::<Result<Vec<_>>>()?;
     if cli
-        .input
+        .inputs
         .iter()
         .any(|input| matches!(input, Input::Listen { .. }))
     {

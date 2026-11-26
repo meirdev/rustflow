@@ -8,7 +8,13 @@ from pathlib import Path
 
 import pytest
 
-FIELDS = "key_column=number,fields=proto@name:proto_name"
+LOOKUP = """
+key_columns = ["number"]
+
+[[enrich.lookup]]
+keys = ["proto"]
+fields = [{ column = "name", name = "proto_name" }]
+"""
 
 
 @pytest.fixture
@@ -25,24 +31,28 @@ def script(tmp_path) -> Callable[[str], Path]:
 
 
 @pytest.fixture
-def args(pcap_dir) -> tuple[Path, tuple[str, ...]]:
-    pcap = pcap_dir / "netflow_v5_sanity.pcap"
-    return pcap, ("netflow", "--format", "common")
+def config(tmp_path) -> Callable[[str], list[str]]:
+    """The flags for a configuration enriching from the given origin."""
+
+    def write(origin: str) -> list[str]:
+        path = tmp_path / "rustflow.toml"
+        path.write_text(f'[[enrich]]\ntype = "exact"\n{origin}\n{LOOKUP}')
+        return ["--format", "common", "--config", str(path)]
+
+    return write
 
 
-def test_command_enriches_like_the_file(collect, script, args):
-    pcap, flags = args
+@pytest.fixture
+def pcap(pcap_dir) -> Path:
+    return pcap_dir / "netflow_v5_sanity.pcap"
+
+
+def test_command_enriches_like_the_file(collect, script, config, pcap):
     protocols = pcap.parent.parent / "csv" / "protocols.csv"
 
-    from_file = collect(
-        pcap, *flags, "--enrich", f"type=exact,source={protocols},{FIELDS}"
-    )
-    from_command = collect(
-        pcap,
-        *flags,
-        "--enrich",
-        f"type=exact,command={script(f'cat {protocols}')},{FIELDS}",
-    )
+    from_file = collect(pcap, "netflow", *config(f'source = "{protocols}"'))
+    command = script(f"cat {protocols}")
+    from_command = collect(pcap, "netflow", *config(f'command = "{command}"'))
 
     assert b'"proto_name":"tcp"' in from_file
     assert from_command == from_file
@@ -53,22 +63,17 @@ def test_command_enriches_like_the_file(collect, script, args):
     [
         ("echo number,name; echo 6,tcp; exit 1", "", "Command failed: exit status: 1"),
         ("echo number,name", "", "Command printed no rows"),
-        ("sleep 30", ",timeout=1s", "Command timed out after 1s"),
+        ("sleep 30", 'timeout = "1s"', "Command timed out after 1s"),
     ],
     ids=["exit-status", "no-rows", "timeout"],
 )
 def test_failed_command_stops_the_collector(
-    collect, script, args, body, extra, message
+    collect, script, config, pcap, body, extra, message
 ):
-    pcap, flags = args
+    origin = f'command = "{script(body)}"\n{extra}'
 
     with pytest.raises(subprocess.CalledProcessError) as error:
-        collect(
-            pcap,
-            *flags,
-            "--enrich",
-            f"type=exact,command={script(body)}{extra},{FIELDS}",
-        )
+        collect(pcap, "netflow", *config(origin))
 
     assert message in error.value.stderr.decode()
     assert error.value.stdout == b""

@@ -48,8 +48,7 @@ Protobuf snapshots have the `.pb` extension. Parquet is stored as
 `.parquet.txt`: the Arrow schema followed by one JSON row per line, so a
 failing diff is readable and the file is stable across Parquet writers.
 
-The enriched variant adds four sources through `--enrich`, defined by the
-`enrich_args` fixture in `conftest.py`:
+The enriched variant adds four sources, set in `fixtures/enrich.toml`:
 
 - `mmdb/country.mmdb`: `src_country`, `dst_country`
 - `mmdb/asn.mmdb`: `src_asn`, `src_as_org`, `dst_asn`, `dst_as_org`
@@ -84,6 +83,6 @@ the same command the test runs and review the diff before committing:
   > tests/fixtures/snapshots/ipfix.common.ndjson
 ```
 
-For the enriched variant, pass the `--enrich` arguments from `conftest.py`.
+For the enriched variant, add `--config tests/fixtures/enrich.toml`.
 For Parquet, write to a file with `--output` and convert it with the
 `parquet_as_text` helper in `test_sanity.py`.

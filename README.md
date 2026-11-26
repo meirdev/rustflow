@@ -94,6 +94,7 @@ for the complete CLI options.
 ## Documentation
 
 - [Collector](./docs/collector.md)
+- [Configuration file](./docs/configuration.md)
 - [Output formats and rotation](./docs/output.md)
 - [Flow enrichment](./docs/enrichment.md)
 - [IPFIX exporter](./docs/exporter.md)

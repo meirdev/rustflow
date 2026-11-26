@@ -82,8 +82,8 @@ def test_hive_trees_are_written_and_expired_alike(collect, pcap_dir, tmp_path):
     "args,message",
     [
         (["--interval", "1m", "--expire", "30s"], "at least as long as --interval"),
-        (["--expire", "1h"], "required arguments were not provided"),
-        (["--interval", "1m", "--hive"], "--level <LEVEL>"),
+        (["--expire", "1h"], "--expire requires --interval"),
+        (["--interval", "1m", "--hive"], "--hive requires --level"),
     ],
     ids=["shorter-than-interval", "without-interval", "hive-without-level"],
 )

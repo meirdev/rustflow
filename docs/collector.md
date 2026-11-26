@@ -97,23 +97,29 @@ Elements described differently by two type records stay undecoded.
 
 ## Extra Fields
 
-The common flow has a fixed set of fields. `--extra-field NAME=ELEMENT` adds a column named
-`NAME` holding an element of every NetFlow v9 and IPFIX data record, for elements the common
-flow does not keep. Repeat it for several fields:
+The common flow has a fixed set of fields. An `[[extra_field]]` in the
+[configuration file](configuration.md) adds a column holding an element of every NetFlow v9 and
+IPFIX data record, for elements the common flow does not keep:
 
-```bash
-rustflow collect \
-  --input netflow://:9995 \
-  -f common \
-  --extra-field direction=flowDirection \
-  --extra-field vrf=ingressVRFID \
-  --extra-field app=9/12235
+```toml
+[[extra_field]]
+name = "direction"
+element = "flowDirection"
+
+[[extra_field]]
+name = "vrf"
+element = "ingressVRFID"
+number = 1000
+
+[[extra_field]]
+name = "app"
+element = "9/12235"
 ```
 
-`ELEMENT` is an element name, an ID (`61`), or `enterprise/ID` (`9/12235`). It must be an IANA
-element or one from `--ie-mapping`, whose data type sets the column's type. `@NUMBER` after it,
-as in `vrf=ingressVRFID@1000`, gives the field its [protobuf field number](output.md#protobuf).
-
+`name` is the column's name. `element` is an element name, an ID (`"61"`), or `"enterprise/ID"`.
+It must be an IANA element or a [custom one](#custom-information-elements), whose data type sets
+the column's type. `number` is optional, and gives the field its
+[protobuf field number](output.md#protobuf).
 
 | Element data type                       | Column                                          |
 | --------------------------------------- | ----------------------------------------------- |
@@ -132,7 +138,7 @@ addresses.
 Lists and unsigned256 cannot be columns. A record without the element leaves its column empty,
 and so do NetFlow v5 and sFlow flows. If a template lists an element twice, the first value is
 used. The extra columns come after the flow's fields and before the enrichment fields, and a name
-may not repeat any other column's. `--extra-field` requires `--format common`.
+may not repeat any other column's. Extra fields require `--format common`.
 
 ## Selecting Fields
 
@@ -144,8 +150,7 @@ rustflow collect \
   --input netflow://:9995 \
   -f common \
   -s csv \
-  --extra-field direction=flowDirection \
-  --fields time_received_ns,src_addr,dst_addr,bytes,packets,direction
+  --fields time_received_ns,src_addr,dst_addr,bytes,packets
 ```
 
 The columns are written in the order of the list. In protobuf the fields left out are unset, and
@@ -193,17 +198,9 @@ Drops show up in the `drops` column of `/proc/net/udp` or in `ss -ulm`.
 
 ## Enrichment
 
-Flows can be enriched with external data using `--enrich`.
-
-Multiple enrichment configurations can be specified:
-
-```bash
-rustflow collect \
-  --input netflow://:9995 \
-  -f common \
-  --enrich "..." \
-  --enrich "..."
-```
+Flows can be enriched with external data: a table looked up by address or by number, from a
+CSV file, a MaxMind DB or a command. Each source is an `[[enrich]]` in the
+[configuration file](configuration.md).
 
 See [Enrichment](enrichment.md) for configuration and examples.
 
@@ -225,6 +222,11 @@ rustflow collect \
   --metrics-host 127.0.0.1 \
   --metrics-port 9091
 ```
+
+## Configuration File
+
+The settings can be kept in a TOML file and given with `--config`; a flag given with it replaces
+the file's setting. See [Configuration File](configuration.md).
 
 ## CLI Options
 

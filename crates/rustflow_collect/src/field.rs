@@ -1,5 +1,5 @@
 //! The kinds of the output's columns and their values, and the fields
-//! that `--extra-field` and `--enrich` add to a flow.
+//! that extra fields and enrichment add to a flow.
 
 use std::io::Write;
 use std::net::IpAddr;
@@ -104,7 +104,7 @@ impl FromStr for Kind {
     }
 }
 
-/// A field added to the flow, by `--extra-field` or `--enrich`.
+/// A field added to the flow, as an extra field or by enrichment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Field {
     pub name: String,

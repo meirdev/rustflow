@@ -1,5 +1,5 @@
 """Shared fixtures: the rustflow binary, the fixture directories, the
-`--enrich` arguments for the fixture sources, and a helper that replays a
+configuration file that enriches from the fixture sources, and a helper that replays a
 pcap through `rustflow collect`.
 
 Build first (`cargo build --release`), or point `RUSTFLOW_BIN` at a binary.
@@ -47,16 +47,8 @@ def snapshot_dir() -> Path:
 
 
 @pytest.fixture(scope="session")
-def enrich_args() -> list[str]:
-    mmdb = FIXTURES_DIR / "mmdb"
-    csv = FIXTURES_DIR / "csv"
-    sources = [
-        f"type=prefix_lookup,source={mmdb}/country.mmdb,fields=src_addr@country.iso_code:src_country;dst_addr@country.iso_code:dst_country",
-        f"type=prefix_lookup,source={mmdb}/asn.mmdb,fields=src_addr@autonomous_system_number:src_asn|autonomous_system_organization:src_as_org;dst_addr@autonomous_system_number:dst_asn|autonomous_system_organization:dst_as_org",
-        f"type=prefix_lookup,source={csv}/networks.csv,key_column=prefix,fields=src_addr@asn:csv_src_asn|country:csv_src_country;next_hop@org:next_hop_org",
-        f"type=exact,source={csv}/protocols.csv,key_column=number,fields=proto@name:proto_name",
-    ]
-    return [arg for source in sources for arg in ("--enrich", source)]
+def enrich_config() -> Path:
+    return FIXTURES_DIR / "enrich.toml"
 
 
 @pytest.fixture

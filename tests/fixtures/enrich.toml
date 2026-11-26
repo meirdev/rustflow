@@ -1,0 +1,57 @@
+# The four enrichment sources of the `enriched` snapshots. The paths are
+# relative to this file.
+
+[[enrich]]
+type = "prefix_lookup"
+source = "mmdb/country.mmdb"
+
+[[enrich.lookup]]
+keys = ["src_addr"]
+fields = [{ column = "country.iso_code", name = "src_country" }]
+
+[[enrich.lookup]]
+keys = ["dst_addr"]
+fields = [{ column = "country.iso_code", name = "dst_country" }]
+
+[[enrich]]
+type = "prefix_lookup"
+source = "mmdb/asn.mmdb"
+
+[[enrich.lookup]]
+keys = ["src_addr"]
+fields = [
+    { column = "autonomous_system_number", name = "src_asn" },
+    { column = "autonomous_system_organization", name = "src_as_org" },
+]
+
+[[enrich.lookup]]
+keys = ["dst_addr"]
+fields = [
+    { column = "autonomous_system_number", name = "dst_asn" },
+    { column = "autonomous_system_organization", name = "dst_as_org" },
+]
+
+[[enrich]]
+type = "prefix_lookup"
+source = "csv/networks.csv"
+key_columns = ["prefix"]
+
+[[enrich.lookup]]
+keys = ["src_addr"]
+fields = [
+    { column = "asn", name = "csv_src_asn" },
+    { column = "country", name = "csv_src_country" },
+]
+
+[[enrich.lookup]]
+keys = ["next_hop"]
+fields = [{ column = "org", name = "next_hop_org" }]
+
+[[enrich]]
+type = "exact"
+source = "csv/protocols.csv"
+key_columns = ["number"]
+
+[[enrich.lookup]]
+keys = ["proto"]
+fields = [{ column = "name", name = "proto_name" }]

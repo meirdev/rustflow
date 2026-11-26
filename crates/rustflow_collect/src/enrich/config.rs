@@ -1,9 +1,10 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
 
 use rustflow_core::common_flow::CommonFlow;
+use serde::Deserialize;
 
 use crate::enrich::{Error, Key, KeyType, ReloadPolicy, Result};
 use crate::field;
@@ -229,16 +230,46 @@ pub struct EnrichmentConfig {
     pub mappings: Vec<FieldMapping>,
 }
 
-const PARAMETERS: &[&str] = &[
-    "type",
-    "format",
-    "source",
-    "command",
-    "timeout",
-    "key_column",
-    "fields",
-    "reload",
-];
+/// An `[[enrich]]` of the configuration file, before its names are looked
+/// up and its parts checked against each other.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnrichSpec {
+    /// `prefix_lookup` or `exact`.
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub source: Option<PathBuf>,
+    pub command: Option<PathBuf>,
+    pub timeout: Option<String>,
+    /// `csv` or `mmdb`; from the source's extension when left out.
+    pub format: Option<String>,
+    #[serde(default)]
+    pub key_columns: Vec<String>,
+    pub reload: Option<String>,
+    #[serde(default, rename = "lookup")]
+    pub lookups: Vec<LookupSpec>,
+}
+
+/// The fields one key gives.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LookupSpec {
+    pub keys: Vec<String>,
+    pub fields: Vec<FieldSpec>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FieldSpec {
+    /// The column of the source.
+    pub column: String,
+    /// The name of the output field.
+    pub name: String,
+    #[serde(rename = "type")]
+    pub kind: Option<String>,
+    /// The field's protobuf number.
+    pub number: Option<u32>,
+}
 
 #[derive(Clone, Copy)]
 enum Kind {
@@ -278,234 +309,192 @@ impl FromStr for Format {
     }
 }
 
-fn parse_field_mappings(value: &str, columns: &[Column]) -> Result<Vec<FieldMapping>> {
-    let mut mappings = Vec::new();
-
-    for group in value.split(';').map(str::trim).filter(|g| !g.is_empty()) {
-        let (key, specs) = group.split_once('@').ok_or_else(|| {
-            Error::Config(format!(
-                "Invalid field group, expected <key>@<source>:<output>[:<type>][:<number>][|...]: '{group}'"
-            ))
-        })?;
-
-        let keys = key
-            .split('+')
-            .map(|key| LookupKey::find(key.trim(), columns))
-            .collect::<Result<Vec<LookupKey>>>()?;
-        if keys.len() > MAX_KEYS {
-            return Err(Error::Config(format!(
-                "At most {MAX_KEYS} lookup keys can be combined: '{key}'"
-            )));
-        }
-        let mut any = false;
-        for spec in specs.split('|').map(str::trim).filter(|s| !s.is_empty()) {
-            let mut parts = spec.split(':').map(str::trim);
-            let (source_column, output_field) = match (parts.next(), parts.next()) {
-                (Some(source), Some(output)) if !source.is_empty() && !output.is_empty() => {
-                    (source, output)
-                }
-                _ => {
-                    return Err(Error::Config(format!(
-                        "Invalid field mapping, expected source:output[:type][:number]: '{spec}'"
-                    )));
-                }
-            };
-            let (mut kind, mut number) = (None, None);
-            for part in parts {
-                let repeated = match (part.parse::<u32>(), part.parse::<field::Kind>()) {
-                    (Ok(value), _) => number.replace(value).is_some(),
-                    (_, Ok(value)) => kind.replace(value).is_some(),
-                    _ => {
-                        return Err(Error::Config(format!(
-                            "'{part}' in '{spec}' is neither a field number nor a type: \
-                             string, unsigned, signed, float, boolean or timestamp"
-                        )));
-                    }
-                };
-                if repeated {
-                    return Err(Error::Config(format!(
-                        "Field mapping '{spec}' gives a type or a number twice"
-                    )));
-                }
-            }
-            if CommonFlow::FIELD_NAMES.contains(&output_field) {
+impl EnrichSpec {
+    fn mappings(&self, columns: &[Column]) -> Result<Vec<FieldMapping>> {
+        let mut mappings = Vec::new();
+        for LookupSpec { keys, fields } in &self.lookups {
+            let names = keys.join("+");
+            let keys = keys
+                .iter()
+                .map(|key| LookupKey::find(key, columns))
+                .collect::<Result<Vec<LookupKey>>>()?;
+            if keys.len() > MAX_KEYS {
                 return Err(Error::Config(format!(
-                    "Output field '{output_field}' is the name of a flow field"
+                    "At most {MAX_KEYS} lookup keys can be combined: '{names}'"
                 )));
             }
-
-            mappings.push(FieldMapping {
-                keys: keys.clone(),
-                source_column: source_column.to_owned(),
-                output_field: output_field.to_owned(),
-                kind: kind.unwrap_or(field::Kind::Text),
-                number,
-            });
-            any = true;
+            if fields.is_empty() {
+                return Err(Error::Config(format!(
+                    "The lookup of '{names}' has no fields"
+                )));
+            }
+            for field in fields {
+                let FieldSpec {
+                    column,
+                    name,
+                    kind,
+                    number,
+                } = field;
+                if column.is_empty() || name.is_empty() {
+                    return Err(Error::Config(format!(
+                        "A field of the lookup of '{names}' has no column or no name"
+                    )));
+                }
+                let kind = match kind {
+                    None => field::Kind::Text,
+                    Some(kind) => kind.parse().map_err(|()| {
+                        Error::Config(format!(
+                            "'{kind}' of field '{name}' is not a type: string, unsigned, \
+                             signed, float, boolean or timestamp"
+                        ))
+                    })?,
+                };
+                if CommonFlow::FIELD_NAMES.contains(&name.as_str()) {
+                    return Err(Error::Config(format!(
+                        "Output field '{name}' is the name of a flow field"
+                    )));
+                }
+                mappings.push(FieldMapping {
+                    keys: keys.clone(),
+                    source_column: column.clone(),
+                    output_field: name.clone(),
+                    kind,
+                    number: *number,
+                });
+            }
         }
-        if !any {
-            return Err(Error::Config(format!(
-                "Field group has no mappings: '{group}'"
-            )));
+        if mappings.is_empty() {
+            return Err(Error::Config("An enrichment needs a lookup".into()));
         }
+        Ok(mappings)
     }
 
-    if mappings.is_empty() {
-        return Err(Error::Config("'fields' has no field mappings".into()));
-    }
-
-    Ok(mappings)
-}
-
-/// The configuration `--enrich` gives. A lookup key is one of `columns`,
-/// the flow's fields and the extra fields.
-pub fn parse_enrich_arg(arg: &str, columns: &[Column]) -> Result<EnrichmentConfig> {
-    let mut params = HashMap::new();
-    for part in arg.split(',') {
-        let (key, value) = part
-            .split_once('=')
-            .ok_or_else(|| Error::Config(format!("Expected key=value: '{part}'")))?;
-        let (key, value) = (key.trim(), value.trim());
-
-        if value.is_empty() {
-            return Err(Error::Config(format!("Empty '{key}' parameter")));
-        }
-        if !PARAMETERS.contains(&key) {
-            return Err(Error::Config(format!("Unknown parameter '{key}'")));
-        }
-        if params.insert(key, value).is_some() {
-            return Err(Error::Config(format!("Duplicate parameter '{key}'")));
-        }
-    }
-
-    let required = |key: &str| {
-        params
-            .get(key)
-            .copied()
-            .ok_or_else(|| Error::Config(format!("Missing '{key}' parameter")))
-    };
-
-    let forbid =
-        |keys: &[&str], context: &str| match keys.iter().find(|key| params.contains_key(*key)) {
-            Some(key) => Err(Error::Config(format!("'{key}' is not valid for {context}"))),
-            None => Ok(()),
+    /// The enrichment, with its lookup keys found among `columns`, the
+    /// flow's fields and the extra fields.
+    pub fn resolve(&self, columns: &[Column]) -> Result<EnrichmentConfig> {
+        let forbid = |given: bool, name: &str, context: &str| match given {
+            true => Err(Error::Config(format!(
+                "'{name}' is not valid for {context}"
+            ))),
+            false => Ok(()),
         };
 
-    let kind: Kind = required("type")?.parse()?;
-    let origin = match (params.get("source"), params.get("command")) {
-        (Some(path), None) => {
-            forbid(&["timeout"], "a file source")?;
-            Origin::File(PathBuf::from(path))
-        }
-        (None, Some(program)) => Origin::Command {
-            program: PathBuf::from(program),
-            timeout: match params.get("timeout") {
-                Some(value) => duration_str::parse(value)
-                    .map_err(|e| Error::Config(format!("Invalid timeout '{value}': {e}")))?,
-                None => DEFAULT_TIMEOUT,
-            },
-        },
-        (Some(_), Some(_)) => {
-            return Err(Error::Config(
-                "'source' and 'command' are mutually exclusive".into(),
-            ));
-        }
-        (None, None) => {
-            return Err(Error::Config(
-                "Missing 'source' or 'command' parameter".into(),
-            ));
-        }
-    };
-
-    let format: Format = match (params.get("format"), &origin) {
-        (Some(format), _) => format.parse()?,
-        (None, Origin::File(path)) => path
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .ok_or_else(|| {
-                Error::Config(
-                    "Specify format=csv or format=mmdb when source has no extension".into(),
-                )
-            })?
-            .parse()?,
-        // An executable's extension says nothing about what it prints.
-        (None, Origin::Command { .. }) => Format::Csv,
-    };
-
-    let mappings = parse_field_mappings(required("fields")?, columns)?;
-
-    let key_types: Vec<KeyType> = mappings[0].keys.iter().map(|key| key.key_type()).collect();
-    if mappings.iter().any(|m| {
-        !m.keys
-            .iter()
-            .map(|key| key.key_type())
-            .eq(key_types.iter().copied())
-    }) {
-        return Err(Error::Config(
-            "All lookup groups of one source must use the same key types in the same order".into(),
-        ));
-    }
-
-    if matches!(kind, Kind::Prefix) && key_types != [KeyType::Ip] {
-        return Err(Error::Config(
-            "prefix_lookup takes a single address field as key".into(),
-        ));
-    }
-
-    let format = match (format, kind) {
-        (Format::Csv, kind) => {
-            let key_columns: Vec<String> = required("key_column")?
-                .split('+')
-                .map(|column| column.trim().to_owned())
-                .collect();
-            if key_columns.len() != key_types.len() {
-                return Err(Error::Config(format!(
-                    "'key_column' lists {} columns for {} lookup keys",
-                    key_columns.len(),
-                    key_types.len()
-                )));
+        let kind: Kind = self.kind.parse()?;
+        let origin = match (&self.source, &self.command) {
+            (Some(path), None) => {
+                forbid(self.timeout.is_some(), "timeout", "a file source")?;
+                Origin::File(path.clone())
             }
-            SourceFormat::Csv {
-                key_columns,
-                lookup: match kind {
-                    Kind::Prefix => CsvLookup::Prefix,
-                    Kind::Exact => CsvLookup::Exact(key_types),
+            (None, Some(program)) => Origin::Command {
+                program: program.clone(),
+                timeout: match &self.timeout {
+                    Some(value) => duration_str::parse(value)
+                        .map_err(|e| Error::Config(format!("Invalid timeout '{value}': {e}")))?,
+                    None => DEFAULT_TIMEOUT,
                 },
+            },
+            (Some(_), Some(_)) => {
+                return Err(Error::Config(
+                    "'source' and 'command' are mutually exclusive".into(),
+                ));
+            }
+            (None, None) => {
+                return Err(Error::Config(
+                    "An enrichment needs a 'source' or a 'command'".into(),
+                ));
+            }
+        };
+
+        let format: Format = match (&self.format, &origin) {
+            (Some(format), _) => format.parse()?,
+            (None, Origin::File(path)) => path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .ok_or_else(|| {
+                    Error::Config(
+                        "Give format \"csv\" or \"mmdb\" when the source has no extension".into(),
+                    )
+                })?
+                .parse()?,
+            // An executable's extension says nothing about what it prints.
+            (None, Origin::Command { .. }) => Format::Csv,
+        };
+
+        let mappings = self.mappings(columns)?;
+
+        let key_types: Vec<KeyType> = mappings[0].keys.iter().map(|key| key.key_type()).collect();
+        if mappings.iter().any(|m| {
+            !m.keys
+                .iter()
+                .map(|key| key.key_type())
+                .eq(key_types.iter().copied())
+        }) {
+            return Err(Error::Config(
+                "All lookup groups of one source must use the same key types in the same order"
+                    .into(),
+            ));
+        }
+
+        if matches!(kind, Kind::Prefix) && key_types != [KeyType::Ip] {
+            return Err(Error::Config(
+                "prefix_lookup takes a single address field as key".into(),
+            ));
+        }
+
+        let format = match (format, kind) {
+            (Format::Csv, kind) => {
+                let key_columns = self.key_columns.clone();
+                if key_columns.is_empty() {
+                    return Err(Error::Config("A CSV source needs 'key_columns'".into()));
+                }
+                if key_columns.len() != key_types.len() {
+                    return Err(Error::Config(format!(
+                        "'key_columns' lists {} columns for {} lookup keys",
+                        key_columns.len(),
+                        key_types.len()
+                    )));
+                }
+                SourceFormat::Csv {
+                    key_columns,
+                    lookup: match kind {
+                        Kind::Prefix => CsvLookup::Prefix,
+                        Kind::Exact => CsvLookup::Exact(key_types),
+                    },
+                }
+            }
+            (Format::Mmdb, Kind::Prefix) => {
+                forbid(!self.key_columns.is_empty(), "key_columns", "MMDB")?;
+                SourceFormat::Mmdb
+            }
+            (Format::Mmdb, Kind::Exact) => {
+                return Err(Error::Config("MMDB supports only prefix_lookup".into()));
+            }
+        };
+
+        let reload = match &self.reload {
+            Some(reload) => reload.parse()?,
+            None => ReloadPolicy::default(),
+        };
+
+        let mut columns: Vec<(String, field::Kind)> = Vec::new();
+        for mapping in &mappings {
+            let column = &mapping.source_column;
+            match columns.iter().find(|(name, _)| name == column) {
+                Some((_, kind)) if *kind != mapping.kind => {
+                    return Err(Error::Config(format!(
+                        "Source column '{column}' is given two types"
+                    )));
+                }
+                Some(_) => {}
+                None => columns.push((column.clone(), mapping.kind)),
             }
         }
-        (Format::Mmdb, Kind::Prefix) => {
-            forbid(&["key_column"], "MMDB")?;
-            SourceFormat::Mmdb
-        }
-        (Format::Mmdb, Kind::Exact) => {
-            return Err(Error::Config("MMDB supports only prefix_lookup".into()));
-        }
-    };
 
-    let reload = params
-        .get("reload")
-        .map(|v| v.parse())
-        .transpose()?
-        .unwrap_or_default();
-
-    let mut columns: Vec<(String, field::Kind)> = Vec::new();
-    for mapping in &mappings {
-        let column = &mapping.source_column;
-        match columns.iter().find(|(name, _)| name == column) {
-            Some((_, kind)) if *kind != mapping.kind => {
-                return Err(Error::Config(format!(
-                    "Source column '{column}' is given two types"
-                )));
-            }
-            Some(_) => {}
-            None => columns.push((column.clone(), mapping.kind)),
-        }
+        Ok(EnrichmentConfig {
+            source: SourceConfig::new(origin, format, columns, reload)?,
+            mappings,
+        })
     }
-
-    Ok(EnrichmentConfig {
-        source: SourceConfig::new(origin, format, columns, reload)?,
-        mappings,
-    })
 }
 
 #[cfg(test)]
@@ -523,14 +512,48 @@ mod tests {
         mapping.keys.iter().map(|key| key.name()).collect()
     }
 
+    fn field(column: &str, name: &str) -> FieldSpec {
+        FieldSpec {
+            column: column.into(),
+            name: name.into(),
+            kind: None,
+            number: None,
+        }
+    }
+
+    /// A lookup by `keys`, separated by `+`, of the column `name`.
+    fn lookup(keys: &str, output: &str) -> LookupSpec {
+        LookupSpec {
+            keys: keys.split('+').map(String::from).collect(),
+            fields: vec![field("name", output)],
+        }
+    }
+
+    /// An enrichment from the CSV file `a.csv`, keyed by `key_columns`,
+    /// separated by `+`.
+    fn spec(kind: &str, key_columns: &str, lookups: Vec<LookupSpec>) -> EnrichSpec {
+        EnrichSpec {
+            kind: kind.into(),
+            source: Some("a.csv".into()),
+            key_columns: key_columns.split('+').map(String::from).collect(),
+            lookups,
+            ..EnrichSpec::default()
+        }
+    }
+
+    fn error(spec: EnrichSpec) -> String {
+        spec.resolve(&columns()).unwrap_err().to_string()
+    }
+
     #[test]
     fn composite_keys_pair_columns_with_flow_fields() {
-        let config = parse_enrich_arg(
-            "type=exact,source=ifnames.csv,key_column=exporter+ifindex,\
-             fields=sampler_address+in_if@name:in_if_name;sampler_address+out_if@name:out_if_name",
-            &columns(),
-        )
-        .unwrap();
+        let lookups = vec![
+            lookup("sampler_address+in_if", "in_if_name"),
+            lookup("sampler_address+out_if", "out_if_name"),
+        ];
+        let config = spec("exact", "exporter+ifindex", lookups)
+            .resolve(&columns())
+            .unwrap();
 
         assert_eq!(
             config.source.format(),
@@ -543,64 +566,80 @@ mod tests {
         assert_eq!(names(&config.mappings[1]), ["sampler_address", "out_if"]);
     }
 
-    #[test]
-    fn an_output_can_have_a_type_and_a_field_number() {
-        let mappings = |fields: &str| {
-            let arg = format!("type=prefix_lookup,source=a.csv,key_column=net,fields={fields}");
-            parse_enrich_arg(&arg, &columns()).map(|config| {
-                let outputs = config.mappings.iter();
-                let outputs = outputs.map(|m| (m.output_field.clone(), m.kind, m.number));
-                (
-                    config.source.columns().to_vec(),
-                    outputs.collect::<Vec<_>>(),
-                )
-            })
-        };
+    fn typed(column: &str, name: &str, kind: Option<&str>, number: Option<u32>) -> FieldSpec {
+        FieldSpec {
+            kind: kind.map(String::from),
+            number,
+            ..field(column, name)
+        }
+    }
 
-        let (columns, outputs) =
-            mappings("src_addr@asn:src_asn:unsigned:1001|name:src_name|ok:src_ok:1003:boolean")
-                .unwrap();
-        assert_eq!(
-            outputs,
-            [
-                ("src_asn".to_string(), field::Kind::U64, Some(1001)),
-                ("src_name".to_string(), field::Kind::Text, None),
-                ("src_ok".to_string(), field::Kind::Boolean, Some(1003)),
-            ]
-        );
-        assert_eq!(columns[0], ("asn".to_string(), field::Kind::U64));
-
-        for invalid in [
-            "src_addr@asn:src_asn:number",
-            "src_addr@asn:src_asn:unsigned:signed",
-            "src_addr@asn:src_asn:1:2",
-            // One column read as two types.
-            "src_addr@asn:src_asn:unsigned;dst_addr@asn:dst_asn",
-        ] {
-            assert!(mappings(invalid).is_err(), "{invalid}");
+    fn by(key: &str, fields: Vec<FieldSpec>) -> LookupSpec {
+        LookupSpec {
+            keys: vec![key.into()],
+            fields,
         }
     }
 
     #[test]
+    fn an_output_can_have_a_type_and_a_field_number() {
+        let fields = vec![
+            typed("asn", "src_asn", Some("unsigned"), Some(1001)),
+            typed("name", "src_name", None, None),
+            typed("ok", "src_ok", Some("boolean"), Some(1003)),
+        ];
+        let config = spec("prefix_lookup", "net", vec![by("src_addr", fields)])
+            .resolve(&columns())
+            .unwrap();
+        let outputs = config.mappings.iter();
+        let outputs: Vec<_> = outputs
+            .map(|m| (m.output_field.as_str(), m.kind, m.number))
+            .collect();
+        assert_eq!(
+            outputs,
+            [
+                ("src_asn", field::Kind::U64, Some(1001)),
+                ("src_name", field::Kind::Text, None),
+                ("src_ok", field::Kind::Boolean, Some(1003)),
+            ]
+        );
+        assert_eq!(
+            config.source.columns()[0],
+            ("asn".to_string(), field::Kind::U64)
+        );
+
+        let unknown = vec![typed("asn", "src_asn", Some("number"), None)];
+        let unknown = spec("prefix_lookup", "net", vec![by("src_addr", unknown)]);
+        assert!(error(unknown).contains("is not a type"));
+        // One column read as two types.
+        let lookups = vec![
+            by(
+                "src_addr",
+                vec![typed("asn", "src_asn", Some("unsigned"), None)],
+            ),
+            by("dst_addr", vec![typed("asn", "dst_asn", None, None)]),
+        ];
+        assert!(error(spec("prefix_lookup", "net", lookups)).contains("is given two types"));
+    }
+
+    #[test]
     fn an_extra_field_can_be_a_lookup_key() {
-        let field = |name: &str, kind| Field {
+        let extra = |name: &str, kind| Field {
             name: name.into(),
             kind,
             number: None,
         };
         let fields = [
-            field("vrf", field::Kind::U64),
-            field("tunnel", field::Kind::Address),
-            field("label", field::Kind::Octets),
+            extra("vrf", field::Kind::U64),
+            extra("tunnel", field::Kind::Address),
+            extra("label", field::Kind::Octets),
         ];
         let schema = Schema::new(&fields, &[]).unwrap();
-        let extra = schema.columns();
-        let config = parse_enrich_arg(
-            "type=exact,source=vrf.csv,key_column=exporter+id,\
-             fields=sampler_address+vrf@name:vrf_name",
-            extra,
-        )
-        .unwrap();
+        let columns = schema.columns();
+        let lookups = vec![lookup("sampler_address+vrf", "vrf_name")];
+        let config = spec("exact", "exporter+id", lookups)
+            .resolve(columns)
+            .unwrap();
         assert_eq!(names(&config.mappings[0]), ["sampler_address", "vrf"]);
 
         let mut flow = CommonFlow::new(
@@ -614,69 +653,69 @@ mod tests {
         flow.extra = vec![Some(rustflow_core::value::Value::Unsigned32(7))].into();
         assert_eq!(key.extract(&flow), Some(Key::Number(7)));
 
-        let prefix = "type=prefix_lookup,source=a.csv,key_column=net,fields=";
-        assert!(parse_enrich_arg(&format!("{prefix}tunnel@name:n"), extra).is_ok());
-        assert!(parse_enrich_arg(&format!("{prefix}vrf@name:n"), extra).is_err());
-        assert!(parse_enrich_arg(&format!("{prefix}other@name:n"), extra).is_err());
+        let prefix = |key| spec("prefix_lookup", "net", vec![lookup(key, "n")]).resolve(columns);
+        assert!(prefix("tunnel").is_ok());
+        assert!(prefix("vrf").is_err());
+        assert!(prefix("other").is_err());
         // Octets are not keys.
-        assert!(parse_enrich_arg(&format!("{prefix}label@name:n"), extra).is_err());
+        assert!(prefix("label").is_err());
     }
 
     #[test]
     fn composite_keys_are_validated() {
-        let error = |arg: &str| parse_enrich_arg(arg, &columns()).unwrap_err().to_string();
+        let exact = |key_columns, lookups| error(spec("exact", key_columns, lookups));
 
-        assert!(
-            error(
-                "type=exact,source=a.csv,key_column=exporter,fields=sampler_address+in_if@name:n"
-            )
-            .contains("lists 1 columns for 2 lookup keys")
-        );
-        assert!(
-            error(
-                "type=exact,source=a.csv,key_column=a+b,\
-                 fields=sampler_address+in_if@name:n;in_if+sampler_address@name:m"
-            )
-            .contains("same key types in the same order")
-        );
-        assert!(
-            error("type=prefix_lookup,source=a.csv,key_column=a+b,fields=src_addr+in_if@name:n")
-                .contains("single address field")
-        );
-        assert!(
-            error(
-                "type=exact,source=a.csv,key_column=a+b+c+d+e,\
-                 fields=in_if+out_if+src_port+dst_port+proto@name:n"
-            )
-            .contains("At most 4 lookup keys")
-        );
+        let lookups = vec![lookup("sampler_address+in_if", "n")];
+        assert!(exact("exporter", lookups).contains("lists 1 columns for 2 lookup keys"));
+        let lookups = vec![
+            lookup("sampler_address+in_if", "n"),
+            lookup("in_if+sampler_address", "m"),
+        ];
+        assert!(exact("a+b", lookups).contains("same key types in the same order"));
+        let lookups = vec![lookup("src_addr+in_if", "n")];
+        assert!(error(spec("prefix_lookup", "a+b", lookups)).contains("single address field"));
+        let lookups = vec![lookup("in_if+out_if+src_port+dst_port+proto", "n")];
+        assert!(exact("a+b+c+d+e", lookups).contains("At most 4 lookup keys"));
+    }
+
+    #[test]
+    fn an_enrichment_needs_its_parts() {
+        let base = || spec("exact", "k", vec![lookup("proto", "n")]);
+
+        assert!(error(spec("exact", "k", Vec::new())).contains("needs a lookup"));
+        assert!(error(spec("exact", "k", vec![by("proto", Vec::new())])).contains("has no fields"));
+        let no_key_columns = EnrichSpec {
+            key_columns: Vec::new(),
+            ..base()
+        };
+        assert!(error(no_key_columns).contains("needs 'key_columns'"));
+        let kind = EnrichSpec {
+            kind: "fuzzy".into(),
+            ..base()
+        };
+        assert!(error(kind).contains("Unknown type 'fuzzy'"));
     }
 
     #[test]
     fn an_output_field_cannot_be_a_flow_field() {
         for name in ["proto", "src_mac", "flow_type"] {
-            let error = parse_enrich_arg(
-                &format!("type=exact,source=a.csv,key_column=k,fields=proto@name:{name}"),
-                &columns(),
-            )
-            .unwrap_err();
-            assert!(
-                error.to_string().contains("is the name of a flow field"),
-                "{error}"
-            );
+            let error = error(spec("exact", "k", vec![lookup("proto", name)]));
+            assert!(error.contains("is the name of a flow field"), "{error}");
+        }
+    }
+
+    /// An enrichment from the command `/opt/ifnames.sh`.
+    fn command() -> EnrichSpec {
+        EnrichSpec {
+            source: None,
+            command: Some("/opt/ifnames.sh".into()),
+            ..spec("exact", "number", vec![lookup("proto", "n")])
         }
     }
 
     #[test]
     fn command_is_a_csv_source_with_a_timeout() {
-        let parse = |extra: &str| {
-            parse_enrich_arg(&format!(
-                "type=exact,command=/opt/ifnames.sh,key_column=number,fields=proto@name:n{extra}"
-            ), &columns())
-            .unwrap()
-        };
-
-        let config = parse("");
+        let config = command().resolve(&columns()).unwrap();
         assert_eq!(
             config.source.origin(),
             &Origin::Command {
@@ -686,7 +725,12 @@ mod tests {
         );
         assert!(matches!(config.source.format(), SourceFormat::Csv { .. }));
 
-        let config = parse(",timeout=2m,reload=5m");
+        let timed = EnrichSpec {
+            timeout: Some("2m".into()),
+            reload: Some("5m".into()),
+            ..command()
+        };
+        let config = timed.resolve(&columns()).unwrap();
         assert_eq!(
             config.source.origin(),
             &Origin::Command {
@@ -702,35 +746,46 @@ mod tests {
 
     #[test]
     fn command_is_validated() {
-        let error = |arg: &str| parse_enrich_arg(arg, &columns()).unwrap_err().to_string();
+        let file = || spec("exact", "k", vec![lookup("proto", "n")]);
+        let text = |value: &str| Some(value.to_string());
 
-        assert!(
-            error("type=exact,source=a.csv,command=a.sh,key_column=k,fields=proto@name:n")
-                .contains("mutually exclusive")
-        );
-        assert!(
-            error("type=exact,key_column=k,fields=proto@name:n")
-                .contains("Missing 'source' or 'command'")
-        );
-        assert!(
-            error("type=exact,source=a.csv,timeout=5s,key_column=k,fields=proto@name:n")
-                .contains("'timeout' is not valid for a file source")
-        );
-        assert!(
-            error("type=exact,command=a.sh,reload=watch,key_column=k,fields=proto@name:n")
-                .contains("cannot be watched")
-        );
-        assert!(
-            error("type=prefix_lookup,command=a.sh,format=mmdb,fields=src_addr@asn:n")
-                .contains("supports only CSV")
-        );
-        assert!(
-            error("type=exact,command=a.sh,timeout=0s,key_column=k,fields=proto@name:n")
-                .contains("must not be zero")
-        );
-        assert!(
-            error("type=exact,command=a.sh,timeout=soon,key_column=k,fields=proto@name:n")
-                .contains("Invalid timeout 'soon'")
-        );
+        let both = EnrichSpec {
+            command: Some("a.sh".into()),
+            ..file()
+        };
+        assert!(error(both).contains("mutually exclusive"));
+        let neither = EnrichSpec {
+            source: None,
+            ..file()
+        };
+        assert!(error(neither).contains("needs a 'source' or a 'command'"));
+        let timeout = EnrichSpec {
+            timeout: text("5s"),
+            ..file()
+        };
+        assert!(error(timeout).contains("'timeout' is not valid for a file source"));
+        let watched = EnrichSpec {
+            reload: text("watch"),
+            ..command()
+        };
+        assert!(error(watched).contains("cannot be watched"));
+        let mmdb = EnrichSpec {
+            kind: "prefix_lookup".into(),
+            format: text("mmdb"),
+            key_columns: Vec::new(),
+            lookups: vec![lookup("src_addr", "n")],
+            ..command()
+        };
+        assert!(error(mmdb).contains("supports only CSV"));
+        let zero = EnrichSpec {
+            timeout: text("0s"),
+            ..command()
+        };
+        assert!(error(zero).contains("must not be zero"));
+        let soon = EnrichSpec {
+            timeout: text("soon"),
+            ..command()
+        };
+        assert!(error(soon).contains("Invalid timeout 'soon'"));
     }
 }

@@ -5,7 +5,7 @@ pub mod row;
 pub mod source;
 pub mod table;
 
-pub use config::{SourceConfig, parse_enrich_arg};
+pub use config::SourceConfig;
 pub use engine::{Enriched, EnrichmentEngine};
 pub use key::{Key, KeyType};
 pub use source::Source;

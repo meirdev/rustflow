@@ -60,7 +60,7 @@ def parquet_as_text(path: Path) -> bytes:
 @pytest.mark.parametrize("name", PCAPS)
 def test_snapshot(
     collect,
-    enrich_args,
+    enrich_config,
     pcap_dir,
     snapshot_dir,
     tmp_path,
@@ -72,7 +72,7 @@ def test_snapshot(
     pcap = pcap_dir / f"{name}_sanity.pcap"
     args = ["--format", fmt, "--serialization", serialization]
     if variant == "enriched":
-        args += enrich_args
+        args += ["--config", str(enrich_config)]
 
     if serialization == "parquet":
         output = tmp_path / "out.parquet"

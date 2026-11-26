@@ -60,7 +60,7 @@ impl Column {
         (!self.is_added()).then(|| self.number as usize - 1)
     }
 
-    /// A column `--extra-field` or `--enrich` added, not one of the
+    /// A column an extra field or an enrichment added, not one of the
     /// flow's own.
     pub fn is_added(&self) -> bool {
         !matches!(self.source, Source::Flow(_))
