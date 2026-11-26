@@ -35,7 +35,7 @@ impl serde::Serialize for MacAddress {
     }
 }
 
-pub fn mac_address(input: &mut &[u8]) -> Result<MacAddress> {
+pub(crate) fn mac_address(input: &mut &[u8]) -> Result<MacAddress> {
     take(6usize)
         .map(|octets: &[u8]| MacAddress(octets.try_into().expect("took 6 octets")))
         .parse_next(input)

@@ -10,6 +10,7 @@ use winnow::token::take;
 use winnow::{Parser as _, Result};
 
 use super::*;
+use crate::ParseError;
 use crate::information_element::{DataType, ElementId, InformationElement, ListSemantic, Registry};
 use crate::set::DataSet;
 use crate::template::{ResolvedTemplate, TemplateRef};
@@ -47,18 +48,20 @@ impl Parser {
         }
     }
 
-    pub fn parse(&mut self, input: &[u8]) -> Result<Packet> {
+    pub fn parse(&mut self, input: &[u8]) -> Result<Packet, ParseError> {
         self.parse_at(input, Instant::now())
     }
 
-    pub fn parse_at(&mut self, input: &[u8], now: Instant) -> Result<Packet> {
+    pub fn parse_at(&mut self, mut input: &[u8], now: Instant) -> Result<Packet, ParseError> {
         self.now = now;
+        self.parse_packet(&mut input).map_err(ParseError)
+    }
 
-        let mut input = input;
-        let header = parse_header(&mut input)?;
+    fn parse_packet(&mut self, input: &mut &[u8]) -> Result<Packet> {
+        let header = parse_header(input)?;
         let mut body = take(header.length - HEADER_LENGTH)
             .context(StrContext::Label("message body"))
-            .parse_next(&mut input)?;
+            .parse_next(input)?;
         // A malformed message is discarded whole (RFC 7011 §9.1), templates
         // included, so it is checked before any of them is kept.
         check_sets(body)?;

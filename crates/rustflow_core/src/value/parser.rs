@@ -128,7 +128,7 @@ impl DataType {
     }
 }
 
-pub fn parse_value<'i>(
+pub(crate) fn parse_value<'i>(
     data_type: DataType,
     length: usize,
 ) -> impl Parser<&'i [u8], Value, ContextError> {
