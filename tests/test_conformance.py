@@ -116,7 +116,7 @@ def params():
         yield pytest.param(fixture, id=fixture.id, marks=marks)
 
 
-@pytest.mark.parametrize("fixture", params())
+@pytest.mark.parametrize("fixture", list(params()))
 def test_rustflow_reads_what_the_specification_says(rustflow_bin, fixture):
     problems = differences(fixture.document["expected"], collected(rustflow_bin, fixture, "raw"))
     problems += differences(fixture.document["flows"], collected(rustflow_bin, fixture, "common"), "flows")
