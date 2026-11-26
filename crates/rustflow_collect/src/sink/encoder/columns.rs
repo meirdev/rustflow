@@ -124,7 +124,7 @@ macro_rules! flow_columns {
             }
 
             fn append(&mut self, flow: &CommonFlow) {
-                let CommonFlow { $( $name, )* } = flow;
+                let CommonFlow { $( $name, )* .. } = flow;
                 $( append!(&mut self.$name, &mut self.text, $kind $presence, *$name); )*
             }
 

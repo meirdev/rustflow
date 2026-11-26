@@ -31,7 +31,7 @@ macro_rules! flow_fields {
     ($( $name:ident : $kind:ident $presence:ident ),* $(,)?) => {
         /// Writes the flow's fields, each followed by a comma.
         fn write_flow(record: &mut Vec<u8>, flow: &CommonFlow) {
-            let CommonFlow { $( $name, )* } = flow;
+            let CommonFlow { $( $name, )* .. } = flow;
             $(
                 field!(record, $presence, $name);
                 record.push(b',');

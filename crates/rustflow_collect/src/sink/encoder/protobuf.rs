@@ -120,9 +120,12 @@ fn ip_bytes(addr: IpAddr) -> Vec<u8> {
     }
 }
 
+/// The `CommonFlow` fields that [`FlowMessage::from_flow`] maps: a field
+/// added to the core fails this check until it is mapped there.
+const MAPPED_FIELDS: usize = 37;
+const _: () = assert!(CommonFlow::FIELD_NAMES.len() == MAPPED_FIELDS);
+
 impl FlowMessage {
-    /// No `..` in the destructure: a field added to `CommonFlow` fails to
-    /// compile until it is mapped here.
     pub fn from_flow(flow: &CommonFlow, names: &[String], enriched: &Enriched) -> Self {
         let CommonFlow {
             flow_type,
@@ -162,6 +165,7 @@ impl FlowMessage {
             dst_vlan,
             observation_domain_id,
             forwarding_status,
+            ..
         } = flow;
         Self {
             flow_type: FlowType::from(*flow_type).into(),

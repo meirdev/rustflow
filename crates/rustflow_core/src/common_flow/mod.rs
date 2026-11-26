@@ -1,3 +1,4 @@
+mod extra;
 mod fields;
 mod ipfix;
 mod netflow_v5;
@@ -10,6 +11,8 @@ mod sflow_v5;
 
 use std::net::IpAddr;
 
+pub(crate) use self::extra::extend_with_extra;
+pub use self::extra::{ExtraFields, ExtraValues};
 pub use self::ipfix::from_ipfix;
 pub use self::netflow_v5::from_netflow_v5;
 pub use self::netflow_v9::from_netflow_v9;
@@ -121,14 +124,19 @@ macro_rules! define_common_flow {
     (@field [$($field:tt)*] [$($param:tt)*] [$($init:tt)*]) => {
         #[derive(Debug, Clone)]
         #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+        #[non_exhaustive]
         pub struct CommonFlow {
             $($field)*
+            /// The values of the processor's [`ExtraFields`]. Empty unless
+            /// extra fields are set.
+            #[cfg_attr(feature = "serde", serde(skip_serializing_if = "ExtraValues::is_empty"))]
+            pub extra: ExtraValues,
         }
 
         impl CommonFlow {
             /// A flow with the required fields set and the rest empty.
             pub fn new($($param)*) -> Self {
-                Self { $($init)* }
+                Self { $($init)* extra: ExtraValues::default() }
             }
         }
     };

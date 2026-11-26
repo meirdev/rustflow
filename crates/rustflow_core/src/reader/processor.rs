@@ -5,8 +5,8 @@ use jiff::Timestamp;
 
 use super::{ReadError, nanoseconds};
 use crate::common_flow::{
-    CommonFlow, ExporterOptions, FlowType, from_ipfix, from_netflow_v5, from_netflow_v9,
-    from_sflow_v5,
+    CommonFlow, ExporterOptions, ExtraFields, FlowType, extend_with_extra, from_ipfix,
+    from_netflow_v5, from_netflow_v9, from_sflow_v5,
 };
 use crate::information_element::Registry;
 use crate::set::Set;
@@ -140,6 +140,7 @@ pub struct NetflowProcessor {
     registry: Registry,
     template_ttl: Duration,
     exporters: BoundedTimedMap<IpAddr, Exporter>,
+    extra_fields: ExtraFields,
 }
 
 #[derive(Debug)]
@@ -172,7 +173,17 @@ impl NetflowProcessor {
             registry,
             template_ttl: TEMPLATE_TTL,
             exporters: BoundedTimedMap::new(MAX_EXPORTERS, TEMPLATE_TTL),
+            extra_fields: ExtraFields::default(),
         }
+    }
+
+    pub fn with_extra_fields(mut self, extra_fields: ExtraFields) -> Self {
+        self.extra_fields = extra_fields;
+        self
+    }
+
+    pub fn extra_fields(&self) -> &ExtraFields {
+        &self.extra_fields
     }
 
     pub fn with_template_ttl(mut self, ttl: Duration) -> Self {
@@ -182,11 +193,26 @@ impl NetflowProcessor {
     }
 
     fn exporter(&mut self, from: IpAddr, now: Instant) -> &mut Exporter {
-        let (registry, ttl) = (&self.registry, self.template_ttl);
-        self.exporters
-            .get_or_insert_with_at(from, now, || Exporter::new(registry, ttl))
-            .expect("the exporter map has room")
+        exporter(
+            &mut self.exporters,
+            &self.registry,
+            self.template_ttl,
+            from,
+            now,
+        )
     }
+}
+
+fn exporter<'a>(
+    exporters: &'a mut BoundedTimedMap<IpAddr, Exporter>,
+    registry: &Registry,
+    ttl: Duration,
+    from: IpAddr,
+    now: Instant,
+) -> &'a mut Exporter {
+    exporters
+        .get_or_insert_with_at(from, now, || Exporter::new(registry, ttl))
+        .expect("the exporter map has room")
 }
 
 impl Default for NetflowProcessor {
@@ -240,15 +266,23 @@ impl Processor for NetflowProcessor {
         now: Instant,
         flows: &mut impl Extend<CommonFlow>,
     ) {
+        let Self {
+            registry,
+            template_ttl,
+            exporters,
+            extra_fields,
+        } = self;
         match packet {
             NetflowPacket::V5(packet) => flows.extend(from_netflow_v5(packet, from, received_ns)),
             NetflowPacket::V9(packet) => {
-                let options = &mut self.exporter(from, now).options;
-                flows.extend(from_netflow_v9(packet, from, received_ns, options, now));
+                let options = &mut exporter(exporters, registry, *template_ttl, from, now).options;
+                let converted = from_netflow_v9(packet, from, received_ns, options, now);
+                extend_with_extra(flows, converted, &packet.flow_sets, extra_fields);
             }
             NetflowPacket::Ipfix(packet) => {
-                let options = &mut self.exporter(from, now).options;
-                flows.extend(from_ipfix(packet, from, received_ns, options, now));
+                let options = &mut exporter(exporters, registry, *template_ttl, from, now).options;
+                let converted = from_ipfix(packet, from, received_ns, options, now);
+                extend_with_extra(flows, converted, &packet.sets, extra_fields);
             }
         }
     }
