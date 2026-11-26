@@ -53,6 +53,13 @@ impl Column {
         }
     }
 
+    /// The position in `CommonFlow::FIELD_NAMES` of the field of the flow
+    /// that the column is, if it is one.
+    pub fn flow_field(&self) -> Option<usize> {
+        // The flow's fields are numbered from 1 in that order.
+        (!self.is_added()).then(|| self.number as usize - 1)
+    }
+
     /// A column `--extra-field` or `--enrich` added, not one of the
     /// flow's own.
     pub fn is_added(&self) -> bool {
