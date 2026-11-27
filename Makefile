@@ -1,4 +1,4 @@
-.PHONY: fmt fix fuzz fuzz-corpus compile-musl compile-musl-pcap
+.PHONY: fmt fix bench fuzz fuzz-corpus compile-musl compile-musl-pcap
 
 fmt:
 	cargo +nightly fmt
@@ -6,6 +6,9 @@ fmt:
 
 fix:
 	__CARGO_FIX_YOLO=1 cargo +nightly fix
+
+bench:
+	cargo bench -p rustflow_core --features pcap --bench process -- $(BENCH_ARGS)
 
 fuzz-corpus:
 	cargo run -p rustflow_core --features pcap --example fuzz_corpus

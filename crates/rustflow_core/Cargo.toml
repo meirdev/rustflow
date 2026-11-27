@@ -28,3 +28,11 @@ winnow = "1.0.5"
 [[example]]
 name = "fuzz_corpus"
 required-features = ["pcap"]
+
+[dev-dependencies]
+criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "process"
+harness = false
+required-features = ["pcap"]
